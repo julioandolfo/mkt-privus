@@ -1,0 +1,223 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Enums\SocialPlatform;
+use App\Models\SocialAccount;
+use App\Models\Setting;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Inertia\Inertia;
+use Inertia\Response;
+
+class SocialAccountController extends Controller
+{
+    /**
+     * Lista contas sociais conectadas da marca ativa
+     */
+    public function index(Request $request): Response
+    {
+        $brand = $request->user()->getActiveBrand();
+        $accounts = [];
+
+        if ($brand) {
+            $accounts = $brand->socialAccounts()
+                ->orderBy('platform')
+                ->get()
+                ->map(fn($acc) => [
+                    'id' => $acc->id,
+                    'platform' => $acc->platform->value,
+                    'platform_label' => $acc->platform->label(),
+                    'platform_color' => $acc->platform->color(),
+                    'username' => $acc->username,
+                    'display_name' => $acc->display_name,
+                    'avatar_url' => $acc->avatar_url,
+                    'is_active' => $acc->is_active,
+                    'token_status' => $this->getTokenStatus($acc),
+                    'metadata' => $acc->metadata,
+                    'created_at' => $acc->created_at->format('d/m/Y'),
+                ]);
+        }
+
+        $platforms = collect(SocialPlatform::cases())->map(fn($p) => [
+            'value' => $p->value,
+            'label' => $p->label(),
+            'color' => $p->color(),
+        ])->toArray();
+
+        // Verificar credenciais OAuth configuradas
+        $oauthConfigured = [
+            'facebook' => $this->hasOAuthConfig('meta'),
+            'instagram' => $this->hasOAuthConfig('meta'),
+            'linkedin' => $this->hasOAuthConfig('linkedin'),
+            'youtube' => $this->hasOAuthConfig('google'),
+            'tiktok' => $this->hasOAuthConfig('tiktok'),
+            'pinterest' => $this->hasOAuthConfig('pinterest'),
+        ];
+
+        // Contas descobertas via OAuth (da sessão)
+        $discoveredAccounts = session('oauth_discovered_accounts', []);
+        $oauthPlatform = session('oauth_platform');
+
+        return Inertia::render('Social/Accounts/Index', [
+            'accounts' => $accounts,
+            'platforms' => $platforms,
+            'oauthConfigured' => $oauthConfigured,
+            'discoveredAccounts' => $discoveredAccounts,
+            'oauthPlatform' => $oauthPlatform,
+        ]);
+    }
+
+    /**
+     * Adicionar conta social manualmente (com tokens da API)
+     */
+    public function store(Request $request): RedirectResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+
+        if (!$brand) {
+            return redirect()->back()->withErrors(['brand' => 'Selecione uma marca ativa.']);
+        }
+
+        $validated = $request->validate([
+            'platform' => 'required|string',
+            'username' => 'required|string|max:255',
+            'display_name' => 'nullable|string|max:255',
+            'platform_user_id' => 'nullable|string|max:255',
+            'access_token' => 'nullable|string|max:2000',
+            'refresh_token' => 'nullable|string|max:2000',
+            'token_expires_at' => 'nullable|date',
+        ]);
+
+        // Verificar se a conta ja existe para esta marca/plataforma/username
+        $exists = SocialAccount::where('brand_id', $brand->id)
+            ->where('platform', $validated['platform'])
+            ->where('username', $validated['username'])
+            ->exists();
+
+        if ($exists) {
+            return redirect()->back()->withErrors([
+                'username' => 'Esta conta já está conectada nesta plataforma.',
+            ]);
+        }
+
+        SocialAccount::create([
+            'brand_id' => $brand->id,
+            'platform' => $validated['platform'],
+            'username' => $validated['username'],
+            'display_name' => $validated['display_name'] ?? $validated['username'],
+            'platform_user_id' => $validated['platform_user_id'] ?? null,
+            'access_token' => $validated['access_token'] ?? null,
+            'refresh_token' => $validated['refresh_token'] ?? null,
+            'token_expires_at' => $validated['token_expires_at'] ?? null,
+            'is_active' => true,
+        ]);
+
+        return redirect()->route('social.accounts.index')
+            ->with('success', 'Conta conectada com sucesso!');
+    }
+
+    /**
+     * Atualizar conta social (tokens, status)
+     */
+    public function update(Request $request, SocialAccount $account): RedirectResponse
+    {
+        $this->authorizeAccount($request, $account);
+
+        $validated = $request->validate([
+            'display_name' => 'nullable|string|max:255',
+            'access_token' => 'nullable|string|max:2000',
+            'refresh_token' => 'nullable|string|max:2000',
+            'token_expires_at' => 'nullable|date',
+            'is_active' => 'sometimes|boolean',
+        ]);
+
+        $account->update($validated);
+
+        return redirect()->back()->with('success', 'Conta atualizada com sucesso!');
+    }
+
+    /**
+     * Desconectar conta social
+     */
+    public function destroy(Request $request, SocialAccount $account): RedirectResponse
+    {
+        $this->authorizeAccount($request, $account);
+
+        $account->delete();
+
+        return redirect()->route('social.accounts.index')
+            ->with('success', 'Conta desconectada com sucesso!');
+    }
+
+    /**
+     * Toggle ativo/inativo
+     */
+    public function toggle(Request $request, SocialAccount $account): RedirectResponse
+    {
+        $this->authorizeAccount($request, $account);
+
+        $account->update(['is_active' => !$account->is_active]);
+
+        $status = $account->is_active ? 'ativada' : 'desativada';
+
+        return redirect()->back()->with('success', "Conta {$status} com sucesso!");
+    }
+
+    // ===== PRIVATE =====
+
+    private function authorizeAccount(Request $request, SocialAccount $account): void
+    {
+        $brand = $request->user()->getActiveBrand();
+
+        if (!$brand || $account->brand_id !== $brand->id) {
+            abort(403, 'Acesso negado.');
+        }
+    }
+
+    private function getTokenStatus(SocialAccount $account): string
+    {
+        if (!$account->access_token) {
+            return 'sem_token';
+        }
+
+        if ($account->isTokenExpired()) {
+            return 'expirado';
+        }
+
+        if ($account->needsRefresh()) {
+            return 'renovar';
+        }
+
+        return 'ativo';
+    }
+
+    private function hasOAuthConfig(string $provider): bool
+    {
+        $configKeys = match ($provider) {
+            'meta' => ['social_oauth.meta.app_id', 'meta_app_id'],
+            'linkedin' => ['social_oauth.linkedin.client_id', 'linkedin_client_id'],
+            'google' => ['social_oauth.google.client_id', 'google_client_id'],
+            'tiktok' => ['social_oauth.tiktok.client_key', 'tiktok_client_key'],
+            'pinterest' => ['social_oauth.pinterest.app_id', 'pinterest_app_id'],
+            default => [],
+        };
+
+        // Verificar .env / config
+        if (!empty(config($configKeys[0] ?? ''))) {
+            return true;
+        }
+
+        // Verificar settings do banco
+        if (isset($configKeys[1])) {
+            try {
+                $val = Setting::get('oauth', $configKeys[1]);
+                return !empty($val);
+            } catch (\Throwable $e) {
+                return false;
+            }
+        }
+
+        return false;
+    }
+}
