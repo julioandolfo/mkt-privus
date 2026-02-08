@@ -40,7 +40,7 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 
 # Configuracoes customizadas do PHP
-COPY php-custom.ini $PHP_INI_DIR/conf.d/99-custom.ini
+COPY docker/php/php-custom.ini $PHP_INI_DIR/conf.d/99-custom.ini
 
 # Criar usuario para o Laravel
 RUN addgroup -g 1000 -S www && \
@@ -62,11 +62,6 @@ RUN apk add --no-cache nodejs npm && \
     rm -rf node_modules && \
     apk del nodejs npm
 
-# Cachear config, routes e views
-RUN php artisan config:cache && \
-    php artisan route:cache && \
-    php artisan view:cache
-
 # Permissoes
 RUN chown -R www:www /var/www/html/storage /var/www/html/bootstrap/cache
 
@@ -74,4 +69,5 @@ USER www
 
 EXPOSE 9000
 
-CMD ["php-fpm"]
+# Cachear config/routes/views e rodar migrations no startup
+CMD sh -c "php artisan config:cache && php artisan route:cache && php artisan view:cache && php artisan migrate --force && php-fpm"
