@@ -1,17 +1,13 @@
 services:
-  # ===== APPLICATION =====
+  # ===== APPLICATION (PHP-FPM) =====
   app:
     build:
       context: .
       dockerfile: docker/php/Dockerfile
-    container_name: mkt-privus-app
     restart: unless-stopped
     working_dir: /var/www/html
     volumes:
-      - .:/var/www/html
-      - ./docker/php/php-custom.ini:/usr/local/etc/php/conf.d/99-custom.ini
-    networks:
-      - mkt-privus
+      - app_storage:/var/www/html/storage
     depends_on:
       mysql:
         condition: service_healthy
@@ -20,16 +16,12 @@ services:
 
   # ===== WEB SERVER =====
   nginx:
-    image: nginx:alpine
-    container_name: mkt-privus-nginx
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
     restart: unless-stopped
     ports:
-      - "${APP_PORT:-80}:80"
-    volumes:
-      - .:/var/www/html
-      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
-    networks:
-      - mkt-privus
+      - "80:80"
     depends_on:
       - app
 
@@ -38,81 +30,47 @@ services:
     build:
       context: .
       dockerfile: docker/php/Dockerfile
-    container_name: mkt-privus-worker
     restart: unless-stopped
     working_dir: /var/www/html
     command: php artisan horizon
     volumes:
-      - .:/var/www/html
-    networks:
-      - mkt-privus
+      - app_storage:/var/www/html/storage
     depends_on:
       mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "php", "artisan", "horizon:status"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   # ===== SCHEDULER (CRON) =====
   scheduler:
     build:
       context: .
       dockerfile: docker/php/Dockerfile
-    container_name: mkt-privus-scheduler
     restart: unless-stopped
     working_dir: /var/www/html
     command: >
       sh -c "while true; do php artisan schedule:run --verbose --no-interaction; sleep 60; done"
     volumes:
-      - .:/var/www/html
-    networks:
-      - mkt-privus
+      - app_storage:/var/www/html/storage
     depends_on:
       mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
 
-  # ===== WEBSOCKET SERVER =====
-  reverb:
-    build:
-      context: .
-      dockerfile: docker/php/Dockerfile
-    container_name: mkt-privus-reverb
-    restart: unless-stopped
-    working_dir: /var/www/html
-    command: php artisan reverb:start --host=0.0.0.0 --port=8080
-    ports:
-      - "${REVERB_PORT:-8080}:8080"
-    volumes:
-      - .:/var/www/html
-    networks:
-      - mkt-privus
-    depends_on:
-      - redis
-
   # ===== DATABASE =====
   mysql:
     image: mysql:8.0
-    container_name: mkt-privus-mysql
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${DB_DATABASE:-mkt_privus}
       MYSQL_USER: ${DB_USERNAME:-mkt_privus}
       MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootsecret}
-    ports:
-      - "${DB_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-    networks:
-      - mkt-privus
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-rootsecret}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -124,14 +82,9 @@ services:
   # ===== CACHE / QUEUE =====
   redis:
     image: redis:7-alpine
-    container_name: mkt-privus-redis
     restart: unless-stopped
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
-    networks:
-      - mkt-privus
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -139,58 +92,10 @@ services:
       retries: 5
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
 
-  # ===== FILE STORAGE (S3-COMPATIBLE) =====
-  minio:
-    image: minio/minio:latest
-    container_name: mkt-privus-minio
-    restart: unless-stopped
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-mktprivus}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-mktprivussecret}
-    ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
-    volumes:
-      - minio_data:/data
-    networks:
-      - mkt-privus
-    command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # ===== FULL-TEXT SEARCH =====
-  meilisearch:
-    image: getmeili/meilisearch:latest
-    container_name: mkt-privus-meilisearch
-    restart: unless-stopped
-    environment:
-      MEILI_MASTER_KEY: ${MEILISEARCH_KEY:-mktprivusMeiliKey2026}
-      MEILI_ENV: ${MEILI_ENV:-development}
-    ports:
-      - "${MEILISEARCH_PORT:-7700}:7700"
-    volumes:
-      - meilisearch_data:/meili_data
-    networks:
-      - mkt-privus
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--spider", "http://localhost:7700/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
 volumes:
+  app_storage:
+    driver: local
   mysql_data:
     driver: local
   redis_data:
     driver: local
-  minio_data:
-    driver: local
-  meilisearch_data:
-    driver: local
-
-networks:
-  mkt-privus:
-    driver: bridge
