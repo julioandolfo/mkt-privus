@@ -1,7 +1,15 @@
 #!/bin/sh
 set -e
 
-# Apenas o container principal (php-fpm) faz setup
+# Copiar assets compilados para o volume compartilhado (executado em TODOS os containers)
+if [ -d "/var/www/html/build-assets" ]; then
+    echo "==> Copiando assets Vite para volume compartilhado..."
+    mkdir -p /var/www/html/public/build
+    cp -r /var/www/html/build-assets/* /var/www/html/public/build/ 2>/dev/null || true
+    echo "==> Assets copiados com sucesso."
+fi
+
+# Apenas o container principal (php-fpm) faz setup do banco
 if [ "$1" = "php-fpm" ]; then
 
     echo "==> [app] Aguardando MySQL..."

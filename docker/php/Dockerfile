@@ -62,6 +62,9 @@ RUN apk add --no-cache nodejs npm && \
     rm -rf node_modules && \
     apk del nodejs npm
 
+# Salvar copia dos assets compilados (antes do volume montar por cima)
+RUN cp -r /var/www/html/public/build /var/www/html/build-assets
+
 # Copiar entrypoint
 COPY docker/php/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

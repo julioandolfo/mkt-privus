@@ -8,6 +8,7 @@ services:
     working_dir: /var/www/html
     volumes:
       - app_storage:/var/www/html/storage
+      - public_build:/var/www/html/public/build
     depends_on:
       mysql:
         condition: service_healthy
@@ -22,10 +23,12 @@ services:
     restart: unless-stopped
     expose:
       - "80"
+    volumes:
+      - public_build:/var/www/html/public/build
     depends_on:
       - app
 
-  # ===== QUEUE WORKER (HORIZON) =====
+  # ===== QUEUE WORKER =====
   worker:
     build:
       context: .
@@ -35,6 +38,7 @@ services:
     command: php artisan queue:work --sleep=3 --tries=3 --max-time=3600
     volumes:
       - app_storage:/var/www/html/storage
+      - public_build:/var/www/html/public/build
     depends_on:
       mysql:
         condition: service_healthy
@@ -52,6 +56,7 @@ services:
       sh -c "while true; do php artisan schedule:run --verbose --no-interaction; sleep 60; done"
     volumes:
       - app_storage:/var/www/html/storage
+      - public_build:/var/www/html/public/build
     depends_on:
       mysql:
         condition: service_healthy
@@ -94,6 +99,8 @@ services:
 
 volumes:
   app_storage:
+    driver: local
+  public_build:
     driver: local
   mysql_data:
     driver: local
