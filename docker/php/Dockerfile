@@ -62,6 +62,10 @@ RUN apk add --no-cache nodejs npm && \
     rm -rf node_modules && \
     apk del nodejs npm
 
+# Copiar entrypoint
+COPY docker/php/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 # Permissoes
 RUN chown -R www:www /var/www/html/storage /var/www/html/bootstrap/cache
 
@@ -69,5 +73,5 @@ USER www
 
 EXPOSE 9000
 
-# Cachear config/routes/views e rodar migrations no startup
-CMD sh -c "php artisan config:cache && php artisan route:cache && php artisan view:cache && php artisan migrate --force && php-fpm"
+ENTRYPOINT ["entrypoint.sh"]
+CMD ["php-fpm"]
