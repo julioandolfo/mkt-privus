@@ -32,7 +32,7 @@ services:
       dockerfile: docker/php/Dockerfile
     restart: unless-stopped
     working_dir: /var/www/html
-    command: php artisan horizon
+    command: php artisan queue:work --sleep=3 --tries=3 --max-time=3600
     volumes:
       - app_storage:/var/www/html/storage
     depends_on:
