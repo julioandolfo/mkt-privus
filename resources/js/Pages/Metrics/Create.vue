@@ -33,6 +33,9 @@ const form = useForm({
     tags: [] as string[],
     platform: null as string | null,
     tracking_frequency: 'monthly',
+    custom_frequency_days: null as number | null,
+    custom_start_date: '',
+    custom_end_date: '',
     aggregation: 'last',
     goal_value: null as number | null,
     goal_period: null as string | null,
@@ -136,6 +139,7 @@ function selectCategory(cat: Category) {
 }
 
 const isCustomType = computed(() => form.value_type === 'custom');
+const isCustomFrequency = computed(() => form.tracking_frequency === 'custom');
 const selectedType = computed(() => valueTypeOptions.find(o => o.value === form.value_type));
 
 // Agrupar tipos por categoria visual
@@ -197,6 +201,25 @@ const typeGroups = computed(() => [
                                     <option v-for="opt in frequencyOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                                 </select>
                             </div>
+
+                            <!-- Campos para frequencia customizada -->
+                            <template v-if="isCustomFrequency">
+                                <div class="col-span-2 grid grid-cols-3 gap-3 p-4 rounded-xl bg-gray-800/50 border border-gray-700">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-1">A cada (dias)</label>
+                                        <input type="number" v-model.number="form.custom_frequency_days" min="1" max="365" placeholder="Ex: 15" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                                        <p class="text-xs text-gray-500 mt-1">Intervalo em dias entre registros</p>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-1">Data inicio</label>
+                                        <input type="date" v-model="form.custom_start_date" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-1">Data fim (opcional)</label>
+                                        <input type="date" v-model="form.custom_end_date" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </div>
+                                </div>
+                            </template>
                         </div>
                     </div>
                 </div>

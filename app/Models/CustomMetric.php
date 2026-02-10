@@ -32,6 +32,9 @@ class CustomMetric extends Model
         'data_source',
         'formula',
         'tracking_frequency',
+        'custom_frequency_days',
+        'custom_start_date',
+        'custom_end_date',
         'aggregation',
         'goal_value',
         'goal_period',
@@ -41,6 +44,9 @@ class CustomMetric extends Model
 
     protected $casts = [
         'goal_value' => 'decimal:2',
+        'custom_frequency_days' => 'integer',
+        'custom_start_date' => 'date',
+        'custom_end_date' => 'date',
         'is_active' => 'boolean',
         'sort_order' => 'integer',
         'decimal_places' => 'integer',

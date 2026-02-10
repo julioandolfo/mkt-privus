@@ -59,6 +59,9 @@ class MetricsController extends Controller
                     'platform' => $metric->platform,
                     'tags' => $metric->tags ?? [],
                     'tracking_frequency' => $metric->tracking_frequency ?? 'monthly',
+                    'custom_frequency_days' => $metric->custom_frequency_days,
+                    'custom_start_date' => $metric->custom_start_date?->format('Y-m-d'),
+                    'custom_end_date' => $metric->custom_end_date?->format('Y-m-d'),
                     'goal_value' => $activeGoal ? (float) $activeGoal->target_value : (float) $metric->goal_value,
                     'goal_period' => $activeGoal ? $activeGoal->period : $metric->goal_period,
                     'goal_name' => $activeGoal?->name,
@@ -159,6 +162,9 @@ class MetricsController extends Controller
             'tags.*' => 'string|max:50',
             'platform' => 'nullable|string|max:50',
             'tracking_frequency' => 'nullable|string|in:daily,weekly,biweekly,monthly,quarterly,yearly,custom',
+            'custom_frequency_days' => 'nullable|integer|min:1|max:365',
+            'custom_start_date' => 'nullable|date',
+            'custom_end_date' => 'nullable|date|after_or_equal:custom_start_date',
             'aggregation' => 'nullable|in:sum,avg,last,max,min',
             'goal_value' => 'nullable|numeric|min:0',
             'goal_period' => 'nullable|in:monthly,quarterly,yearly',
@@ -180,6 +186,13 @@ class MetricsController extends Controller
             ]);
             $validated['metric_category_id'] = $cat->id;
             $validated['category'] = $validated['new_category_name'];
+        }
+
+        // Limpar campos custom se frequencia nao for custom
+        if (($validated['tracking_frequency'] ?? '') !== 'custom') {
+            $validated['custom_frequency_days'] = null;
+            $validated['custom_start_date'] = null;
+            $validated['custom_end_date'] = null;
         }
 
         // Separar dados da meta antes de criar a métrica
@@ -289,6 +302,9 @@ class MetricsController extends Controller
                 'platform' => $metric->platform,
                 'tags' => $metric->tags ?? [],
                 'tracking_frequency' => $metric->tracking_frequency,
+                'custom_frequency_days' => $metric->custom_frequency_days,
+                'custom_start_date' => $metric->custom_start_date?->format('Y-m-d'),
+                'custom_end_date' => $metric->custom_end_date?->format('Y-m-d'),
                 'goal_value' => $metric->goal_value,
                 'goal_period' => $metric->goal_period,
                 'goal_progress' => $metric->getGoalProgress(),
@@ -346,11 +362,21 @@ class MetricsController extends Controller
             'icon' => 'nullable|string|max:50',
             'tags' => 'nullable|array',
             'platform' => 'nullable|string|max:50',
-            'tracking_frequency' => 'nullable|string',
+            'tracking_frequency' => 'nullable|string|in:daily,weekly,biweekly,monthly,quarterly,yearly,custom',
+            'custom_frequency_days' => 'nullable|integer|min:1|max:365',
+            'custom_start_date' => 'nullable|date',
+            'custom_end_date' => 'nullable|date|after_or_equal:custom_start_date',
             'aggregation' => 'nullable|in:sum,avg,last,max,min',
             'goal_value' => 'nullable|numeric|min:0',
             'goal_period' => 'nullable|in:monthly,quarterly,yearly',
         ]);
+
+        // Limpar campos custom se frequencia nao for custom
+        if (($validated['tracking_frequency'] ?? '') !== 'custom') {
+            $validated['custom_frequency_days'] = null;
+            $validated['custom_start_date'] = null;
+            $validated['custom_end_date'] = null;
+        }
 
         $metric->update($validated);
 
