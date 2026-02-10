@@ -57,15 +57,15 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'succes
 }
 
 // Mostrar flash messages
-onMounted(() => {
+function checkFlash() {
     const flash = page.props.flash as any;
     if (flash?.success) showToast(flash.success, 'success');
     if (flash?.error) showToast(flash.error, 'error');
-});
+    if (flash?.info) showToast(flash.info, 'info');
+}
 
-// Watch for flash changes (after navigation)
-watch(() => (page.props.flash as any)?.success, (val) => { if (val) showToast(val, 'success'); });
-watch(() => (page.props.flash as any)?.error, (val) => { if (val) showToast(val, 'error'); });
+// Watch flash changes de forma robusta (funciona com redirect do Inertia)
+watch(() => page.props.flash, () => checkFlash(), { deep: true });
 
 // Estado do modal de selecao OAuth
 const showDiscoveryModal = ref(false);
@@ -87,13 +87,17 @@ const manualForm = useForm({
 // Connecting state
 const connectingPlatform = ref<string | null>(null);
 
-// Se voltou do OAuth com contas descobertas, abrir modal
-onMounted(() => {
-    if (props.discoveredAccounts && props.discoveredAccounts.length > 0) {
+// Watch para abrir modal quando contas descobertas mudarem (apos reload ou navigation)
+watch(() => props.discoveredAccounts, (newVal) => {
+    if (newVal && newVal.length > 0) {
         showDiscoveryModal.value = true;
-        selectedDiscovered.value = props.discoveredAccounts.map((_, i) => i);
+        selectedDiscovered.value = newVal.map((_, i) => i);
     }
+}, { immediate: true });
+
+onMounted(() => {
     window.addEventListener('message', handleOAuthMessage);
+    checkFlash();
 });
 
 onUnmounted(() => {
@@ -143,7 +147,11 @@ function handleOAuthMessage(event: MessageEvent) {
 
     if (event.data.status === 'success') {
         showToast(`${event.data.accountsCount} conta(s) encontrada(s)! Selecione as que deseja conectar.`, 'info');
-        router.reload({ preserveScroll: true });
+        // Usar visit ao inves de reload para garantir que os props sao atualizados
+        router.visit(route('social.accounts.index'), {
+            preserveScroll: true,
+            only: ['discoveredAccounts', 'oauthPlatform', 'accounts'],
+        });
     } else {
         showToast(event.data.message || 'Erro no OAuth', 'error');
     }
@@ -161,12 +169,23 @@ function toggleDiscoveredAccount(index: number) {
 function saveDiscoveredAccounts() {
     if (selectedDiscovered.value.length === 0) return;
     savingAccounts.value = true;
+
     router.post(route('social.oauth.save'), {
         selected: selectedDiscovered.value,
     }, {
-        onSuccess: () => {
+        preserveScroll: true,
+        onSuccess: (page: any) => {
             showDiscoveryModal.value = false;
             selectedDiscovered.value = [];
+            // Flash pode vir no page props apos redirect
+            const flash = page?.props?.flash;
+            if (flash?.success) showToast(flash.success, 'success');
+            else if (flash?.error) showToast(flash.error, 'error');
+            else showToast('Contas processadas!', 'success');
+        },
+        onError: (errors: any) => {
+            const msg = Object.values(errors).flat().join(', ') || 'Erro ao salvar contas.';
+            showToast(msg, 'error');
         },
         onFinish: () => {
             savingAccounts.value = false;
