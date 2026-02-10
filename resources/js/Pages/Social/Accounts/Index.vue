@@ -3,7 +3,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import GuideBox from '@/Components/GuideBox.vue';
 import InputError from '@/Components/InputError.vue';
 import { Head, Link, useForm, router, usePage } from '@inertiajs/vue3';
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 
 interface SocialAccount {
     id: number;
@@ -46,7 +46,28 @@ const props = defineProps<{
 const page = usePage();
 const currentBrand = computed(() => page.props.currentBrand);
 
-// Estado do modal de seleção OAuth
+// Toast notification
+const toast = ref<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+const toastTimeout = ref<ReturnType<typeof setTimeout> | null>(null);
+
+function showToast(message: string, type: 'success' | 'error' | 'info' = 'success') {
+    if (toastTimeout.value) clearTimeout(toastTimeout.value);
+    toast.value = { message, type };
+    toastTimeout.value = setTimeout(() => { toast.value = null; }, 5000);
+}
+
+// Mostrar flash messages
+onMounted(() => {
+    const flash = page.props.flash as any;
+    if (flash?.success) showToast(flash.success, 'success');
+    if (flash?.error) showToast(flash.error, 'error');
+});
+
+// Watch for flash changes (after navigation)
+watch(() => (page.props.flash as any)?.success, (val) => { if (val) showToast(val, 'success'); });
+watch(() => (page.props.flash as any)?.error, (val) => { if (val) showToast(val, 'error'); });
+
+// Estado do modal de selecao OAuth
 const showDiscoveryModal = ref(false);
 const selectedDiscovered = ref<number[]>([]);
 const savingAccounts = ref(false);
@@ -70,22 +91,18 @@ const connectingPlatform = ref<string | null>(null);
 onMounted(() => {
     if (props.discoveredAccounts && props.discoveredAccounts.length > 0) {
         showDiscoveryModal.value = true;
-        // Selecionar todas por default
         selectedDiscovered.value = props.discoveredAccounts.map((_, i) => i);
     }
-
-    // Listener para popup OAuth
     window.addEventListener('message', handleOAuthMessage);
 });
 
 onUnmounted(() => {
     window.removeEventListener('message', handleOAuthMessage);
+    if (toastTimeout.value) clearTimeout(toastTimeout.value);
 });
 
 function connectOAuth(platform: string) {
     connectingPlatform.value = platform;
-
-    // Buscar URL OAuth via API e abrir popup
     const params = new URLSearchParams({ popup: '1' });
 
     fetch(route('social.oauth.redirect', platform) + '?' + params.toString(), {
@@ -102,10 +119,7 @@ function connectOAuth(platform: string) {
             const left = window.screenX + (window.outerWidth - width) / 2;
             const top = window.screenY + (window.outerHeight - height) / 2;
             const features = `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`;
-
             const popup = window.open(data.url, 'oauth_popup', features);
-
-            // Monitorar se o popup foi fechado manualmente
             const checkClosed = setInterval(() => {
                 if (popup && popup.closed) {
                     clearInterval(checkClosed);
@@ -114,22 +128,24 @@ function connectOAuth(platform: string) {
             }, 500);
         } else {
             connectingPlatform.value = null;
+            showToast(data.error || 'Erro ao iniciar autenticação', 'error');
         }
     })
     .catch(() => {
         connectingPlatform.value = null;
+        showToast('Erro ao conectar. Verifique sua conexão.', 'error');
     });
 }
 
-// Listener para mensagens do popup OAuth
 function handleOAuthMessage(event: MessageEvent) {
     if (event.data?.type !== 'oauth_callback') return;
-
     connectingPlatform.value = null;
 
     if (event.data.status === 'success') {
-        // Recarregar a página para mostrar as contas descobertas
+        showToast(`${event.data.accountsCount} conta(s) encontrada(s)! Selecione as que deseja conectar.`, 'info');
         router.reload({ preserveScroll: true });
+    } else {
+        showToast(event.data.message || 'Erro no OAuth', 'error');
     }
 }
 
@@ -148,10 +164,12 @@ function saveDiscoveredAccounts() {
     router.post(route('social.oauth.save'), {
         selected: selectedDiscovered.value,
     }, {
-        onFinish: () => {
-            savingAccounts.value = false;
+        onSuccess: () => {
             showDiscoveryModal.value = false;
             selectedDiscovered.value = [];
+        },
+        onFinish: () => {
+            savingAccounts.value = false;
         },
     });
 }
@@ -185,11 +203,11 @@ function reconnectOAuth(account: SocialAccount) {
     connectOAuth(account.platform);
 }
 
-const tokenStatusLabels: Record<string, { label: string; color: string; bg: string }> = {
-    ativo: { label: 'Conectado', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/30' },
-    expirado: { label: 'Token expirado', color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/30' },
-    renovar: { label: 'Renovar token', color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/30' },
-    sem_token: { label: 'Sem token', color: 'text-gray-500', bg: 'bg-gray-500/10 border-gray-500/30' },
+const tokenStatusLabels: Record<string, { label: string; color: string; bg: string; icon: string }> = {
+    ativo: { label: 'Conectado', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/30', icon: '●' },
+    expirado: { label: 'Token expirado', color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/30', icon: '!' },
+    renovar: { label: 'Renovar token', color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/30', icon: '↻' },
+    sem_token: { label: 'Sem token', color: 'text-gray-500', bg: 'bg-gray-500/10 border-gray-500/30', icon: '○' },
 };
 
 // Agrupar contas por plataforma
@@ -202,37 +220,55 @@ const accountsByPlatform = computed(() => {
     return grouped;
 });
 
-const unconnectedPlatforms = computed(() => {
-    const connected = new Set(props.accounts.map(a => a.platform));
-    return props.platforms.filter(p => !connected.has(p.value));
+const totalActive = computed(() => props.accounts.filter(a => a.is_active).length);
+const totalInactive = computed(() => props.accounts.filter(a => !a.is_active).length);
+const totalExpired = computed(() => props.accounts.filter(a => a.token_status === 'expirado').length);
+
+const connectedPlatforms = computed(() => {
+    const set = new Set(props.accounts.map(a => a.platform));
+    return props.platforms.filter(p => set.has(p.value));
 });
 
-// Infos visuais das plataformas
+const unconnectedPlatforms = computed(() => {
+    const set = new Set(props.accounts.map(a => a.platform));
+    return props.platforms.filter(p => !set.has(p.value));
+});
+
+// Infos visuais
 const platformInfo: Record<string, { desc: string; features: string[] }> = {
     instagram: {
-        desc: 'Conecte via Meta Business Suite para publicar posts, reels e stories automaticamente.',
+        desc: 'Meta Business Suite para posts, reels e stories.',
         features: ['Publicar posts/reels', 'Ver insights', 'Agendar conteudo'],
     },
     facebook: {
-        desc: 'Conecte suas paginas do Facebook para gerenciar publicacoes e monitorar metricas.',
+        desc: 'Gerenciar paginas, publicacoes e metricas.',
         features: ['Publicar em paginas', 'Gerenciar respostas', 'Ver metricas'],
     },
     linkedin: {
-        desc: 'Conecte seu perfil ou pagina da empresa para publicar conteudo profissional.',
+        desc: 'Perfil ou pagina da empresa para conteudo profissional.',
         features: ['Publicar artigos', 'Pagina da empresa', 'Analytics'],
     },
     youtube: {
-        desc: 'Conecte seu canal para gerenciar videos e acompanhar metricas de audiencia.',
+        desc: 'Gerenciar videos e acompanhar metricas de audiencia.',
         features: ['Upload de videos', 'Gerenciar canal', 'Metricas'],
     },
     tiktok: {
-        desc: 'Conecte sua conta TikTok para publicar videos e acompanhar desempenho.',
+        desc: 'Publicar videos e acompanhar desempenho.',
         features: ['Publicar videos', 'Ver estatisticas', 'Agendar posts'],
     },
     pinterest: {
-        desc: 'Conecte para publicar pins e gerenciar boards automaticamente.',
+        desc: 'Publicar pins e gerenciar boards automaticamente.',
         features: ['Criar pins', 'Gerenciar boards', 'Analytics'],
     },
+};
+
+const platformIcons: Record<string, string> = {
+    instagram: 'M12 2c2.717 0 3.056.01 4.122.06 1.065.05 1.79.217 2.428.465.66.254 1.216.598 1.772 1.153a4.908 4.908 0 0 1 1.153 1.772c.247.637.415 1.363.465 2.428.047 1.066.06 1.405.06 4.122 0 2.717-.01 3.056-.06 4.122-.05 1.065-.218 1.79-.465 2.428a4.883 4.883 0 0 1-1.153 1.772 4.915 4.915 0 0 1-1.772 1.153c-.637.247-1.363.415-2.428.465-1.066.047-1.405.06-4.122.06-2.717 0-3.056-.01-4.122-.06-1.065-.05-1.79-.218-2.428-.465a4.89 4.89 0 0 1-1.772-1.153 4.904 4.904 0 0 1-1.153-1.772c-.248-.637-.415-1.363-.465-2.428C2.013 15.056 2 14.717 2 12c0-2.717.01-3.056.06-4.122.05-1.066.217-1.79.465-2.428a4.88 4.88 0 0 1 1.153-1.772A4.897 4.897 0 0 1 5.45 2.525c.638-.248 1.362-.415 2.428-.465C8.944 2.013 9.283 2 12 2zm0 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm6.5-.25a1.25 1.25 0 0 0-2.5 0 1.25 1.25 0 0 0 2.5 0zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z',
+    facebook: 'M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z',
+    linkedin: 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z',
+    tiktok: 'M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z',
+    youtube: 'M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z',
+    pinterest: 'M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.162-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.631-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12.017 24c6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z',
 };
 
 function formatNumber(num: number | null | undefined): string {
@@ -249,14 +285,39 @@ function formatNumber(num: number | null | undefined): string {
     <AuthenticatedLayout>
         <template #header>
             <div class="flex items-center justify-between">
-                <h1 class="text-xl font-semibold text-white">Contas Conectadas</h1>
-                <div class="flex items-center gap-2">
-                    <button @click="openManualModal()" class="rounded-xl bg-gray-800 border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700 transition">
-                        Adicionar manual
-                    </button>
+                <div>
+                    <h1 class="text-xl font-semibold text-white">Contas Conectadas</h1>
+                    <p class="text-sm text-gray-500 mt-0.5" v-if="accounts.length > 0">
+                        {{ totalActive }} ativa(s)
+                        <span v-if="totalInactive > 0"> · {{ totalInactive }} inativa(s)</span>
+                        <span v-if="totalExpired > 0" class="text-red-400"> · {{ totalExpired }} com token expirado</span>
+                    </p>
                 </div>
+                <button @click="openManualModal()" class="rounded-xl bg-gray-800 border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700 transition">
+                    + Adicionar manual
+                </button>
             </div>
         </template>
+
+        <!-- Toast notification -->
+        <Teleport to="body">
+            <Transition enter-active-class="transition ease-out duration-300" enter-from-class="translate-y-2 opacity-0" enter-to-class="translate-y-0 opacity-100" leave-active-class="transition ease-in duration-200" leave-from-class="translate-y-0 opacity-100" leave-to-class="translate-y-2 opacity-0">
+                <div v-if="toast" class="fixed bottom-6 right-6 z-[100] max-w-sm">
+                    <div :class="[
+                        'rounded-xl border px-5 py-3.5 shadow-2xl backdrop-blur-sm flex items-center gap-3',
+                        toast.type === 'success' ? 'bg-emerald-600/90 border-emerald-500/50 text-white' : '',
+                        toast.type === 'error' ? 'bg-red-600/90 border-red-500/50 text-white' : '',
+                        toast.type === 'info' ? 'bg-indigo-600/90 border-indigo-500/50 text-white' : '',
+                    ]">
+                        <span class="text-lg">{{ toast.type === 'success' ? '✓' : toast.type === 'error' ? '✕' : 'ℹ' }}</span>
+                        <p class="text-sm font-medium">{{ toast.message }}</p>
+                        <button @click="toast = null" class="ml-2 opacity-60 hover:opacity-100 transition">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                        </button>
+                    </div>
+                </div>
+            </Transition>
+        </Teleport>
 
         <div v-if="!currentBrand" class="rounded-2xl bg-gray-900 border border-gray-800 p-12 text-center">
             <h3 class="text-lg font-medium text-gray-300">Nenhuma marca selecionada</h3>
@@ -264,61 +325,76 @@ function formatNumber(num: number | null | undefined): string {
         </div>
 
         <template v-else>
-            <!-- Contas conectadas -->
-            <div v-if="accounts.length > 0" class="mb-8">
-                <h2 class="text-sm font-medium text-gray-400 mb-3">Contas ativas ({{ accounts.length }})</h2>
-                <div class="space-y-3">
-                    <div v-for="account in accounts" :key="account.id" class="rounded-2xl bg-gray-900 border border-gray-800 p-5 hover:border-gray-700 transition">
-                        <div class="flex items-center gap-4">
-                            <!-- Avatar / Platform icon -->
+            <!-- Contas conectadas agrupadas por plataforma -->
+            <div v-if="accounts.length > 0" class="mb-8 space-y-4">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-sm font-medium text-gray-400 uppercase tracking-wide">Minhas contas</h2>
+                    <span class="text-xs text-gray-600">{{ accounts.length }} conta(s) no total</span>
+                </div>
+
+                <div v-for="plat in connectedPlatforms" :key="plat.value" class="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
+                    <!-- Platform header -->
+                    <div class="flex items-center gap-3 px-5 py-3 border-b border-gray-800/50" :style="{ borderLeftWidth: '3px', borderLeftColor: plat.color }">
+                        <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0" :style="{ backgroundColor: plat.color }">
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path :d="platformIcons[plat.value] || ''" /></svg>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="text-sm font-semibold text-white">{{ plat.label }}</h3>
+                            <p class="text-[10px] text-gray-500">{{ (accountsByPlatform[plat.value] || []).length }} conta(s)</p>
+                        </div>
+                        <button @click="connectOAuth(plat.value)" v-if="oauthConfigured[plat.value]"
+                            :disabled="connectingPlatform === plat.value"
+                            class="rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-400 hover:bg-indigo-600/10 border border-indigo-500/30 transition disabled:opacity-50">
+                            <span v-if="connectingPlatform === plat.value" class="inline-flex items-center gap-1">
+                                <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                Aguardando...
+                            </span>
+                            <span v-else>+ Adicionar conta</span>
+                        </button>
+                    </div>
+
+                    <!-- Account rows -->
+                    <div class="divide-y divide-gray-800/50">
+                        <div v-for="account in accountsByPlatform[plat.value]" :key="account.id" class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-800/30 transition">
+                            <!-- Avatar -->
                             <div class="relative shrink-0">
-                                <img v-if="account.avatar_url" :src="account.avatar_url" :alt="account.display_name || account.username" class="w-12 h-12 rounded-xl object-cover" />
-                                <div v-else class="w-12 h-12 rounded-xl flex items-center justify-center text-white text-lg font-bold" :style="{ backgroundColor: account.platform_color }">
+                                <img v-if="account.avatar_url" :src="account.avatar_url" :alt="account.display_name || account.username" class="w-10 h-10 rounded-xl object-cover" />
+                                <div v-else class="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold" :style="{ backgroundColor: account.platform_color }">
                                     {{ (account.display_name || account.username || 'A')[0].toUpperCase() }}
-                                </div>
-                                <!-- Platform badge -->
-                                <div class="absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold border-2 border-gray-900" :style="{ backgroundColor: account.platform_color }">
-                                    {{ account.platform_label[0] }}
                                 </div>
                             </div>
 
                             <!-- Info -->
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2">
-                                    <p class="font-semibold text-white truncate">{{ account.display_name || account.username }}</p>
-                                    <span :class="['rounded-full border px-2 py-0.5 text-[10px] font-medium', tokenStatusLabels[account.token_status]?.bg || 'bg-gray-800', tokenStatusLabels[account.token_status]?.color || 'text-gray-500']">
-                                        {{ tokenStatusLabels[account.token_status]?.label || account.token_status }}
+                                    <p class="font-medium text-white text-sm truncate">{{ account.display_name || account.username }}</p>
+                                    <span :class="['rounded-full border px-2 py-0.5 text-[10px] font-medium', tokenStatusLabels[account.token_status]?.bg, tokenStatusLabels[account.token_status]?.color]">
+                                        {{ tokenStatusLabels[account.token_status]?.icon }} {{ tokenStatusLabels[account.token_status]?.label }}
                                     </span>
+                                    <span v-if="!account.is_active" class="rounded-full bg-gray-700 px-2 py-0.5 text-[10px] text-gray-400">Inativa</span>
                                 </div>
-                                <p class="text-xs text-gray-500">@{{ account.username }} · {{ account.platform_label }}</p>
-                                <!-- Metadata resumida -->
-                                <div v-if="account.metadata" class="flex items-center gap-3 mt-1">
-                                    <span v-if="account.metadata.followers_count" class="text-[10px] text-gray-500">
-                                        {{ formatNumber(account.metadata.followers_count) }} seguidores
-                                    </span>
-                                    <span v-if="account.metadata.fan_count" class="text-[10px] text-gray-500">
-                                        {{ formatNumber(account.metadata.fan_count) }} fas
-                                    </span>
-                                    <span v-if="account.metadata.subscriber_count" class="text-[10px] text-gray-500">
-                                        {{ formatNumber(account.metadata.subscriber_count) }} inscritos
-                                    </span>
-                                    <span v-if="account.metadata.type" class="text-[10px] text-gray-600">
-                                        {{ account.metadata.type }}
-                                    </span>
+                                <div class="flex items-center gap-3 mt-0.5">
+                                    <p class="text-xs text-gray-500">@{{ account.username }}</p>
+                                    <span v-if="account.metadata?.followers_count" class="text-[10px] text-gray-600">{{ formatNumber(account.metadata.followers_count) }} seguidores</span>
+                                    <span v-if="account.metadata?.fan_count" class="text-[10px] text-gray-600">{{ formatNumber(account.metadata.fan_count) }} fas</span>
+                                    <span v-if="account.metadata?.subscriber_count" class="text-[10px] text-gray-600">{{ formatNumber(account.metadata.subscriber_count) }} inscritos</span>
+                                    <span v-if="account.metadata?.type" class="text-[10px] text-gray-600 bg-gray-800 rounded px-1.5 py-0.5">{{ account.metadata.type }}</span>
+                                    <span class="text-[10px] text-gray-700">{{ account.created_at }}</span>
                                 </div>
                             </div>
 
                             <!-- Actions -->
-                            <div class="flex items-center gap-2 shrink-0">
+                            <div class="flex items-center gap-1.5 shrink-0">
                                 <button v-if="account.token_status === 'expirado' || account.token_status === 'renovar'" @click="reconnectOAuth(account)"
-                                    class="rounded-lg bg-indigo-600/20 border border-indigo-500/30 px-3 py-1.5 text-xs font-medium text-indigo-400 hover:bg-indigo-600/30 transition">
-                                    Reconectar
+                                    class="rounded-lg bg-indigo-600/20 border border-indigo-500/30 px-2.5 py-1 text-[11px] font-medium text-indigo-400 hover:bg-indigo-600/30 transition" title="Reconectar OAuth">
+                                    ↻ Reconectar
                                 </button>
                                 <button @click="toggleAccount(account.id)"
-                                    :class="['rounded-lg px-3 py-1.5 text-xs font-medium transition border', account.is_active ? 'text-amber-400 hover:bg-amber-500/10 border-amber-500/30' : 'text-emerald-400 hover:bg-emerald-500/10 border-emerald-500/30']">
+                                    :class="['rounded-lg px-2.5 py-1 text-[11px] font-medium transition border', account.is_active ? 'text-amber-400 hover:bg-amber-500/10 border-amber-500/30' : 'text-emerald-400 hover:bg-emerald-500/10 border-emerald-500/30']"
+                                    :title="account.is_active ? 'Desativar conta' : 'Ativar conta'">
                                     {{ account.is_active ? 'Desativar' : 'Ativar' }}
                                 </button>
-                                <button @click="removeAccount(account.id)" class="rounded-lg px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/10 border border-red-500/30 transition">
+                                <button @click="removeAccount(account.id)" class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/10 border border-red-500/30 transition" title="Remover conta">
                                     Remover
                                 </button>
                             </div>
@@ -327,82 +403,70 @@ function formatNumber(num: number | null | undefined): string {
                 </div>
             </div>
 
+            <!-- Mensagem quando nao tem contas -->
+            <div v-else class="rounded-2xl bg-gray-900 border border-gray-800 border-dashed p-10 text-center mb-8">
+                <div class="w-16 h-16 mx-auto rounded-2xl bg-gray-800 flex items-center justify-center mb-4">
+                    <svg class="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.06a4.5 4.5 0 00-6.364-6.364L4.757 8.757" /></svg>
+                </div>
+                <h3 class="text-lg font-medium text-gray-300">Nenhuma conta conectada</h3>
+                <p class="mt-2 text-sm text-gray-500 max-w-md mx-auto">Conecte suas redes sociais para gerenciar publicacoes, agendar conteudo e acompanhar metricas - tudo em um so lugar.</p>
+            </div>
+
             <!-- Conectar novas plataformas -->
             <div>
-                <h2 class="text-sm font-medium text-gray-400 mb-3">Conectar plataforma</h2>
-                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <div v-for="platform in platforms" :key="platform.value" class="rounded-2xl bg-gray-900 border border-gray-800 p-5 hover:border-gray-700 transition">
-                        <div class="flex items-start gap-4 mb-4">
-                            <div class="w-12 h-12 rounded-xl flex items-center justify-center text-white shrink-0" :style="{ backgroundColor: platform.color }">
-                                <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
-                                    <template v-if="platform.value === 'instagram'">
-                                        <path d="M12 2c2.717 0 3.056.01 4.122.06 1.065.05 1.79.217 2.428.465.66.254 1.216.598 1.772 1.153a4.908 4.908 0 0 1 1.153 1.772c.247.637.415 1.363.465 2.428.047 1.066.06 1.405.06 4.122 0 2.717-.01 3.056-.06 4.122-.05 1.065-.218 1.79-.465 2.428a4.883 4.883 0 0 1-1.153 1.772 4.915 4.915 0 0 1-1.772 1.153c-.637.247-1.363.415-2.428.465-1.066.047-1.405.06-4.122.06-2.717 0-3.056-.01-4.122-.06-1.065-.05-1.79-.218-2.428-.465a4.89 4.89 0 0 1-1.772-1.153 4.904 4.904 0 0 1-1.153-1.772c-.248-.637-.415-1.363-.465-2.428C2.013 15.056 2 14.717 2 12c0-2.717.01-3.056.06-4.122.05-1.066.217-1.79.465-2.428a4.88 4.88 0 0 1 1.153-1.772A4.897 4.897 0 0 1 5.45 2.525c.638-.248 1.362-.415 2.428-.465C8.944 2.013 9.283 2 12 2zm0 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm6.5-.25a1.25 1.25 0 0 0-2.5 0 1.25 1.25 0 0 0 2.5 0zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z"/>
-                                    </template>
-                                    <template v-else-if="platform.value === 'facebook'">
-                                        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-                                    </template>
-                                    <template v-else-if="platform.value === 'linkedin'">
-                                        <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
-                                    </template>
-                                    <template v-else-if="platform.value === 'tiktok'">
-                                        <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/>
-                                    </template>
-                                    <template v-else-if="platform.value === 'youtube'">
-                                        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-                                    </template>
-                                    <template v-else-if="platform.value === 'pinterest'">
-                                        <path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.162-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.631-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12.017 24c6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z"/>
-                                    </template>
-                                </svg>
+                <h2 class="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3">{{ accounts.length > 0 ? 'Conectar mais plataformas' : 'Escolha uma plataforma para conectar' }}</h2>
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div v-for="platform in platforms" :key="platform.value"
+                        class="rounded-2xl bg-gray-900 border border-gray-800 p-5 hover:border-gray-700 transition group">
+                        <div class="flex items-start gap-3 mb-3">
+                            <div class="w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0" :style="{ backgroundColor: platform.color }">
+                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path :d="platformIcons[platform.value] || ''" /></svg>
                             </div>
                             <div class="flex-1 min-w-0">
-                                <h3 class="text-sm font-semibold text-white">{{ platform.label }}</h3>
-                                <p class="text-[11px] text-gray-500 mt-0.5 line-clamp-2">{{ platformInfo[platform.value]?.desc || '' }}</p>
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-sm font-semibold text-white">{{ platform.label }}</h3>
+                                    <span v-if="accountsByPlatform[platform.value]" class="text-[10px] text-emerald-400 bg-emerald-500/10 rounded-full px-2 py-0.5">
+                                        {{ accountsByPlatform[platform.value].length }} conectada(s)
+                                    </span>
+                                </div>
+                                <p class="text-[11px] text-gray-500 mt-0.5">{{ platformInfo[platform.value]?.desc || '' }}</p>
                             </div>
                         </div>
 
                         <!-- Features -->
-                        <div v-if="platformInfo[platform.value]?.features" class="flex flex-wrap gap-1.5 mb-4">
-                            <span v-for="feat in platformInfo[platform.value].features" :key="feat" class="rounded-md bg-gray-800 px-2 py-0.5 text-[10px] text-gray-500">
+                        <div v-if="platformInfo[platform.value]?.features" class="flex flex-wrap gap-1 mb-3">
+                            <span v-for="feat in platformInfo[platform.value].features" :key="feat" class="rounded-md bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">
                                 {{ feat }}
                             </span>
                         </div>
 
-                        <!-- Connected count -->
-                        <div v-if="accountsByPlatform[platform.value]" class="text-[10px] text-gray-600 mb-3">
-                            {{ accountsByPlatform[platform.value].length }} conta(s) conectada(s)
-                        </div>
-
-                        <!-- Connect buttons -->
+                        <!-- Botoes -->
                         <div class="flex gap-2">
                             <button
                                 v-if="oauthConfigured[platform.value]"
                                 @click="connectOAuth(platform.value)"
                                 :disabled="connectingPlatform === platform.value"
-                                class="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white transition disabled:opacity-70"
+                                class="flex-1 rounded-xl py-2 text-sm font-semibold text-white transition disabled:opacity-70"
                                 :style="connectingPlatform !== platform.value ? { backgroundColor: platform.color } : {}"
                                 :class="connectingPlatform === platform.value ? 'bg-gray-800 border border-indigo-500/30 !text-indigo-400' : ''"
                             >
-                                <span v-if="connectingPlatform === platform.value" class="inline-flex items-center gap-2">
-                                    <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                <span v-if="connectingPlatform === platform.value" class="inline-flex items-center gap-1.5">
+                                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                                     Aguardando login...
                                 </span>
-                                <span v-else class="inline-flex items-center gap-1.5">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
-                                    Conectar conta
-                                </span>
+                                <span v-else>Conectar conta</span>
                             </button>
                             <button
                                 v-if="!oauthConfigured[platform.value]"
                                 @click="openManualModal(platform.value)"
-                                class="flex-1 rounded-xl border border-gray-700 py-2.5 text-sm font-medium text-gray-400 hover:text-white hover:border-gray-600 transition"
+                                class="flex-1 rounded-xl border border-gray-700 py-2 text-sm font-medium text-gray-400 hover:text-white hover:border-gray-600 transition"
                             >
                                 Adicionar manual
                             </button>
                             <button
                                 v-if="oauthConfigured[platform.value]"
                                 @click="openManualModal(platform.value)"
-                                class="rounded-xl border border-gray-700 px-3 py-2.5 text-xs text-gray-500 hover:text-white hover:border-gray-600 transition"
+                                class="rounded-xl border border-gray-700 px-3 py-2 text-xs text-gray-500 hover:text-white hover:border-gray-600 transition"
                                 title="Adicionar manualmente"
                             >
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
@@ -412,7 +476,7 @@ function formatNumber(num: number | null | undefined): string {
                         <!-- Not configured warning -->
                         <div v-if="!oauthConfigured[platform.value]" class="mt-2">
                             <Link :href="route('settings.index') + '?tab=oauth'" class="text-[10px] text-amber-400 hover:text-amber-300 underline underline-offset-2 transition">
-                                Configurar OAuth em Configurações para habilitar conexão automática
+                                Configurar OAuth em Configuracoes para habilitar conexao automatica
                             </Link>
                         </div>
                     </div>
@@ -422,117 +486,115 @@ function formatNumber(num: number | null | undefined): string {
 
         <!-- Modal: Contas descobertas via OAuth -->
         <Teleport to="body">
-            <div v-if="showDiscoveryModal" class="fixed inset-0 z-[60] flex items-center justify-center">
-                <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showDiscoveryModal = false" />
-                <div class="relative w-full max-w-lg rounded-2xl bg-gray-900 border border-gray-700 p-6 shadow-2xl mx-4 max-h-[80vh] overflow-y-auto">
-                    <div class="flex items-center justify-between mb-2">
-                        <h3 class="text-lg font-semibold text-white">Contas encontradas</h3>
-                        <button @click="showDiscoveryModal = false" class="text-gray-500 hover:text-white transition">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                        </button>
-                    </div>
-                    <p class="text-sm text-gray-400 mb-4">Selecione as contas que deseja conectar:</p>
-
-                    <div class="space-y-2 mb-6">
-                        <button
-                            v-for="(account, index) in discoveredAccounts"
-                            :key="index"
-                            @click="toggleDiscoveredAccount(index)"
-                            :class="[
-                                'w-full rounded-xl border p-4 text-left transition flex items-center gap-3',
-                                selectedDiscovered.includes(index) ? 'border-indigo-500 bg-indigo-600/10' : 'border-gray-700 bg-gray-800/50 hover:border-gray-600',
-                            ]"
-                        >
-                            <!-- Checkbox -->
-                            <div :class="['w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition', selectedDiscovered.includes(index) ? 'border-indigo-500 bg-indigo-600' : 'border-gray-600']">
-                                <svg v-if="selectedDiscovered.includes(index)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><polyline points="20 6 9 17 4 12" /></svg>
-                            </div>
-
-                            <!-- Avatar -->
-                            <img v-if="account.avatar_url" :src="account.avatar_url" class="w-10 h-10 rounded-lg object-cover shrink-0" />
-                            <div v-else class="w-10 h-10 rounded-lg bg-gray-700 flex items-center justify-center text-gray-400 font-bold shrink-0">
-                                {{ (account.display_name || account.username || '?')[0].toUpperCase() }}
-                            </div>
-
-                            <!-- Info -->
-                            <div class="flex-1 min-w-0">
-                                <p class="text-sm font-medium text-white truncate">{{ account.display_name || account.username }}</p>
-                                <p class="text-xs text-gray-500">@{{ account.username }} · {{ account.type }}</p>
-                                <div v-if="account.metadata" class="flex items-center gap-2 mt-0.5">
-                                    <span v-if="account.metadata.followers_count" class="text-[10px] text-gray-500">{{ formatNumber(account.metadata.followers_count) }} seguidores</span>
-                                    <span v-if="account.metadata.fan_count" class="text-[10px] text-gray-500">{{ formatNumber(account.metadata.fan_count) }} fas</span>
-                                    <span v-if="account.metadata.subscriber_count" class="text-[10px] text-gray-500">{{ formatNumber(account.metadata.subscriber_count) }} inscritos</span>
-                                </div>
-                            </div>
-                        </button>
-                    </div>
-
-                    <div class="flex items-center justify-between">
-                        <button @click="selectedDiscovered = selectedDiscovered.length === discoveredAccounts.length ? [] : discoveredAccounts.map((_, i) => i)" class="text-xs text-gray-400 hover:text-white transition">
-                            {{ selectedDiscovered.length === discoveredAccounts.length ? 'Desmarcar todas' : 'Selecionar todas' }}
-                        </button>
-                        <div class="flex gap-2">
-                            <button @click="showDiscoveryModal = false" class="rounded-xl px-4 py-2 text-sm text-gray-400 hover:text-white transition">Cancelar</button>
-                            <button @click="saveDiscoveredAccounts" :disabled="selectedDiscovered.length === 0 || savingAccounts" class="rounded-xl bg-indigo-600 px-6 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition disabled:opacity-50">
-                                {{ savingAccounts ? 'Salvando...' : `Conectar ${selectedDiscovered.length} conta(s)` }}
+            <Transition enter-active-class="transition ease-out duration-200" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition ease-in duration-150" leave-from-class="opacity-100" leave-to-class="opacity-0">
+                <div v-if="showDiscoveryModal" class="fixed inset-0 z-[60] flex items-center justify-center">
+                    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showDiscoveryModal = false" />
+                    <div class="relative w-full max-w-lg rounded-2xl bg-gray-900 border border-gray-700 p-6 shadow-2xl mx-4 max-h-[80vh] overflow-y-auto">
+                        <div class="flex items-center justify-between mb-2">
+                            <h3 class="text-lg font-semibold text-white">Contas encontradas</h3>
+                            <button @click="showDiscoveryModal = false" class="text-gray-500 hover:text-white transition">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                             </button>
+                        </div>
+                        <p class="text-sm text-gray-400 mb-4">Selecione as contas que deseja conectar a esta marca:</p>
+
+                        <div class="space-y-2 mb-6">
+                            <button
+                                v-for="(account, index) in discoveredAccounts"
+                                :key="index"
+                                @click="toggleDiscoveredAccount(index)"
+                                :class="[
+                                    'w-full rounded-xl border p-4 text-left transition flex items-center gap-3',
+                                    selectedDiscovered.includes(index) ? 'border-indigo-500 bg-indigo-600/10' : 'border-gray-700 bg-gray-800/50 hover:border-gray-600',
+                                ]"
+                            >
+                                <div :class="['w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition', selectedDiscovered.includes(index) ? 'border-indigo-500 bg-indigo-600' : 'border-gray-600']">
+                                    <svg v-if="selectedDiscovered.includes(index)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><polyline points="20 6 9 17 4 12" /></svg>
+                                </div>
+                                <img v-if="account.avatar_url" :src="account.avatar_url" class="w-10 h-10 rounded-lg object-cover shrink-0" />
+                                <div v-else class="w-10 h-10 rounded-lg bg-gray-700 flex items-center justify-center text-gray-400 font-bold shrink-0">
+                                    {{ (account.display_name || account.username || '?')[0].toUpperCase() }}
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-sm font-medium text-white truncate">{{ account.display_name || account.username }}</p>
+                                    <p class="text-xs text-gray-500">@{{ account.username }} · {{ account.type }}</p>
+                                    <div v-if="account.metadata" class="flex items-center gap-2 mt-0.5">
+                                        <span v-if="account.metadata.followers_count" class="text-[10px] text-gray-500">{{ formatNumber(account.metadata.followers_count) }} seguidores</span>
+                                        <span v-if="account.metadata.fan_count" class="text-[10px] text-gray-500">{{ formatNumber(account.metadata.fan_count) }} fas</span>
+                                    </div>
+                                </div>
+                            </button>
+                        </div>
+
+                        <div class="flex items-center justify-between border-t border-gray-800 pt-4">
+                            <button @click="selectedDiscovered = selectedDiscovered.length === discoveredAccounts.length ? [] : discoveredAccounts.map((_, i) => i)" class="text-xs text-gray-400 hover:text-white transition">
+                                {{ selectedDiscovered.length === discoveredAccounts.length ? 'Desmarcar todas' : 'Selecionar todas' }}
+                            </button>
+                            <div class="flex gap-2">
+                                <button @click="showDiscoveryModal = false" class="rounded-xl px-4 py-2 text-sm text-gray-400 hover:text-white transition">Cancelar</button>
+                                <button @click="saveDiscoveredAccounts" :disabled="selectedDiscovered.length === 0 || savingAccounts" class="rounded-xl bg-indigo-600 px-6 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition disabled:opacity-50">
+                                    <span v-if="savingAccounts" class="inline-flex items-center gap-1.5">
+                                        <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                        Salvando...
+                                    </span>
+                                    <span v-else>Conectar {{ selectedDiscovered.length }} conta(s)</span>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            </Transition>
         </Teleport>
 
         <!-- Modal: Adicionar manualmente -->
         <Teleport to="body">
-            <div v-if="showManualModal" class="fixed inset-0 z-[60] flex items-center justify-center">
-                <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showManualModal = false" />
-                <div class="relative w-full max-w-md rounded-2xl bg-gray-900 border border-gray-700 p-6 shadow-2xl mx-4">
-                    <div class="flex items-center justify-between mb-6">
-                        <h3 class="text-lg font-semibold text-white">Adicionar manualmente</h3>
-                        <button @click="showManualModal = false" class="text-gray-500 hover:text-white transition">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                        </button>
-                    </div>
-
-                    <div class="rounded-xl bg-amber-500/10 border border-amber-500/20 p-3 mb-4">
-                        <p class="text-xs text-amber-400">Use essa opcao apenas se o OAuth nao estiver disponivel. Voce precisara obter o Access Token diretamente do painel de desenvolvedores da plataforma.</p>
-                    </div>
-
-                    <form @submit.prevent="submitManual" class="space-y-4">
-                        <div>
-                            <label class="text-sm text-gray-400 mb-1 block">Plataforma *</label>
-                            <select v-model="manualForm.platform" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" required>
-                                <option value="">Selecione...</option>
-                                <option v-for="p in platforms" :key="p.value" :value="p.value">{{ p.label }}</option>
-                            </select>
-                            <InputError :message="manualForm.errors.platform" class="mt-1" />
-                        </div>
-                        <div>
-                            <label class="text-sm text-gray-400 mb-1 block">Nome de usuario *</label>
-                            <input v-model="manualForm.username" type="text" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="@usuario" required />
-                            <InputError :message="manualForm.errors.username" class="mt-1" />
-                        </div>
-                        <div>
-                            <label class="text-sm text-gray-400 mb-1 block">Nome de exibicao</label>
-                            <input v-model="manualForm.display_name" type="text" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="Nome da pagina/perfil" />
-                        </div>
-                        <div>
-                            <label class="text-sm text-gray-400 mb-1 block">ID na plataforma</label>
-                            <input v-model="manualForm.platform_user_id" type="text" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="ID numerico (opcional)" />
-                        </div>
-                        <div>
-                            <label class="text-sm text-gray-400 mb-1 block">Access Token</label>
-                            <input v-model="manualForm.access_token" type="password" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="Token de acesso" />
-                        </div>
-                        <div class="flex items-center justify-end gap-3 pt-2">
-                            <button type="button" @click="showManualModal = false" class="rounded-xl px-4 py-2 text-sm text-gray-400 hover:text-white transition">Cancelar</button>
-                            <button type="submit" :disabled="manualForm.processing" class="rounded-xl bg-indigo-600 px-6 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition disabled:opacity-50">
-                                {{ manualForm.processing ? 'Adicionando...' : 'Adicionar' }}
+            <Transition enter-active-class="transition ease-out duration-200" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition ease-in duration-150" leave-from-class="opacity-100" leave-to-class="opacity-0">
+                <div v-if="showManualModal" class="fixed inset-0 z-[60] flex items-center justify-center">
+                    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showManualModal = false" />
+                    <div class="relative w-full max-w-md rounded-2xl bg-gray-900 border border-gray-700 p-6 shadow-2xl mx-4">
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="text-lg font-semibold text-white">Adicionar manualmente</h3>
+                            <button @click="showManualModal = false" class="text-gray-500 hover:text-white transition">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                             </button>
                         </div>
-                    </form>
+
+                        <div class="rounded-xl bg-amber-500/10 border border-amber-500/20 p-3 mb-4">
+                            <p class="text-xs text-amber-400">Use essa opcao apenas se o OAuth nao estiver disponivel. Voce precisara obter o Access Token diretamente do painel de desenvolvedores da plataforma.</p>
+                        </div>
+
+                        <form @submit.prevent="submitManual" class="space-y-4">
+                            <div>
+                                <label class="text-sm text-gray-400 mb-1 block">Plataforma *</label>
+                                <select v-model="manualForm.platform" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" required>
+                                    <option value="">Selecione...</option>
+                                    <option v-for="p in platforms" :key="p.value" :value="p.value">{{ p.label }}</option>
+                                </select>
+                                <InputError :message="manualForm.errors.platform" class="mt-1" />
+                            </div>
+                            <div>
+                                <label class="text-sm text-gray-400 mb-1 block">Nome de usuario *</label>
+                                <input v-model="manualForm.username" type="text" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="@usuario" required />
+                                <InputError :message="manualForm.errors.username" class="mt-1" />
+                            </div>
+                            <div>
+                                <label class="text-sm text-gray-400 mb-1 block">Nome de exibicao</label>
+                                <input v-model="manualForm.display_name" type="text" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="Nome da pagina/perfil" />
+                            </div>
+                            <div>
+                                <label class="text-sm text-gray-400 mb-1 block">Access Token</label>
+                                <input v-model="manualForm.access_token" type="password" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="Token de acesso" />
+                            </div>
+                            <div class="flex items-center justify-end gap-3 pt-2">
+                                <button type="button" @click="showManualModal = false" class="rounded-xl px-4 py-2 text-sm text-gray-400 hover:text-white transition">Cancelar</button>
+                                <button type="submit" :disabled="manualForm.processing" class="rounded-xl bg-indigo-600 px-6 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition disabled:opacity-50">
+                                    {{ manualForm.processing ? 'Adicionando...' : 'Adicionar' }}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
                 </div>
-            </div>
+            </Transition>
         </Teleport>
     </AuthenticatedLayout>
 </template>
