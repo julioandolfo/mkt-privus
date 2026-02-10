@@ -41,6 +41,7 @@ const props = defineProps<{
     oauthConfigured: Record<string, boolean>;
     discoveredAccounts: DiscoveredAccount[];
     oauthPlatform: string | null;
+    discoveryToken: string | null;
 }>();
 
 const page = usePage();
@@ -71,6 +72,8 @@ watch(() => page.props.flash, () => checkFlash(), { deep: true });
 const showDiscoveryModal = ref(false);
 const selectedDiscovered = ref<number[]>([]);
 const savingAccounts = ref(false);
+// Token de descoberta (do banco, nao da sessao)
+const currentDiscoveryToken = ref<string | null>(null);
 
 // Estado do modal manual
 const showManualModal = ref(false);
@@ -87,9 +90,11 @@ const manualForm = useForm({
 // Connecting state
 const connectingPlatform = ref<string | null>(null);
 
-// Watch para abrir modal quando contas descobertas mudarem (apos reload ou navigation)
+// Watch para abrir modal quando contas descobertas mudarem (via props do servidor)
 watch(() => props.discoveredAccounts, (newVal) => {
+    console.log('[OAuth] discoveredAccounts prop changed:', newVal?.length, 'token:', props.discoveryToken);
     if (newVal && newVal.length > 0) {
+        currentDiscoveryToken.value = props.discoveryToken;
         showDiscoveryModal.value = true;
         selectedDiscovered.value = newVal.map((_, i) => i);
     }
@@ -98,6 +103,7 @@ watch(() => props.discoveredAccounts, (newVal) => {
 onMounted(() => {
     window.addEventListener('message', handleOAuthMessage);
     checkFlash();
+    console.log('[OAuth] Pagina montada. discoveredAccounts:', props.discoveredAccounts?.length, 'token:', props.discoveryToken);
 });
 
 onUnmounted(() => {
@@ -143,18 +149,61 @@ function connectOAuth(platform: string) {
 
 function handleOAuthMessage(event: MessageEvent) {
     if (event.data?.type !== 'oauth_callback') return;
+
+    console.log('[OAuth] Mensagem recebida do popup:', event.data);
     connectingPlatform.value = null;
 
     if (event.data.status === 'success') {
-        showToast(`${event.data.accountsCount} conta(s) encontrada(s)! Selecione as que deseja conectar.`, 'info');
-        // Usar visit ao inves de reload para garantir que os props sao atualizados
-        router.visit(route('social.accounts.index'), {
-            preserveScroll: true,
-            only: ['discoveredAccounts', 'oauthPlatform', 'accounts'],
-        });
+        const token = event.data.discoveryToken;
+        console.log('[OAuth] Token de descoberta recebido:', token ? token.substring(0, 12) + '...' : 'NENHUM');
+
+        if (token) {
+            showToast(`${event.data.accountsCount} conta(s) encontrada(s)! Carregando...`, 'info');
+
+            // Buscar contas via API usando o token do banco
+            fetch(route('social.oauth.discovered') + '?token=' + encodeURIComponent(token), {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('[OAuth] Contas recuperadas do banco:', data);
+                if (data.accounts && data.accounts.length > 0) {
+                    // Abrir modal diretamente com os dados da API (sem depender do Inertia props)
+                    currentDiscoveryToken.value = data.token;
+                    openDiscoveryModalWithAccounts(data.accounts);
+                } else {
+                    showToast('Nenhuma conta encontrada. Tente novamente.', 'error');
+                }
+            })
+            .catch(err => {
+                console.error('[OAuth] Erro ao buscar contas:', err);
+                showToast('Erro ao carregar contas descobertas.', 'error');
+            });
+        } else {
+            showToast('Token não recebido. Tente novamente.', 'error');
+        }
     } else {
         showToast(event.data.message || 'Erro no OAuth', 'error');
     }
+}
+
+// Contas carregadas diretamente da API (bypass do Inertia props)
+const apiDiscoveredAccounts = ref<DiscoveredAccount[]>([]);
+
+// Lista combinada: usa api se disponivel, senao usa props
+const activeDiscoveredAccounts = computed(() => {
+    if (apiDiscoveredAccounts.value.length > 0) return apiDiscoveredAccounts.value;
+    return props.discoveredAccounts || [];
+});
+
+function openDiscoveryModalWithAccounts(accounts: DiscoveredAccount[]) {
+    apiDiscoveredAccounts.value = accounts;
+    selectedDiscovered.value = accounts.map((_, i) => i);
+    showDiscoveryModal.value = true;
+    console.log('[OAuth] Modal aberto com', accounts.length, 'contas');
 }
 
 function toggleDiscoveredAccount(index: number) {
@@ -168,22 +217,34 @@ function toggleDiscoveredAccount(index: number) {
 
 function saveDiscoveredAccounts() {
     if (selectedDiscovered.value.length === 0) return;
+
+    const token = currentDiscoveryToken.value;
+    if (!token) {
+        showToast('Token de descoberta nao encontrado. Tente reconectar.', 'error');
+        return;
+    }
+
     savingAccounts.value = true;
+    console.log('[OAuth] Salvando contas com token:', token.substring(0, 12) + '...', 'selected:', selectedDiscovered.value);
 
     router.post(route('social.oauth.save'), {
         selected: selectedDiscovered.value,
+        discovery_token: token,
     }, {
         preserveScroll: true,
         onSuccess: (page: any) => {
             showDiscoveryModal.value = false;
             selectedDiscovered.value = [];
-            // Flash pode vir no page props apos redirect
+            apiDiscoveredAccounts.value = [];
+            currentDiscoveryToken.value = null;
             const flash = page?.props?.flash;
             if (flash?.success) showToast(flash.success, 'success');
             else if (flash?.error) showToast(flash.error, 'error');
             else showToast('Contas processadas!', 'success');
+            console.log('[OAuth] Contas salvas com sucesso');
         },
         onError: (errors: any) => {
+            console.error('[OAuth] Erro ao salvar contas:', errors);
             const msg = Object.values(errors).flat().join(', ') || 'Erro ao salvar contas.';
             showToast(msg, 'error');
         },
@@ -191,6 +252,12 @@ function saveDiscoveredAccounts() {
             savingAccounts.value = false;
         },
     });
+}
+
+function closeDiscoveryModal() {
+    showDiscoveryModal.value = false;
+    apiDiscoveredAccounts.value = [];
+    currentDiscoveryToken.value = null;
 }
 
 function openManualModal(platform?: string) {
@@ -507,11 +574,11 @@ function formatNumber(num: number | null | undefined): string {
         <Teleport to="body">
             <Transition enter-active-class="transition ease-out duration-200" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition ease-in duration-150" leave-from-class="opacity-100" leave-to-class="opacity-0">
                 <div v-if="showDiscoveryModal" class="fixed inset-0 z-[60] flex items-center justify-center">
-                    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showDiscoveryModal = false" />
+                    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="closeDiscoveryModal" />
                     <div class="relative w-full max-w-lg rounded-2xl bg-gray-900 border border-gray-700 p-6 shadow-2xl mx-4 max-h-[80vh] overflow-y-auto">
                         <div class="flex items-center justify-between mb-2">
                             <h3 class="text-lg font-semibold text-white">Contas encontradas</h3>
-                            <button @click="showDiscoveryModal = false" class="text-gray-500 hover:text-white transition">
+                            <button @click="closeDiscoveryModal" class="text-gray-500 hover:text-white transition">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                             </button>
                         </div>
@@ -519,7 +586,7 @@ function formatNumber(num: number | null | undefined): string {
 
                         <div class="space-y-2 mb-6">
                             <button
-                                v-for="(account, index) in discoveredAccounts"
+                                v-for="(account, index) in activeDiscoveredAccounts"
                                 :key="index"
                                 @click="toggleDiscoveredAccount(index)"
                                 :class="[
@@ -546,11 +613,11 @@ function formatNumber(num: number | null | undefined): string {
                         </div>
 
                         <div class="flex items-center justify-between border-t border-gray-800 pt-4">
-                            <button @click="selectedDiscovered = selectedDiscovered.length === discoveredAccounts.length ? [] : discoveredAccounts.map((_, i) => i)" class="text-xs text-gray-400 hover:text-white transition">
-                                {{ selectedDiscovered.length === discoveredAccounts.length ? 'Desmarcar todas' : 'Selecionar todas' }}
+                            <button @click="selectedDiscovered = selectedDiscovered.length === activeDiscoveredAccounts.length ? [] : activeDiscoveredAccounts.map((_, i) => i)" class="text-xs text-gray-400 hover:text-white transition">
+                                {{ selectedDiscovered.length === activeDiscoveredAccounts.length ? 'Desmarcar todas' : 'Selecionar todas' }}
                             </button>
                             <div class="flex gap-2">
-                                <button @click="showDiscoveryModal = false" class="rounded-xl px-4 py-2 text-sm text-gray-400 hover:text-white transition">Cancelar</button>
+                                <button @click="closeDiscoveryModal" class="rounded-xl px-4 py-2 text-sm text-gray-400 hover:text-white transition">Cancelar</button>
                                 <button @click="saveDiscoveredAccounts" :disabled="selectedDiscovered.length === 0 || savingAccounts" class="rounded-xl bg-indigo-600 px-6 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition disabled:opacity-50">
                                     <span v-if="savingAccounts" class="inline-flex items-center gap-1.5">
                                         <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>

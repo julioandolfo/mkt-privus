@@ -14,6 +14,7 @@ use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\SocialAccountController;
 use App\Http\Controllers\SocialOAuthController;
+use App\Http\Controllers\LogsController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -195,6 +196,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/oauth/redirect/{platform}', [AnalyticsController::class, 'oauthRedirect'])->name('oauth.redirect');
         Route::get('/oauth/callback/{platform}', [AnalyticsController::class, 'oauthCallback'])->name('oauth.callback');
         Route::post('/oauth/save', [AnalyticsController::class, 'saveOAuthAccounts'])->name('oauth.save');
+    });
+
+    // Logs do Sistema
+    Route::prefix('logs')->name('logs.')->group(function () {
+        Route::get('/', [LogsController::class, 'index'])->name('index');
+        Route::get('/{log}', [LogsController::class, 'show'])->name('show');
+        Route::post('/cleanup', [LogsController::class, 'cleanup'])->name('cleanup');
+        Route::post('/clear', [LogsController::class, 'clear'])->name('clear');
     });
 
     // ===== MODULOS FUTUROS =====

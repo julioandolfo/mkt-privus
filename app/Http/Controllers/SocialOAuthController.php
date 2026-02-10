@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\OAuthDiscoveredAccount;
 use App\Models\SocialAccount;
+use App\Models\SystemLog;
 use App\Services\Social\SocialOAuthService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -25,7 +27,14 @@ class SocialOAuthController extends Controller
         $validPlatforms = ['facebook', 'instagram', 'linkedin', 'youtube', 'tiktok', 'pinterest'];
         $isPopup = $request->boolean('popup', false);
 
+        SystemLog::info('oauth', 'oauth.redirect.start', "Iniciando redirect OAuth para {$platform}", [
+            'platform' => $platform,
+            'is_popup' => $isPopup,
+            'user_agent' => $request->userAgent(),
+        ]);
+
         if (!in_array($platform, $validPlatforms)) {
+            SystemLog::warning('oauth', 'oauth.redirect.invalid_platform', "Plataforma invalida: {$platform}");
             if ($isPopup) {
                 return response()->json(['error' => 'Plataforma não suportada.'], 400);
             }
@@ -35,6 +44,7 @@ class SocialOAuthController extends Controller
 
         $brand = $request->user()->getActiveBrand();
         if (!$brand) {
+            SystemLog::warning('oauth', 'oauth.redirect.no_brand', 'Nenhuma marca ativa selecionada');
             if ($isPopup) {
                 return response()->json(['error' => 'Selecione uma marca ativa antes de conectar.'], 400);
             }
@@ -56,8 +66,19 @@ class SocialOAuthController extends Controller
 
         $redirectUri = route('social.oauth.callback', $oauthPlatform);
 
+        SystemLog::debug('oauth', 'oauth.redirect.config', "Configuracao OAuth", [
+            'oauth_platform' => $oauthPlatform,
+            'redirect_uri' => $redirectUri,
+            'brand_id' => $brand->id,
+            'state_prefix' => substr($state, 0, 8) . '...',
+        ]);
+
         try {
             $authUrl = $this->oauthService->getAuthorizationUrl($platform, $redirectUri, $state);
+
+            SystemLog::info('oauth', 'oauth.redirect.success', "URL de autorizacao gerada com sucesso para {$platform}", [
+                'auth_url_domain' => parse_url($authUrl, PHP_URL_HOST),
+            ]);
 
             if ($isPopup) {
                 return response()->json(['url' => $authUrl]);
@@ -65,6 +86,11 @@ class SocialOAuthController extends Controller
 
             return redirect()->away($authUrl);
         } catch (\Throwable $e) {
+            SystemLog::error('oauth', 'oauth.redirect.error', "Erro ao gerar URL OAuth: {$e->getMessage()}", [
+                'platform' => $platform,
+                'exception' => get_class($e),
+                'trace' => substr($e->getTraceAsString(), 0, 1000),
+            ]);
             Log::error("OAuth redirect error for {$platform}", ['error' => $e->getMessage()]);
             if ($isPopup) {
                 return response()->json(['error' => 'Erro ao iniciar autenticação: ' . $e->getMessage()], 500);
@@ -77,24 +103,42 @@ class SocialOAuthController extends Controller
     /**
      * Callback de retorno após autorização na plataforma.
      * Troca o code por token e busca as contas disponíveis.
-     * Suporta modo popup (retorna blade que fecha popup).
+     * Salva contas no BANCO DE DADOS (nao mais sessao) para funcionar entre popup e janela principal.
      */
     public function callback(Request $request, string $platform): RedirectResponse|\Illuminate\Contracts\View\View
     {
         $isPopup = session('oauth_popup', false);
 
+        SystemLog::info('oauth', 'oauth.callback.start', "Callback OAuth recebido para {$platform}", [
+            'platform' => $platform,
+            'is_popup' => $isPopup,
+            'has_code' => $request->has('code'),
+            'has_error' => $request->has('error'),
+            'session_id' => session()->getId(),
+        ]);
+
         // Validar state
         $storedState = session('oauth_state');
         $receivedState = $request->get('state');
 
+        SystemLog::debug('oauth', 'oauth.callback.state_check', 'Verificando state CSRF', [
+            'stored_state_exists' => !empty($storedState),
+            'received_state_exists' => !empty($receivedState),
+            'states_match' => $storedState === $receivedState,
+        ]);
+
         if (!$storedState || $storedState !== $receivedState) {
+            SystemLog::error('oauth', 'oauth.callback.invalid_state', 'State CSRF invalido - sessao pode ter expirado', [
+                'stored_exists' => !empty($storedState),
+                'received_exists' => !empty($receivedState),
+            ]);
             if ($isPopup) {
                 return view('oauth.callback-popup', [
                     'status' => 'error',
                     'message' => 'Sessão inválida. Tente novamente.',
                     'platform' => $platform,
                     'accountsCount' => 0,
-                    'brandId' => null,
+                    'discoveryToken' => null,
                 ]);
             }
             return redirect()->route('social.accounts.index')
@@ -104,13 +148,17 @@ class SocialOAuthController extends Controller
         // Verificar erro
         if ($request->has('error')) {
             $errorDesc = $request->get('error_description', $request->get('error'));
+            SystemLog::warning('oauth', 'oauth.callback.denied', "Autorizacao negada pelo usuario: {$errorDesc}", [
+                'error_code' => $request->get('error'),
+                'error_reason' => $request->get('error_reason'),
+            ]);
             if ($isPopup) {
                 return view('oauth.callback-popup', [
                     'status' => 'error',
                     'message' => 'Autorização negada: ' . $errorDesc,
                     'platform' => $platform,
                     'accountsCount' => 0,
-                    'brandId' => null,
+                    'discoveryToken' => null,
                 ]);
             }
             return redirect()->route('social.accounts.index')
@@ -119,13 +167,14 @@ class SocialOAuthController extends Controller
 
         $code = $request->get('code');
         if (!$code) {
+            SystemLog::error('oauth', 'oauth.callback.no_code', 'Codigo de autorizacao nao recebido');
             if ($isPopup) {
                 return view('oauth.callback-popup', [
                     'status' => 'error',
                     'message' => 'Código de autorização não recebido.',
                     'platform' => $platform,
                     'accountsCount' => 0,
-                    'brandId' => null,
+                    'discoveryToken' => null,
                 ]);
             }
             return redirect()->route('social.accounts.index')
@@ -134,18 +183,39 @@ class SocialOAuthController extends Controller
 
         $originalPlatform = session('oauth_platform', $platform);
         $brandId = session('oauth_brand_id');
+        $userId = auth()->id();
 
-        // Limpar dados temporários (manter dados das contas)
+        // Limpar dados temporários da sessao
         session()->forget(['oauth_state', 'oauth_popup']);
 
         $redirectUri = route('social.oauth.callback', $platform);
+
+        SystemLog::info('oauth', 'oauth.callback.exchanging', "Trocando code por token para {$originalPlatform}", [
+            'brand_id' => $brandId,
+            'user_id' => $userId,
+        ]);
 
         try {
             // Trocar code por token
             $tokenData = $this->oauthService->exchangeCode($originalPlatform, $code, $redirectUri);
 
+            SystemLog::info('oauth', 'oauth.callback.token_received', "Token recebido com sucesso", [
+                'has_access_token' => !empty($tokenData['access_token']),
+                'has_refresh_token' => !empty($tokenData['refresh_token']),
+                'expires_in' => $tokenData['expires_in'] ?? 'N/A',
+            ]);
+
             // Buscar contas disponíveis
             $accounts = $this->oauthService->fetchAccounts($originalPlatform, $tokenData['access_token']);
+
+            SystemLog::info('oauth', 'oauth.callback.accounts_fetched', count($accounts) . " conta(s) encontrada(s) para {$originalPlatform}", [
+                'count' => count($accounts),
+                'accounts' => collect($accounts)->map(fn($a) => [
+                    'username' => $a['username'] ?? 'N/A',
+                    'type' => $a['type'] ?? 'N/A',
+                    'platform_user_id' => $a['platform_user_id'] ?? 'N/A',
+                ])->toArray(),
+            ]);
 
             if (empty($accounts)) {
                 if ($isPopup) {
@@ -154,28 +224,48 @@ class SocialOAuthController extends Controller
                         'message' => 'Nenhuma conta encontrada para esta plataforma.',
                         'platform' => $originalPlatform,
                         'accountsCount' => 0,
-                        'brandId' => $brandId,
+                        'discoveryToken' => null,
                     ]);
                 }
                 return redirect()->route('social.accounts.index')
                     ->with('error', 'Nenhuma conta encontrada para esta plataforma.');
             }
 
-            // Guardar contas na sessão para o usuário selecionar
+            // ===== SALVAR NO BANCO DE DADOS (nao mais sessao) =====
+            // Isso resolve o problema de sessao nao compartilhada entre popup e janela principal
             $expiresAt = isset($tokenData['expires_in'])
                 ? now()->addSeconds($tokenData['expires_in'])
                 : null;
 
-            session([
-                'oauth_discovered_accounts' => $accounts,
-                'oauth_token_data' => [
+            $discoveryToken = OAuthDiscoveredAccount::generateToken();
+
+            // Limpar registros anteriores deste usuario/brand
+            OAuthDiscoveredAccount::where('user_id', $userId)
+                ->where('brand_id', $brandId)
+                ->delete();
+
+            $discovery = OAuthDiscoveredAccount::create([
+                'session_token' => $discoveryToken,
+                'user_id' => $userId,
+                'brand_id' => $brandId,
+                'platform' => $originalPlatform,
+                'accounts' => $accounts,
+                'token_data' => [
                     'access_token' => $tokenData['access_token'],
                     'refresh_token' => $tokenData['refresh_token'] ?? null,
                     'expires_at' => $expiresAt?->toIso8601String(),
                 ],
-                'oauth_brand_id' => $brandId,
-                'oauth_platform' => $originalPlatform,
+                'expires_at' => now()->addMinutes(30),
             ]);
+
+            SystemLog::info('oauth', 'oauth.callback.saved_to_db', "Contas salvas no banco com token: {$discoveryToken}", [
+                'discovery_id' => $discovery->id,
+                'token_prefix' => substr($discoveryToken, 0, 12) . '...',
+                'expires_at' => $discovery->expires_at->toIso8601String(),
+            ]);
+
+            // Limpar sessao de dados oauth antigos
+            session()->forget(['oauth_discovered_accounts', 'oauth_token_data', 'oauth_brand_id', 'oauth_platform']);
 
             if ($isPopup) {
                 return view('oauth.callback-popup', [
@@ -183,14 +273,20 @@ class SocialOAuthController extends Controller
                     'message' => count($accounts) . ' conta(s) encontrada(s)! Selecione as que deseja conectar.',
                     'platform' => $originalPlatform,
                     'accountsCount' => count($accounts),
-                    'brandId' => $brandId,
+                    'discoveryToken' => $discoveryToken,
                 ]);
             }
 
-            return redirect()->route('social.accounts.index')
+            return redirect()->route('social.accounts.index', ['discovery_token' => $discoveryToken])
                 ->with('oauth_success', true);
 
         } catch (\Throwable $e) {
+            SystemLog::error('oauth', 'oauth.callback.error', "Erro no callback OAuth: {$e->getMessage()}", [
+                'platform' => $originalPlatform,
+                'exception' => get_class($e),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+                'trace' => substr($e->getTraceAsString(), 0, 2000),
+            ]);
             Log::error("OAuth callback error for {$platform}", ['error' => $e->getMessage()]);
 
             if ($isPopup) {
@@ -199,7 +295,7 @@ class SocialOAuthController extends Controller
                     'message' => 'Erro ao conectar: ' . $e->getMessage(),
                     'platform' => $originalPlatform,
                     'accountsCount' => 0,
-                    'brandId' => $brandId,
+                    'discoveryToken' => null,
                 ]);
             }
 
@@ -209,37 +305,95 @@ class SocialOAuthController extends Controller
     }
 
     /**
-     * Retorna as contas descobertas na sessão (chamado via AJAX).
+     * Retorna as contas descobertas do BANCO (via AJAX).
+     * Usa token ao inves de sessao para funcionar entre popup e janela principal.
      */
     public function discoveredAccounts(Request $request): JsonResponse
     {
-        $accounts = session('oauth_discovered_accounts', []);
+        $token = $request->get('token');
+        $userId = auth()->id();
+
+        SystemLog::debug('oauth', 'oauth.discovered.fetch', "Buscando contas descobertas", [
+            'has_token' => !empty($token),
+            'user_id' => $userId,
+        ]);
+
+        if ($token) {
+            // Buscar pelo token especifico
+            $discovery = OAuthDiscoveredAccount::where('session_token', $token)
+                ->where('user_id', $userId)
+                ->where('expires_at', '>', now())
+                ->first();
+        } else {
+            // Fallback: buscar o mais recente do usuario
+            $discovery = OAuthDiscoveredAccount::where('user_id', $userId)
+                ->where('expires_at', '>', now())
+                ->orderByDesc('created_at')
+                ->first();
+        }
+
+        if ($discovery) {
+            SystemLog::info('oauth', 'oauth.discovered.found', "Contas encontradas no banco", [
+                'discovery_id' => $discovery->id,
+                'platform' => $discovery->platform,
+                'count' => count($discovery->accounts),
+            ]);
+
+            return response()->json([
+                'accounts' => $discovery->accounts,
+                'platform' => $discovery->platform,
+                'token' => $discovery->session_token,
+            ]);
+        }
+
+        SystemLog::debug('oauth', 'oauth.discovered.empty', "Nenhuma conta descoberta encontrada");
 
         return response()->json([
-            'accounts' => $accounts,
-            'platform' => session('oauth_platform'),
+            'accounts' => [],
+            'platform' => null,
+            'token' => null,
         ]);
     }
 
     /**
      * Salva as contas selecionadas pelo usuário.
+     * Le do BANCO DE DADOS ao inves da sessao.
      */
     public function saveAccounts(Request $request): RedirectResponse
     {
         $request->validate([
             'selected' => 'required|array|min:1',
             'selected.*' => 'integer',
+            'discovery_token' => 'required|string|size:64',
         ]);
 
-        $discoveredAccounts = session('oauth_discovered_accounts', []);
-        $tokenData = session('oauth_token_data', []);
-        $brandId = session('oauth_brand_id');
-        $platform = session('oauth_platform');
+        $token = $request->input('discovery_token');
+        $userId = auth()->id();
 
-        if (empty($discoveredAccounts) || !$brandId) {
+        SystemLog::info('oauth', 'oauth.save.start', "Salvando contas selecionadas", [
+            'token_prefix' => substr($token, 0, 12) . '...',
+            'selected_count' => count($request->input('selected')),
+            'selected_indexes' => $request->input('selected'),
+        ]);
+
+        // Buscar do banco
+        $discovery = OAuthDiscoveredAccount::where('session_token', $token)
+            ->where('user_id', $userId)
+            ->where('expires_at', '>', now())
+            ->first();
+
+        if (!$discovery) {
+            SystemLog::error('oauth', 'oauth.save.expired', "Token de descoberta expirado ou invalido", [
+                'token_prefix' => substr($token, 0, 12) . '...',
+            ]);
             return redirect()->route('social.accounts.index')
                 ->with('error', 'Sessão expirada. Tente conectar novamente.');
         }
+
+        $discoveredAccounts = $discovery->accounts;
+        $tokenData = $discovery->token_data;
+        $brandId = $discovery->brand_id;
+        $platform = $discovery->platform;
 
         $selectedIndexes = $request->input('selected');
         $savedCount = 0;
@@ -247,19 +401,19 @@ class SocialOAuthController extends Controller
 
         foreach ($selectedIndexes as $index) {
             if (!isset($discoveredAccounts[$index])) {
+                SystemLog::warning('oauth', 'oauth.save.invalid_index', "Indice invalido: {$index}");
                 continue;
             }
 
             $account = $discoveredAccounts[$index];
 
             try {
-                // Verificar se já existe para QUALQUER brand (por causa da unique constraint)
+                // Verificar se já existe para QUALQUER brand
                 $existsGlobal = SocialAccount::where('platform', $account['platform'])
                     ->where('platform_user_id', $account['platform_user_id'])
                     ->first();
 
                 if ($existsGlobal) {
-                    // Atualizar token e dados (e reatribuir ao brand atual)
                     $existsGlobal->update([
                         'brand_id' => $brandId,
                         'username' => $account['username'],
@@ -271,8 +425,12 @@ class SocialOAuthController extends Controller
                         'metadata' => $account['metadata'] ?? $existsGlobal->metadata,
                         'is_active' => true,
                     ]);
+                    SystemLog::info('oauth', 'oauth.save.updated', "Conta atualizada: {$account['username']}", [
+                        'account_id' => $existsGlobal->id,
+                        'platform' => $account['platform'],
+                    ]);
                 } else {
-                    SocialAccount::create([
+                    $newAccount = SocialAccount::create([
                         'brand_id' => $brandId,
                         'platform' => $account['platform'],
                         'platform_user_id' => $account['platform_user_id'],
@@ -285,21 +443,35 @@ class SocialOAuthController extends Controller
                         'metadata' => is_array($account['metadata'] ?? null) ? $account['metadata'] : null,
                         'is_active' => true,
                     ]);
+                    SystemLog::info('oauth', 'oauth.save.created', "Conta criada: {$account['username']}", [
+                        'account_id' => $newAccount->id,
+                        'platform' => $account['platform'],
+                    ]);
                 }
 
                 $savedCount++;
             } catch (\Throwable $e) {
+                SystemLog::error('oauth', 'oauth.save.account_error', "Erro ao salvar conta: {$account['username']}: {$e->getMessage()}", [
+                    'platform' => $account['platform'],
+                    'exception' => get_class($e),
+                    'trace' => substr($e->getTraceAsString(), 0, 1000),
+                ]);
                 Log::error("Erro ao salvar conta OAuth: {$account['username']}", [
                     'platform' => $account['platform'],
                     'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString(),
                 ]);
                 $errors[] = $account['username'] . ': ' . $e->getMessage();
             }
         }
 
-        // Limpar sessão
-        session()->forget(['oauth_discovered_accounts', 'oauth_token_data', 'oauth_brand_id', 'oauth_platform']);
+        // Limpar registro do banco
+        $discovery->delete();
+
+        SystemLog::info('oauth', 'oauth.save.complete', "Salvamento concluido: {$savedCount} salvas, " . count($errors) . " erros", [
+            'saved_count' => $savedCount,
+            'error_count' => count($errors),
+            'errors' => $errors,
+        ]);
 
         if ($savedCount > 0 && empty($errors)) {
             $msg = $savedCount === 1 ? '1 conta conectada com sucesso!' : "{$savedCount} contas conectadas com sucesso!";

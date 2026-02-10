@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\SocialPlatform;
+use App\Models\OAuthDiscoveredAccount;
 use App\Models\SocialAccount;
 use App\Models\Setting;
 use Illuminate\Http\RedirectResponse;
@@ -55,9 +56,32 @@ class SocialAccountController extends Controller
             'pinterest' => $this->hasOAuthConfig('pinterest'),
         ];
 
-        // Contas descobertas via OAuth (da sessão)
-        $discoveredAccounts = session('oauth_discovered_accounts', []);
-        $oauthPlatform = session('oauth_platform');
+        // Contas descobertas via OAuth - do BANCO DE DADOS (nao mais sessao)
+        $discoveredAccounts = [];
+        $oauthPlatform = null;
+        $discoveryToken = null;
+
+        // Verificar se veio token via query string
+        $tokenFromQuery = $request->get('discovery_token');
+
+        if ($tokenFromQuery) {
+            $discovery = OAuthDiscoveredAccount::where('session_token', $tokenFromQuery)
+                ->where('user_id', $request->user()->id)
+                ->where('expires_at', '>', now())
+                ->first();
+        } else {
+            // Fallback: buscar o mais recente do usuario nao expirado
+            $discovery = OAuthDiscoveredAccount::where('user_id', $request->user()->id)
+                ->where('expires_at', '>', now())
+                ->orderByDesc('created_at')
+                ->first();
+        }
+
+        if ($discovery) {
+            $discoveredAccounts = $discovery->accounts;
+            $oauthPlatform = $discovery->platform;
+            $discoveryToken = $discovery->session_token;
+        }
 
         return Inertia::render('Social/Accounts/Index', [
             'accounts' => $accounts,
@@ -65,6 +89,7 @@ class SocialAccountController extends Controller
             'oauthConfigured' => $oauthConfigured,
             'discoveredAccounts' => $discoveredAccounts,
             'oauthPlatform' => $oauthPlatform,
+            'discoveryToken' => $discoveryToken,
         ]);
     }
 

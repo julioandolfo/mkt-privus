@@ -74,12 +74,17 @@
                 message: @json($message ?? ''),
                 platform: @json($platform ?? ''),
                 accountsCount: @json($accountsCount ?? 0),
-                brandId: @json($brandId ?? null),
+                discoveryToken: @json($discoveryToken ?? null),
             };
+
+            console.log('[OAuth Popup] Enviando mensagem para janela pai:', data);
 
             // Notificar a janela pai
             if (window.opener && !window.opener.closed) {
                 window.opener.postMessage(data, '*');
+                console.log('[OAuth Popup] Mensagem enviada com sucesso');
+            } else {
+                console.warn('[OAuth Popup] window.opener nao disponivel');
             }
 
             // Fechar popup após breve delay
