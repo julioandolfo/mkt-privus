@@ -243,6 +243,7 @@ class SocialOAuthController extends Controller
 
         $selectedIndexes = $request->input('selected');
         $savedCount = 0;
+        $errors = [];
 
         foreach ($selectedIndexes as $index) {
             if (!isset($discoveredAccounts[$index])) {
@@ -251,50 +252,67 @@ class SocialOAuthController extends Controller
 
             $account = $discoveredAccounts[$index];
 
-            // Verificar se já existe
-            $exists = SocialAccount::where('brand_id', $brandId)
-                ->where('platform', $account['platform'])
-                ->where('platform_user_id', $account['platform_user_id'])
-                ->first();
+            try {
+                // Verificar se já existe para QUALQUER brand (por causa da unique constraint)
+                $existsGlobal = SocialAccount::where('platform', $account['platform'])
+                    ->where('platform_user_id', $account['platform_user_id'])
+                    ->first();
 
-            if ($exists) {
-                // Atualizar token e dados
-                $exists->update([
-                    'username' => $account['username'],
-                    'display_name' => $account['display_name'],
-                    'avatar_url' => $account['avatar_url'],
-                    'access_token' => $account['access_token'] ?? $tokenData['access_token'] ?? null,
-                    'refresh_token' => $tokenData['refresh_token'] ?? $exists->refresh_token,
-                    'token_expires_at' => $tokenData['expires_at'] ?? $exists->token_expires_at,
-                    'metadata' => $account['metadata'] ?? $exists->metadata,
-                    'is_active' => true,
-                ]);
-            } else {
-                SocialAccount::create([
-                    'brand_id' => $brandId,
+                if ($existsGlobal) {
+                    // Atualizar token e dados (e reatribuir ao brand atual)
+                    $existsGlobal->update([
+                        'brand_id' => $brandId,
+                        'username' => $account['username'],
+                        'display_name' => $account['display_name'],
+                        'avatar_url' => $account['avatar_url'],
+                        'access_token' => $account['access_token'] ?? $tokenData['access_token'] ?? null,
+                        'refresh_token' => $tokenData['refresh_token'] ?? $existsGlobal->refresh_token,
+                        'token_expires_at' => $tokenData['expires_at'] ?? $existsGlobal->token_expires_at,
+                        'metadata' => $account['metadata'] ?? $existsGlobal->metadata,
+                        'is_active' => true,
+                    ]);
+                } else {
+                    SocialAccount::create([
+                        'brand_id' => $brandId,
+                        'platform' => $account['platform'],
+                        'platform_user_id' => $account['platform_user_id'],
+                        'username' => $account['username'],
+                        'display_name' => $account['display_name'],
+                        'avatar_url' => $account['avatar_url'],
+                        'access_token' => $account['access_token'] ?? $tokenData['access_token'] ?? null,
+                        'refresh_token' => $tokenData['refresh_token'] ?? null,
+                        'token_expires_at' => $tokenData['expires_at'] ?? null,
+                        'metadata' => is_array($account['metadata'] ?? null) ? $account['metadata'] : null,
+                        'is_active' => true,
+                    ]);
+                }
+
+                $savedCount++;
+            } catch (\Throwable $e) {
+                Log::error("Erro ao salvar conta OAuth: {$account['username']}", [
                     'platform' => $account['platform'],
-                    'platform_user_id' => $account['platform_user_id'],
-                    'username' => $account['username'],
-                    'display_name' => $account['display_name'],
-                    'avatar_url' => $account['avatar_url'],
-                    'access_token' => $account['access_token'] ?? $tokenData['access_token'] ?? null,
-                    'refresh_token' => $tokenData['refresh_token'] ?? null,
-                    'token_expires_at' => $tokenData['expires_at'] ?? null,
-                    'metadata' => $account['metadata'] ?? null,
-                    'is_active' => true,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
                 ]);
+                $errors[] = $account['username'] . ': ' . $e->getMessage();
             }
-
-            $savedCount++;
         }
 
         // Limpar sessão
         session()->forget(['oauth_discovered_accounts', 'oauth_token_data', 'oauth_brand_id', 'oauth_platform']);
 
-        $msg = $savedCount === 1 ? '1 conta conectada com sucesso!' : "{$savedCount} contas conectadas com sucesso!";
+        if ($savedCount > 0 && empty($errors)) {
+            $msg = $savedCount === 1 ? '1 conta conectada com sucesso!' : "{$savedCount} contas conectadas com sucesso!";
+            return redirect()->route('social.accounts.index')->with('success', $msg);
+        }
+
+        if ($savedCount > 0 && !empty($errors)) {
+            return redirect()->route('social.accounts.index')
+                ->with('success', "{$savedCount} conta(s) conectada(s). Algumas falharam: " . implode('; ', $errors));
+        }
 
         return redirect()->route('social.accounts.index')
-            ->with('success', $msg);
+            ->with('error', 'Falha ao salvar contas: ' . implode('; ', $errors));
     }
 
     /**
