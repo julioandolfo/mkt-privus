@@ -678,15 +678,51 @@ class AnalyticsController extends Controller
         $startDate = $request->get('start_date', now()->subDays(30)->format('Y-m-d'));
         $endDate = $request->get('end_date', now()->format('Y-m-d'));
 
-        $result = $this->syncService->syncConnection($connection, $startDate, $endDate);
+        SystemLog::info('analytics', 'sync.start', "Sincronizando conexao #{$connection->id} ({$connection->platform})", [
+            'connection_id' => $connection->id,
+            'platform' => $connection->platform,
+            'name' => $connection->name,
+            'external_id' => $connection->external_id,
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+        ]);
 
-        if ($result['success']) {
-            // Recalcular sumários
-            $this->syncService->rebuildDailySummaries($connection->brand_id, $startDate, $endDate);
-            return back()->with('success', "Sincronização concluída! {$result['synced']} pontos de dados atualizados.");
+        try {
+            $result = $this->syncService->syncConnection($connection, $startDate, $endDate);
+
+            if ($result['success']) {
+                // Recalcular sumários
+                $this->syncService->rebuildDailySummaries($connection->brand_id, $startDate, $endDate);
+                SystemLog::info('analytics', 'sync.complete', "Sincronizacao concluida: {$result['synced']} pontos", [
+                    'connection_id' => $connection->id,
+                    'synced' => $result['synced'],
+                ]);
+                return back()->with('success', "Sincronização concluída! {$result['synced']} pontos de dados atualizados.");
+            }
+
+            SystemLog::error('analytics', 'sync.failed', "Sincronizacao falhou: " . ($result['error'] ?? 'Erro desconhecido'), [
+                'connection_id' => $connection->id,
+                'platform' => $connection->platform,
+                'error' => $result['error'] ?? 'Desconhecido',
+            ]);
+
+            return back()->with('error', 'Erro na sincronização: ' . ($result['error'] ?? 'Erro desconhecido'));
+        } catch (\Throwable $e) {
+            SystemLog::error('analytics', 'sync.exception', "EXCECAO na sincronizacao: {$e->getMessage()}", [
+                'connection_id' => $connection->id,
+                'platform' => $connection->platform,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+                'trace' => array_slice(array_map(fn($t) => ($t['file'] ?? '?') . ':' . ($t['line'] ?? '?') . ' ' . ($t['class'] ?? '') . ($t['type'] ?? '') . ($t['function'] ?? ''), $e->getTrace()), 0, 8),
+            ]);
+
+            $connection->update([
+                'sync_status' => 'error',
+                'sync_error' => $e->getMessage(),
+            ]);
+
+            return back()->with('error', 'Erro na sincronização: ' . $e->getMessage());
         }
-
-        return back()->with('error', 'Erro na sincronização: ' . ($result['error'] ?? 'Erro desconhecido'));
     }
 
     /**
@@ -702,17 +738,33 @@ class AnalyticsController extends Controller
         $startDate = $request->get('start_date', now()->subDays(30)->format('Y-m-d'));
         $endDate = $request->get('end_date', now()->format('Y-m-d'));
 
-        $results = $this->syncService->syncBrand($brandId, $startDate, $endDate);
+        SystemLog::info('analytics', 'sync_all.start', "Sincronizando todas as conexoes da brand #{$brandId}");
 
-        $successCount = collect($results)->where('success', true)->count();
-        $errorCount = collect($results)->where('success', false)->count();
+        try {
+            $results = $this->syncService->syncBrand($brandId, $startDate, $endDate);
 
-        $message = "{$successCount} plataforma(s) sincronizada(s) com sucesso.";
-        if ($errorCount > 0) {
-            $message .= " {$errorCount} com erro.";
+            $successCount = collect($results)->where('success', true)->count();
+            $errorCount = collect($results)->where('success', false)->count();
+
+            $message = "{$successCount} plataforma(s) sincronizada(s) com sucesso.";
+            if ($errorCount > 0) {
+                $errors = collect($results)->where('success', false)->map(fn($r, $k) => "{$k}: " . ($r['error'] ?? '?'))->values()->toArray();
+                $message .= " {$errorCount} com erro.";
+                SystemLog::warning('analytics', 'sync_all.partial', $message, ['errors' => $errors]);
+            } else {
+                SystemLog::info('analytics', 'sync_all.complete', $message);
+            }
+
+            return back()->with($errorCount > 0 ? 'warning' : 'success', $message);
+        } catch (\Throwable $e) {
+            SystemLog::error('analytics', 'sync_all.exception', "EXCECAO no sync all: {$e->getMessage()}", [
+                'brand_id' => $brandId,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+            ]);
+
+            return back()->with('error', 'Erro na sincronização: ' . $e->getMessage());
         }
-
-        return back()->with($errorCount > 0 ? 'warning' : 'success', $message);
     }
 
     /**
