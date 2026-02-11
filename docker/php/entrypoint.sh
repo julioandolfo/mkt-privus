@@ -3,19 +3,17 @@ set -e
 
 # =====================================================
 # Entrypoint roda como ROOT para ter permissao no volume
-# No final, usa su-exec para dropar para usuario www
+# PHP-FPM inicia como root e faz o drop para www nos workers
+# Outros processos (worker, scheduler) usam su-exec
 # =====================================================
 
 # Copiar assets compilados para o volume compartilhado
 if [ -d "/var/www/html/build-assets" ]; then
     echo "==> Copiando assets Vite para volume compartilhado..."
-    # Limpar assets antigos do volume (precisa root pois volume pode ter files de outro container)
     rm -rf /var/www/html/public/build/* 2>/dev/null || true
     rm -rf /var/www/html/public/build/.vite 2>/dev/null || true
     mkdir -p /var/www/html/public/build
-    # Copiar TUDO incluindo diretorios ocultos (.vite/manifest.json)
     cp -a /var/www/html/build-assets/. /var/www/html/public/build/
-    # Garantir permissoes corretas para o usuario www
     chown -R www:www /var/www/html/public/build
     echo "==> Assets copiados com sucesso."
     echo "==> Manifest: $(ls -la /var/www/html/public/build/.vite/manifest.json 2>/dev/null || echo 'NAO ENCONTRADO')"
@@ -52,7 +50,9 @@ if [ "$1" = "php-fpm" ]; then
     su-exec www:www php artisan storage:link 2>/dev/null || true
 
     echo "==> [app] Iniciando PHP-FPM..."
+    # PHP-FPM DEVE iniciar como root - ele faz o drop para www nos workers via pool config
+    exec "$@"
 fi
 
-# Executar o processo final como usuario www (drop de privilegios)
+# Para outros processos (worker, scheduler), rodar como www
 exec su-exec www:www "$@"
