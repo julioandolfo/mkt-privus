@@ -21,36 +21,70 @@ function applyDates() {
     router.get(route('analytics.ads'), { start_date: startDate.value, end_date: endDate.value }, { preserveState: true, preserveScroll: true });
 }
 
-const totals = computed(() => ({
-    spend: props.summaries.reduce((a: number, b: any) => a + parseFloat(b.ad_spend || 0), 0),
-    impressions: props.summaries.reduce((a: number, b: any) => a + (b.ad_impressions || 0), 0),
-    clicks: props.summaries.reduce((a: number, b: any) => a + (b.ad_clicks || 0), 0),
-    conversions: props.summaries.reduce((a: number, b: any) => a + (b.ad_conversions || 0), 0),
-    revenue: props.summaries.reduce((a: number, b: any) => a + parseFloat(b.ad_revenue || 0), 0),
-    ctr: props.summaries.length > 0 ? props.summaries.reduce((a: number, b: any) => a + parseFloat(b.ad_ctr || 0), 0) / props.summaries.length : 0,
-    cpc: props.summaries.length > 0 ? props.summaries.reduce((a: number, b: any) => a + parseFloat(b.ad_cpc || 0), 0) / props.summaries.length : 0,
-    roas: props.summaries.length > 0 ? props.summaries.reduce((a: number, b: any) => a + parseFloat(b.ad_roas || 0), 0) / props.summaries.length : 0,
-}));
+const totals = computed(() => {
+    const apiSpend = props.summaries.reduce((a: number, b: any) => a + parseFloat(b.ad_spend || 0), 0);
+    const manualSpend = props.summaries.reduce((a: number, b: any) => a + parseFloat(b.manual_ad_spend || 0), 0);
+    const totalSpend = props.summaries.reduce((a: number, b: any) => a + parseFloat(b.total_spend || 0), 0);
+    const wcRevenue = props.summaries.reduce((a: number, b: any) => a + parseFloat(b.wc_revenue || 0), 0);
 
-const kpis = computed(() => [
-    { label: 'Investimento', value: 'R$ ' + totals.value.spend.toLocaleString('pt-BR', { minimumFractionDigits: 2 }), color: 'text-amber-400', sub: '' },
-    { label: 'Impressões', value: totals.value.impressions.toLocaleString('pt-BR'), color: 'text-blue-400', sub: '' },
-    { label: 'Cliques', value: totals.value.clicks.toLocaleString('pt-BR'), color: 'text-orange-400', sub: '' },
-    { label: 'CTR', value: totals.value.ctr.toFixed(2) + '%', color: 'text-indigo-400', sub: '' },
-    { label: 'CPC Médio', value: 'R$ ' + totals.value.cpc.toFixed(2), color: 'text-purple-400', sub: '' },
-    { label: 'Conversões', value: totals.value.conversions.toLocaleString('pt-BR'), color: 'text-emerald-400', sub: '' },
-    { label: 'Receita', value: 'R$ ' + totals.value.revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 }), color: 'text-green-400', sub: '' },
-    { label: 'ROAS', value: totals.value.roas.toFixed(2) + 'x', color: 'text-teal-400', sub: '' },
-]);
+    return {
+        apiSpend,
+        manualSpend,
+        totalSpend: totalSpend || (apiSpend + manualSpend),
+        impressions: props.summaries.reduce((a: number, b: any) => a + (b.ad_impressions || 0), 0),
+        clicks: props.summaries.reduce((a: number, b: any) => a + (b.ad_clicks || 0), 0),
+        conversions: props.summaries.reduce((a: number, b: any) => a + (b.ad_conversions || 0), 0),
+        revenue: props.summaries.reduce((a: number, b: any) => a + parseFloat(b.ad_revenue || 0), 0),
+        wcRevenue,
+        ctr: props.summaries.length > 0 ? props.summaries.reduce((a: number, b: any) => a + parseFloat(b.ad_ctr || 0), 0) / props.summaries.length : 0,
+        cpc: props.summaries.length > 0 ? props.summaries.reduce((a: number, b: any) => a + parseFloat(b.ad_cpc || 0), 0) / props.summaries.length : 0,
+        roas: props.summaries.length > 0 ? props.summaries.reduce((a: number, b: any) => a + parseFloat(b.ad_roas || 0), 0) / props.summaries.length : 0,
+        realRoas: props.summaries.length > 0 ? props.summaries.reduce((a: number, b: any) => a + parseFloat(b.real_roas || 0), 0) / props.summaries.length : 0,
+    };
+});
 
-const selectedMetric = ref('ad_spend');
-const metricOpts = [
-    { value: 'ad_spend', label: 'Investimento', color: '#F59E0B' },
-    { value: 'ad_clicks', label: 'Cliques', color: '#F97316' },
-    { value: 'ad_impressions', label: 'Impressões', color: '#3B82F6' },
-    { value: 'ad_conversions', label: 'Conversões', color: '#10B981' },
-    { value: 'ad_roas', label: 'ROAS', color: '#14B8A6' },
-];
+const kpis = computed(() => {
+    const items = [
+        { label: 'Invest. Total', value: 'R$ ' + totals.value.totalSpend.toLocaleString('pt-BR', { minimumFractionDigits: 2 }), color: 'text-amber-400', sub: '' },
+    ];
+    if (totals.value.manualSpend > 0) {
+        items.push({ label: 'Manual', value: 'R$ ' + totals.value.manualSpend.toLocaleString('pt-BR', { minimumFractionDigits: 2 }), color: 'text-orange-400', sub: '' });
+    }
+    if (totals.value.apiSpend > 0) {
+        items.push({ label: 'API Ads', value: 'R$ ' + totals.value.apiSpend.toLocaleString('pt-BR', { minimumFractionDigits: 2 }), color: 'text-yellow-400', sub: '' });
+    }
+    items.push(
+        { label: 'Impressões', value: totals.value.impressions.toLocaleString('pt-BR'), color: 'text-blue-400', sub: '' },
+        { label: 'Cliques', value: totals.value.clicks.toLocaleString('pt-BR'), color: 'text-orange-400', sub: '' },
+        { label: 'ROAS Ads', value: totals.value.roas.toFixed(2) + 'x', color: 'text-teal-400', sub: '' },
+    );
+    if (totals.value.wcRevenue > 0) {
+        items.push(
+            { label: 'Receita Loja', value: 'R$ ' + totals.value.wcRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 }), color: 'text-purple-400', sub: '' },
+            { label: 'ROAS Real', value: totals.value.realRoas.toFixed(2) + 'x', color: 'text-rose-400', sub: '' },
+        );
+    }
+    return items;
+});
+
+const selectedMetric = ref('total_spend');
+const metricOpts = computed(() => {
+    const opts = [
+        { value: 'total_spend', label: 'Invest. Total', color: '#F59E0B' },
+        { value: 'ad_spend', label: 'Invest. API', color: '#D97706' },
+        { value: 'ad_clicks', label: 'Cliques', color: '#F97316' },
+        { value: 'ad_impressions', label: 'Impressões', color: '#3B82F6' },
+        { value: 'ad_conversions', label: 'Conversões', color: '#10B981' },
+        { value: 'ad_roas', label: 'ROAS Ads', color: '#14B8A6' },
+    ];
+    if (totals.value.wcRevenue > 0) {
+        opts.push(
+            { value: 'wc_revenue', label: 'Receita Loja', color: '#A855F7' },
+            { value: 'real_roas', label: 'ROAS Real', color: '#EC4899' },
+        );
+    }
+    return opts;
+});
 
 const chartData = computed(() => {
     if (props.summaries.length === 0) return null;
@@ -62,8 +96,9 @@ const chartData = computed(() => {
     const points = values.map((v, i) => ({ x: padding.left + (i / Math.max(values.length - 1, 1)) * innerW, y: padding.top + innerH - (v / maxVal) * innerH, value: v, label: dates[i] }));
     const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
     const areaPath = linePath + ` L${points[points.length-1].x},${padding.top+innerH} L${points[0].x},${padding.top+innerH} Z`;
-    const color = metricOpts.find(m => m.value === selectedMetric.value)?.color || '#F59E0B';
-    const yLabels = Array.from({length: 5}, (_, i) => ({ value: ((maxVal / 4) * (4 - i)).toFixed(selectedMetric.value === 'ad_roas' ? 2 : selectedMetric.value === 'ad_spend' ? 0 : 0), y: padding.top + (i / 4) * innerH }));
+    const color = metricOpts.value.find(m => m.value === selectedMetric.value)?.color || '#F59E0B';
+    const isDecimal = ['ad_roas', 'real_roas'].includes(selectedMetric.value);
+    const yLabels = Array.from({length: 5}, (_, i) => ({ value: ((maxVal / 4) * (4 - i)).toFixed(isDecimal ? 2 : 0), y: padding.top + (i / 4) * innerH }));
     const step = Math.max(1, Math.floor(dates.length / 8));
     const xLabels = dates.filter((_, i) => i % step === 0).map(label => ({ label, x: padding.left + (dates.indexOf(label) / Math.max(dates.length - 1, 1)) * innerW }));
     return { points, linePath, areaPath, yLabels, xLabels, color };
@@ -82,7 +117,7 @@ const chartData = computed(() => {
                         </Link>
                         <h1 class="text-2xl font-bold text-white">Ads Analytics</h1>
                     </div>
-                    <p class="text-sm text-gray-400 mt-1 ml-8">Google Ads + Meta Ads — Performance consolidada</p>
+                    <p class="text-sm text-gray-400 mt-1 ml-8">Investimentos (API + Manual) — Performance consolidada</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <input v-model="startDate" type="date" class="bg-gray-800 border border-gray-700 text-white text-xs rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500" />
@@ -104,7 +139,7 @@ const chartData = computed(() => {
             <div class="bg-gray-900/50 rounded-2xl border border-gray-800 p-5">
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-sm font-semibold text-white">Evolução Diária</h3>
-                    <div class="flex gap-1">
+                    <div class="flex flex-wrap gap-1">
                         <button v-for="opt in metricOpts" :key="opt.value" @click="selectedMetric = opt.value"
                             :class="['px-2.5 py-1 text-[11px] font-medium rounded-lg transition', selectedMetric === opt.value ? 'text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800']"
                             :style="selectedMetric === opt.value ? {backgroundColor: opt.color} : {}">{{ opt.label }}</button>

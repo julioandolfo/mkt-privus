@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AnalyticsConnection;
+use App\Models\AnalyticsDailySummary;
 use App\Models\CustomMetric;
+use App\Models\ManualAdEntry;
 use App\Models\MetricGoal;
 use App\Models\SocialAccount;
 use App\Models\SocialInsight;
@@ -249,6 +252,39 @@ class DashboardController extends Controller
             $recentActivity = $recentPosts->toArray();
         }
 
+        // ===== DADOS E-COMMERCE / INVESTIMENTO (ultimos 30 dias) =====
+        $ecommerceSummary = null;
+        if ($brandId) {
+            $last30 = AnalyticsDailySummary::where('brand_id', $brandId)
+                ->where('date', '>=', now()->subDays(30))
+                ->get();
+
+            if ($last30->isNotEmpty()) {
+                $wcRevenue = $last30->sum('wc_revenue');
+                $wcOrders = $last30->sum('wc_orders');
+                $totalSpend = $last30->sum('total_spend');
+                $manualSpend = $last30->sum('manual_ad_spend');
+                $apiSpend = $last30->sum('ad_spend');
+
+                $hasWc = $wcRevenue > 0 || $wcOrders > 0;
+                $hasSpend = $totalSpend > 0;
+
+                if ($hasWc || $hasSpend) {
+                    $ecommerceSummary = [
+                        'wc_revenue' => round($wcRevenue, 2),
+                        'wc_orders' => $wcOrders,
+                        'wc_avg_order_value' => $wcOrders > 0 ? round($wcRevenue / $wcOrders, 2) : 0,
+                        'total_spend' => round($totalSpend, 2),
+                        'manual_spend' => round($manualSpend, 2),
+                        'api_spend' => round($apiSpend, 2),
+                        'real_roas' => $totalSpend > 0 && $wcRevenue > 0 ? round($wcRevenue / $totalSpend, 2) : 0,
+                        'has_wc' => $hasWc,
+                        'has_spend' => $hasSpend,
+                    ];
+                }
+            }
+        }
+
         return Inertia::render('Dashboard/Index', [
             'stats' => $stats,
             'socialAccounts' => $socialAccounts,
@@ -257,6 +293,7 @@ class DashboardController extends Controller
             'activeGoals' => $activeGoals,
             'followersChart' => $followersChart,
             'recentActivity' => $recentActivity,
+            'ecommerceSummary' => $ecommerceSummary,
         ]);
     }
 }

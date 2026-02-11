@@ -205,7 +205,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/connections/{connection}/toggle', [AnalyticsController::class, 'toggleConnection'])->name('connections.toggle');
         Route::delete('/connections/{connection}', [AnalyticsController::class, 'destroyConnection'])->name('connections.destroy');
         Route::post('/connections/{connection}/sync', [AnalyticsController::class, 'syncConnection'])->name('connections.sync');
+        Route::post('/connections/test-woocommerce', [AnalyticsController::class, 'testWooCommerce'])->name('connections.test-woocommerce');
         Route::post('/sync-all', [AnalyticsController::class, 'syncAll'])->name('sync-all');
+
+        // Investimentos Manuais
+        Route::post('/manual-entries', [AnalyticsController::class, 'storeManualEntry'])->name('manual-entries.store');
+        Route::put('/manual-entries/{entry}', [AnalyticsController::class, 'updateManualEntry'])->name('manual-entries.update');
+        Route::delete('/manual-entries/{entry}', [AnalyticsController::class, 'destroyManualEntry'])->name('manual-entries.destroy');
 
         // OAuth Analytics (callback está fora do auth - ver acima)
         Route::get('/oauth/redirect/{platform}', [AnalyticsController::class, 'oauthRedirect'])->name('oauth.redirect');

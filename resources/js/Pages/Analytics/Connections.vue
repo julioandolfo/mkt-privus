@@ -30,6 +30,23 @@ interface DiscoveredAccount {
     permission?: string;
 }
 
+interface ManualEntry {
+    id: number;
+    platform: string;
+    platform_label: string;
+    platform_custom: string | null;
+    date_start: string;
+    date_end: string;
+    date_start_display: string;
+    date_end_display: string;
+    amount: number;
+    daily_amount: number;
+    period_days: number;
+    description: string | null;
+    user_name: string;
+    created_at: string;
+}
+
 const props = defineProps<{
     brand: any;
     brands: any[];
@@ -40,6 +57,8 @@ const props = defineProps<{
     discoveryToken: string | null;
     platforms: Record<string, string>;
     platformColors: Record<string, string>;
+    manualEntries: ManualEntry[];
+    manualPlatforms: Record<string, string>;
 }>();
 
 const showManualForm = ref(false);
@@ -51,6 +70,32 @@ const currentDiscoveryToken = ref<string | null>(props.discoveryToken ?? null);
 const discoveredAccountsLocal = ref<DiscoveredAccount[]>(props.discoveredAccounts ?? []);
 const discoveredPlatformLocal = ref<string | null>(props.discoveredPlatform ?? null);
 
+// WooCommerce form
+const showWcForm = ref(false);
+const wcTesting = ref(false);
+const wcTestResult = ref<{success: boolean; message: string} | null>(null);
+const wcForm = useForm({
+    brand_id: props.brand?.id,
+    platform: 'woocommerce',
+    name: '',
+    store_url: '',
+    consumer_key: '',
+    consumer_secret: '',
+});
+
+// Manual entry form
+const showManualEntryForm = ref(false);
+const editingEntry = ref<ManualEntry | null>(null);
+const manualEntryForm = useForm({
+    brand_id: props.brand?.id,
+    platform: 'google_ads',
+    platform_label: '',
+    date_start: '',
+    date_end: '',
+    amount: 0,
+    description: '',
+});
+
 const manualForm = useForm({
     brand_id: props.brand?.id,
     platform: 'google_analytics',
@@ -61,11 +106,94 @@ const manualForm = useForm({
 });
 
 const guideTips = [
-    'Recomendamos conectar via OAuth para autenticação segura e automática',
-    'Google Analytics, Google Ads e Search Console usam a mesma conta Google OAuth',
-    'Configure as credenciais OAuth em Configurações > Integrações OAuth',
+    'Conecte via OAuth para autenticação segura e automática',
+    'Google Analytics, Ads e Search Console usam a mesma conta Google OAuth',
+    'Adicione investimentos manuais quando não tiver API conectada (ex: Google Ads sem Developer Token)',
+    'Conecte WooCommerce para calcular ROAS real baseado em vendas efetivas',
     'Sincronize regularmente para manter os dados atualizados',
 ];
+
+const manualTotalAmount = computed(() => {
+    return (props.manualEntries || []).reduce((sum: number, e: ManualEntry) => sum + e.amount, 0);
+});
+
+function testWcConnection() {
+    wcTesting.value = true;
+    wcTestResult.value = null;
+
+    fetch(route('analytics.connections.test-woocommerce'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '',
+        },
+        body: JSON.stringify({
+            store_url: wcForm.store_url,
+            consumer_key: wcForm.consumer_key,
+            consumer_secret: wcForm.consumer_secret,
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        wcTestResult.value = {
+            success: data.success,
+            message: data.success
+                ? `Conectado! WooCommerce ${data.wc_version} • Moeda: ${data.currency}`
+                : (data.error || 'Falha na conexão'),
+        };
+    })
+    .catch(() => {
+        wcTestResult.value = { success: false, message: 'Erro de rede ao testar conexão' };
+    })
+    .finally(() => wcTesting.value = false);
+}
+
+function submitWcForm() {
+    wcForm.post(route('analytics.connections.store'), {
+        onSuccess: () => {
+            showWcForm.value = false;
+            wcForm.reset();
+            wcTestResult.value = null;
+        },
+    });
+}
+
+function openManualEntryForm(entry?: ManualEntry) {
+    if (entry) {
+        editingEntry.value = entry;
+        manualEntryForm.platform = entry.platform;
+        manualEntryForm.platform_label = entry.platform_custom || '';
+        manualEntryForm.date_start = entry.date_start;
+        manualEntryForm.date_end = entry.date_end;
+        manualEntryForm.amount = entry.amount;
+        manualEntryForm.description = entry.description || '';
+    } else {
+        editingEntry.value = null;
+        manualEntryForm.reset();
+        manualEntryForm.brand_id = props.brand?.id;
+        manualEntryForm.platform = 'google_ads';
+    }
+    showManualEntryForm.value = true;
+}
+
+function submitManualEntry() {
+    if (editingEntry.value) {
+        manualEntryForm.put(route('analytics.manual-entries.update', editingEntry.value.id), {
+            onSuccess: () => { showManualEntryForm.value = false; editingEntry.value = null; },
+        });
+    } else {
+        manualEntryForm.post(route('analytics.manual-entries.store'), {
+            onSuccess: () => { showManualEntryForm.value = false; manualEntryForm.reset(); manualEntryForm.brand_id = props.brand?.id; manualEntryForm.platform = 'google_ads'; },
+        });
+    }
+}
+
+function deleteManualEntry(id: number) {
+    if (confirm('Remover este investimento? Os cálculos de ROAS serão recalculados.')) {
+        router.delete(route('analytics.manual-entries.destroy', id), { preserveScroll: true });
+    }
+}
 
 const platformCards = [
     {
@@ -99,6 +227,15 @@ const platformCards = [
         icon: 'meta',
         color: '#1877F2',
         bgColor: 'bg-blue-600/10',
+    },
+    {
+        key: 'woocommerce',
+        name: 'WooCommerce',
+        description: 'Pedidos, receita, ticket médio, ROAS real',
+        icon: 'wc',
+        color: '#96588A',
+        bgColor: 'bg-purple-500/10',
+        isManual: true,
     },
 ];
 
@@ -317,6 +454,12 @@ function isConnected(platform: string): boolean {
                                 <circle cx="11" cy="11" r="7" :stroke="platform.color" stroke-width="2"/>
                                 <path d="M21 21l-4.35-4.35" :stroke="platform.color" stroke-width="2" stroke-linecap="round"/>
                             </svg>
+                            <!-- WooCommerce -->
+                            <svg v-else-if="platform.icon === 'wc'" class="w-6 h-6" viewBox="0 0 24 24" fill="none">
+                                <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" :stroke="platform.color" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M3 6h18" :stroke="platform.color" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M16 10a4 4 0 01-8 0" :stroke="platform.color" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
                             <!-- Meta -->
                             <svg v-else class="w-6 h-6" viewBox="0 0 24 24" fill="none">
                                 <path d="M18 2h-3a5 5 0 00-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 011-1h3z" :stroke="platform.color" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -334,8 +477,22 @@ function isConnected(platform: string): boolean {
                     <h3 class="text-sm font-semibold text-white mb-1">{{ platform.name }}</h3>
                     <p class="text-xs text-gray-500 mb-4">{{ platform.description }}</p>
 
+                    <!-- WooCommerce: formulario manual -->
                     <button
-                        v-if="oauthConfigured[platform.key]"
+                        v-if="platform.isManual"
+                        @click="showWcForm = true"
+                        class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition"
+                        :class="isConnected(platform.key)
+                            ? 'bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700'
+                            : 'text-white hover:opacity-90'"
+                        :style="!isConnected(platform.key) ? { backgroundColor: platform.color } : {}"
+                    >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M12 4v16m8-8H4"/></svg>
+                        {{ isConnected(platform.key) ? 'Adicionar outra loja' : 'Conectar loja' }}
+                    </button>
+                    <!-- OAuth platforms -->
+                    <button
+                        v-else-if="oauthConfigured[platform.key]"
                         @click="connectOAuth(platform.key)"
                         :disabled="connectingPlatform === platform.key"
                         class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition"
@@ -346,7 +503,6 @@ function isConnected(platform: string): boolean {
                                 : 'text-white hover:opacity-90'"
                         :style="!isConnected(platform.key) && connectingPlatform !== platform.key ? { backgroundColor: platform.color } : {}"
                     >
-                        <!-- Loading spinner -->
                         <svg v-if="connectingPlatform === platform.key" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
@@ -482,6 +638,168 @@ function isConnected(platform: string): boolean {
                             <button type="button" @click="showManualForm = false" class="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm transition border border-gray-700">Cancelar</button>
                             <button type="submit" :disabled="manualForm.processing" class="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-sm font-medium transition">
                                 {{ manualForm.processing ? 'Salvando...' : 'Adicionar' }}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Investimentos Manuais -->
+            <div class="bg-gray-900/50 rounded-2xl border border-gray-800 overflow-hidden">
+                <div class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-semibold text-white">Investimentos Manuais</h3>
+                        <p class="text-[10px] text-gray-500 mt-0.5">Registre gastos de qualquer plataforma. O valor é distribuído por dia no cálculo de ROAS.</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span v-if="manualTotalAmount > 0" class="text-xs text-amber-400 font-medium">
+                            Total: R$ {{ manualTotalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) }}
+                        </span>
+                        <button @click="openManualEntryForm()" class="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-medium transition">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M12 4v16m8-8H4"/></svg>
+                            Novo Investimento
+                        </button>
+                    </div>
+                </div>
+
+                <div v-if="manualEntries && manualEntries.length > 0" class="divide-y divide-gray-800/50">
+                    <div v-for="entry in manualEntries" :key="entry.id" class="p-4 flex items-center gap-4 hover:bg-gray-800/30 transition">
+                        <div class="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
+                            <svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V7m0 9v1m9-5a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <p class="text-sm font-medium text-white">{{ entry.platform_label }}</p>
+                                <span class="px-2 py-0.5 bg-amber-500/10 rounded text-[10px] text-amber-400">R$ {{ entry.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) }}</span>
+                            </div>
+                            <div class="flex items-center gap-3 mt-1">
+                                <span class="text-[10px] text-gray-500">{{ entry.date_start_display }} — {{ entry.date_end_display }}</span>
+                                <span class="text-[10px] text-gray-600">•</span>
+                                <span class="text-[10px] text-gray-500">{{ entry.period_days }} dias (R$ {{ entry.daily_amount.toFixed(2) }}/dia)</span>
+                                <span v-if="entry.description" class="text-[10px] text-gray-600">• {{ entry.description }}</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <button @click="openManualEntryForm(entry)" class="p-2 text-gray-400 hover:text-indigo-400 transition rounded-lg hover:bg-gray-800" title="Editar">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            </button>
+                            <button @click="deleteManualEntry(entry.id)" class="p-2 text-gray-400 hover:text-red-400 transition rounded-lg hover:bg-gray-800" title="Remover">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div v-else class="p-8 text-center">
+                    <svg class="w-12 h-12 text-gray-700 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V7m0 9v1m9-5a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <p class="text-sm text-gray-500 mb-1">Nenhum investimento manual cadastrado</p>
+                    <p class="text-[10px] text-gray-600">Use para registrar gastos de Google Ads, Meta Ads, TikTok Ads ou qualquer outra plataforma</p>
+                </div>
+            </div>
+
+            <!-- WooCommerce Form Modal -->
+            <div v-if="showWcForm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" @click.self="showWcForm = false">
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-md mx-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                                <svg class="w-5 h-5 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path d="M3 6h18" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path d="M16 10a4 4 0 01-8 0" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </div>
+                            <h3 class="text-lg font-semibold text-white">Conectar WooCommerce</h3>
+                        </div>
+                        <button @click="showWcForm = false" class="text-gray-400 hover:text-white"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                    </div>
+
+                    <p class="text-xs text-gray-500 mb-4">Gere as credenciais em WooCommerce > Settings > Advanced > REST API com permissão de <strong class="text-gray-400">Leitura</strong>.</p>
+
+                    <form @submit.prevent="submitWcForm" class="space-y-4">
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">Nome da conexão</label>
+                            <input v-model="wcForm.name" type="text" placeholder="Ex: Loja Principal" class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">URL da loja</label>
+                            <input v-model="wcForm.store_url" type="url" placeholder="https://minhaloja.com.br" class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">Consumer Key</label>
+                            <input v-model="wcForm.consumer_key" type="text" placeholder="ck_..." class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono text-xs" />
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">Consumer Secret</label>
+                            <input v-model="wcForm.consumer_secret" type="password" placeholder="cs_..." class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono text-xs" />
+                        </div>
+
+                        <!-- Test result -->
+                        <div v-if="wcTestResult" :class="['p-3 rounded-xl text-xs', wcTestResult.success ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20']">
+                            {{ wcTestResult.message }}
+                        </div>
+
+                        <div class="flex gap-3">
+                            <button type="button" @click="testWcConnection" :disabled="wcTesting || !wcForm.store_url || !wcForm.consumer_key || !wcForm.consumer_secret" class="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-300 rounded-xl text-sm transition border border-gray-700 flex items-center justify-center gap-2">
+                                <svg v-if="wcTesting" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                {{ wcTesting ? 'Testando...' : 'Testar Conexão' }}
+                            </button>
+                            <button type="submit" :disabled="wcForm.processing || !wcForm.name || !wcForm.store_url || !wcForm.consumer_key || !wcForm.consumer_secret" class="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl text-sm font-medium transition">
+                                {{ wcForm.processing ? 'Salvando...' : 'Conectar' }}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Manual Entry Form Modal -->
+            <div v-if="showManualEntryForm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" @click.self="showManualEntryForm = false">
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-md mx-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-white">{{ editingEntry ? 'Editar' : 'Novo' }} Investimento Manual</h3>
+                        <button @click="showManualEntryForm = false" class="text-gray-400 hover:text-white"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                    </div>
+
+                    <form @submit.prevent="submitManualEntry" class="space-y-4">
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">Plataforma</label>
+                            <select v-model="manualEntryForm.platform" class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                <option v-for="(label, key) in manualPlatforms" :key="key" :value="key">{{ label }}</option>
+                            </select>
+                        </div>
+                        <div v-if="manualEntryForm.platform === 'other'">
+                            <label class="block text-xs text-gray-400 mb-1">Nome da plataforma</label>
+                            <input v-model="manualEntryForm.platform_label" type="text" placeholder="Ex: Taboola, Mídia Offline..." class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Data início</label>
+                                <input v-model="manualEntryForm.date_start" type="date" class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Data fim</label>
+                                <input v-model="manualEntryForm.date_end" type="date" class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">Valor total investido (R$)</label>
+                            <input v-model.number="manualEntryForm.amount" type="number" step="0.01" min="0" placeholder="0,00" class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                            <p v-if="manualEntryForm.date_start && manualEntryForm.date_end && manualEntryForm.amount > 0" class="text-[10px] text-indigo-400 mt-1">
+                                ≈ R$ {{ (manualEntryForm.amount / (Math.max(1, Math.ceil((new Date(manualEntryForm.date_end).getTime() - new Date(manualEntryForm.date_start).getTime()) / 86400000) + 1))).toFixed(2) }}/dia
+                            </p>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">Descrição (opcional)</label>
+                            <input v-model="manualEntryForm.description" type="text" placeholder="Ex: Campanha Black Friday" class="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded-xl px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                        </div>
+
+                        <div class="flex gap-3">
+                            <button type="button" @click="showManualEntryForm = false" class="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm transition border border-gray-700">Cancelar</button>
+                            <button type="submit" :disabled="manualEntryForm.processing || !manualEntryForm.date_start || !manualEntryForm.date_end || !manualEntryForm.amount" class="flex-1 px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl text-sm font-medium transition">
+                                {{ manualEntryForm.processing ? 'Salvando...' : editingEntry ? 'Atualizar' : 'Cadastrar' }}
                             </button>
                         </div>
                     </form>

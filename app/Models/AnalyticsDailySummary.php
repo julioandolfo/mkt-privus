@@ -13,6 +13,9 @@ class AnalyticsDailySummary extends Model
         'ad_spend', 'ad_impressions', 'ad_clicks', 'ad_conversions', 'ad_revenue', 'ad_ctr', 'ad_cpc', 'ad_roas',
         'search_impressions', 'search_clicks', 'search_ctr', 'search_position',
         'social_followers', 'social_engagement', 'social_reach', 'social_posts',
+        'wc_orders', 'wc_revenue', 'wc_avg_order_value', 'wc_items_sold',
+        'wc_refunds', 'wc_shipping', 'wc_tax', 'wc_new_customers', 'wc_coupons_used',
+        'manual_ad_spend', 'total_spend', 'real_roas',
     ];
 
     protected $casts = [
@@ -26,6 +29,14 @@ class AnalyticsDailySummary extends Model
         'ad_roas' => 'decimal:4',
         'search_ctr' => 'decimal:4',
         'search_position' => 'decimal:2',
+        'wc_revenue' => 'decimal:2',
+        'wc_avg_order_value' => 'decimal:2',
+        'wc_refunds' => 'decimal:2',
+        'wc_shipping' => 'decimal:2',
+        'wc_tax' => 'decimal:2',
+        'manual_ad_spend' => 'decimal:2',
+        'total_spend' => 'decimal:2',
+        'real_roas' => 'decimal:2',
     ];
 
     public function brand(): BelongsTo

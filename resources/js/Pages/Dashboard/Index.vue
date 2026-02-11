@@ -89,6 +89,17 @@ const props = defineProps<{
     activeGoals: GoalData[];
     followersChart: ChartPoint[];
     recentActivity: any[];
+    ecommerceSummary?: {
+        wc_revenue: number;
+        wc_orders: number;
+        wc_avg_order_value: number;
+        total_spend: number;
+        manual_spend: number;
+        api_spend: number;
+        real_roas: number;
+        has_wc: boolean;
+        has_spend: boolean;
+    } | null;
 }>();
 
 const chartMetric = ref<'followers' | 'engagement' | 'reach' | 'impressions'>('followers');
@@ -261,6 +272,60 @@ const periodOptions = [
                     </div>
                     <p class="text-2xl font-bold text-white">{{ stats.connected_platforms }}</p>
                     <p class="text-xs text-gray-600 mt-1">conectadas</p>
+                </div>
+            </div>
+
+            <!-- ===== E-COMMERCE / INVESTIMENTO ===== -->
+            <div v-if="ecommerceSummary" class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <!-- Investimento Total -->
+                <div v-if="ecommerceSummary.has_spend" class="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Investimento 30d</p>
+                        <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V7m0 9v1m9-5a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </div>
+                    <p class="text-2xl font-bold text-amber-400">R$ {{ ecommerceSummary.total_spend.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) }}</p>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span v-if="ecommerceSummary.api_spend > 0" class="text-[10px] text-gray-500">API: R$ {{ ecommerceSummary.api_spend.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) }}</span>
+                        <span v-if="ecommerceSummary.manual_spend > 0" class="text-[10px] text-orange-400">Manual: R$ {{ ecommerceSummary.manual_spend.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) }}</span>
+                    </div>
+                </div>
+
+                <!-- Receita WooCommerce -->
+                <div v-if="ecommerceSummary.has_wc" class="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Receita Loja 30d</p>
+                        <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0"/>
+                        </svg>
+                    </div>
+                    <p class="text-2xl font-bold text-purple-400">R$ {{ ecommerceSummary.wc_revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) }}</p>
+                    <p class="text-xs text-gray-600 mt-1">{{ ecommerceSummary.wc_orders }} pedidos • Ticket: R$ {{ ecommerceSummary.wc_avg_order_value.toFixed(2) }}</p>
+                </div>
+
+                <!-- ROAS Real -->
+                <div v-if="ecommerceSummary.has_wc && ecommerceSummary.has_spend && ecommerceSummary.real_roas > 0" class="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">ROAS Real</p>
+                        <svg class="w-4 h-4 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M2 12l5 4 5-6 5 3 5-7"/>
+                        </svg>
+                    </div>
+                    <p class="text-2xl font-bold" :class="ecommerceSummary.real_roas >= 1 ? 'text-emerald-400' : 'text-red-400'">{{ ecommerceSummary.real_roas.toFixed(2) }}x</p>
+                    <p class="text-xs text-gray-600 mt-1">Receita real / investimento total</p>
+                </div>
+
+                <!-- Pedidos -->
+                <div v-if="ecommerceSummary.has_wc" class="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Pedidos 30d</p>
+                        <svg class="w-4 h-4 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/>
+                        </svg>
+                    </div>
+                    <p class="text-2xl font-bold text-violet-400">{{ ecommerceSummary.wc_orders }}</p>
+                    <Link :href="route('analytics.ads')" class="text-xs text-indigo-400 hover:text-indigo-300 transition mt-1 inline-block">Ver analytics</Link>
                 </div>
             </div>
 

@@ -39,6 +39,7 @@ const props = defineProps<{
             dates: string[];
             website: Record<string, number[]>;
             ads: Record<string, number[]>;
+            ecommerce: Record<string, number[]>;
             seo: Record<string, number[]>;
         };
         topDimensions: Record<string, any[]>;
@@ -147,11 +148,18 @@ function getVariationColor(variation: number | undefined, inverse: boolean = fal
 const kpiGroups = computed(() => {
     if (!props.dashboardData?.kpis) return [];
     const kpis = props.dashboardData.kpis;
-    return [
+    const groups = [
         { title: 'Website', kpis: kpis.filter(k => ['sessions', 'users', 'pageviews', 'bounce_rate', 'avg_session_duration'].includes(k.key)) },
-        { title: 'Ads', kpis: kpis.filter(k => ['ad_spend', 'ad_clicks', 'ad_conversions', 'ad_roas'].includes(k.key)) },
-        { title: 'SEO', kpis: kpis.filter(k => ['search_clicks', 'search_impressions', 'search_position'].includes(k.key)) },
+        { title: 'Investimentos', kpis: kpis.filter(k => ['total_spend', 'ad_spend', 'manual_ad_spend', 'ad_clicks', 'ad_conversions', 'ad_roas'].includes(k.key)) },
     ];
+    // Adicionar E-commerce apenas se houver dados
+    const ecomKpis = kpis.filter(k => ['wc_orders', 'wc_revenue', 'wc_avg_order_value', 'real_roas'].includes(k.key));
+    const hasEcomData = ecomKpis.some(k => k.value > 0);
+    if (hasEcomData) {
+        groups.push({ title: 'E-commerce', kpis: ecomKpis });
+    }
+    groups.push({ title: 'SEO', kpis: kpis.filter(k => ['search_clicks', 'search_impressions', 'search_position'].includes(k.key)) });
+    return groups;
 });
 
 // SVG Chart
@@ -164,10 +172,13 @@ const chartOptions = [
     { value: 'users', label: 'Usuários', group: 'website', color: '#8B5CF6' },
     { value: 'pageviews', label: 'Pageviews', group: 'website', color: '#A78BFA' },
     { value: 'bounce_rate', label: 'Bounce Rate', group: 'website', color: '#EF4444' },
-    { value: 'spend', label: 'Investimento', group: 'ads', color: '#F59E0B' },
+    { value: 'total_spend', label: 'Invest. Total', group: 'ads', color: '#F59E0B' },
+    { value: 'spend', label: 'Invest. API', group: 'ads', color: '#D97706' },
     { value: 'clicks', label: 'Cliques Ads', group: 'ads', color: '#F97316' },
-    { value: 'impressions', label: 'Impressões Ads', group: 'ads', color: '#FB923C' },
     { value: 'conversions', label: 'Conversões', group: 'ads', color: '#10B981' },
+    { value: 'revenue', label: 'Receita Loja', group: 'ecommerce', color: '#A855F7' },
+    { value: 'orders', label: 'Pedidos', group: 'ecommerce', color: '#8B5CF6' },
+    { value: 'real_roas', label: 'ROAS Real', group: 'ecommerce', color: '#EC4899' },
 ];
 
 const chartData = computed(() => {
@@ -483,6 +494,28 @@ const chartData = computed(() => {
                                         </div>
                                         <div class="w-full bg-gray-800 rounded-full h-1">
                                             <div class="bg-amber-500 h-1 rounded-full" :style="{ width: Math.min(100, (item.value / (dashboardData.topDimensions.campaigns[0]?.value || 1)) * 100) + '%' }"/>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Top Products (WooCommerce) -->
+                        <div v-if="dashboardData.topDimensions?.products?.length" class="bg-gray-900/50 rounded-2xl border border-gray-800 p-5">
+                            <h3 class="text-sm font-semibold text-white mb-3">Top Produtos (WooCommerce)</h3>
+                            <div class="space-y-2">
+                                <div v-for="(item, i) in dashboardData.topDimensions.products.slice(0, 8)" :key="i" class="flex items-center gap-3">
+                                    <span class="text-xs text-gray-500 w-5 text-right">{{ i + 1 }}.</span>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center justify-between mb-1">
+                                            <span class="text-xs text-gray-300 truncate">{{ item.name }}</span>
+                                            <div class="flex items-center gap-2">
+                                                <span v-if="item.extra?.quantity" class="text-[10px] text-gray-500">{{ item.extra.quantity }}x</span>
+                                                <span class="text-xs text-purple-400 font-medium tabular-nums">R$ {{ Number(item.value).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) }}</span>
+                                            </div>
+                                        </div>
+                                        <div class="w-full bg-gray-800 rounded-full h-1">
+                                            <div class="bg-purple-500 h-1 rounded-full" :style="{ width: Math.min(100, (item.value / (dashboardData.topDimensions.products[0]?.value || 1)) * 100) + '%' }"/>
                                         </div>
                                     </div>
                                 </div>

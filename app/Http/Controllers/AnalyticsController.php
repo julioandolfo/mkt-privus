@@ -6,6 +6,7 @@ use App\Models\AnalyticsConnection;
 use App\Models\AnalyticsDataPoint;
 use App\Models\AnalyticsDailySummary;
 use App\Models\Brand;
+use App\Models\ManualAdEntry;
 use App\Models\OAuthDiscoveredAccount;
 use App\Models\SystemLog;
 use App\Services\Analytics\AnalyticsSyncService;
@@ -13,6 +14,7 @@ use App\Services\Analytics\GoogleAdsService;
 use App\Services\Analytics\GoogleAnalyticsService;
 use App\Services\Analytics\GoogleSearchConsoleService;
 use App\Services\Analytics\MetaAdsService;
+use App\Services\Analytics\WooCommerceService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -163,6 +165,28 @@ class AnalyticsController extends Controller
 
         $brands = Brand::orderBy('name')->get(['id', 'name']);
 
+        // Investimentos manuais
+        $manualEntries = $brand ? ManualAdEntry::where('brand_id', $brand->id)
+            ->with('user:id,name')
+            ->orderByDesc('date_start')
+            ->get()
+            ->map(fn($e) => [
+                'id' => $e->id,
+                'platform' => $e->platform,
+                'platform_label' => $e->platformDisplayName(),
+                'platform_custom' => $e->platform_label,
+                'date_start' => $e->date_start->format('Y-m-d'),
+                'date_end' => $e->date_end->format('Y-m-d'),
+                'date_start_display' => $e->date_start->format('d/m/Y'),
+                'date_end_display' => $e->date_end->format('d/m/Y'),
+                'amount' => (float) $e->amount,
+                'daily_amount' => round($e->dailyAmount(), 2),
+                'period_days' => $e->periodDays(),
+                'description' => $e->description,
+                'user_name' => $e->user?->name ?? 'Sistema',
+                'created_at' => $e->created_at->format('d/m/Y H:i'),
+            ]) : collect();
+
         return Inertia::render('Analytics/Connections', [
             'brand' => $brand,
             'brands' => $brands,
@@ -173,6 +197,8 @@ class AnalyticsController extends Controller
             'discoveryToken' => $discoveryToken,
             'platforms' => AnalyticsConnection::platformLabels(),
             'platformColors' => AnalyticsConnection::platformColors(),
+            'manualEntries' => $manualEntries,
+            'manualPlatforms' => ManualAdEntry::platformOptions(),
         ]);
     }
 
@@ -626,6 +652,51 @@ class AnalyticsController extends Controller
      */
     public function storeConnection(Request $request)
     {
+        $platform = $request->input('platform');
+
+        // Validacao especifica por plataforma
+        if ($platform === 'woocommerce') {
+            $request->validate([
+                'brand_id' => 'required|exists:brands,id',
+                'platform' => 'required|string|in:woocommerce',
+                'name' => 'required|string|max:255',
+                'store_url' => 'required|url|max:500',
+                'consumer_key' => 'required|string|max:255',
+                'consumer_secret' => 'required|string|max:255',
+            ]);
+
+            // Testar conexao antes de salvar
+            $wcService = app(WooCommerceService::class);
+            $test = $wcService->testConnection($request->store_url, $request->consumer_key, $request->consumer_secret);
+
+            if (!$test['success']) {
+                return back()->with('error', 'Erro ao conectar WooCommerce: ' . $test['error']);
+            }
+
+            $storeUrl = rtrim($request->store_url, '/');
+
+            AnalyticsConnection::create([
+                'brand_id' => $request->brand_id,
+                'user_id' => auth()->id(),
+                'platform' => 'woocommerce',
+                'name' => $request->name,
+                'external_id' => $storeUrl,
+                'external_name' => $test['store_name'] ?? $request->name,
+                'is_active' => true,
+                'sync_status' => 'pending',
+                'config' => [
+                    'store_url' => $storeUrl,
+                    'consumer_key' => $request->consumer_key,
+                    'consumer_secret' => $request->consumer_secret,
+                    'wc_version' => $test['wc_version'] ?? null,
+                    'currency' => $test['currency'] ?? 'BRL',
+                ],
+            ]);
+
+            return back()->with('success', 'WooCommerce conectado com sucesso! Versão: ' . ($test['wc_version'] ?? 'desconhecida'));
+        }
+
+        // Validacao padrao para outras plataformas
         $request->validate([
             'brand_id' => 'required|exists:brands,id',
             'platform' => 'required|string|in:google_analytics,google_ads,google_search_console,meta_ads',
@@ -650,6 +721,111 @@ class AnalyticsController extends Controller
         ]);
 
         return back()->with('success', 'Conexão adicionada com sucesso!');
+    }
+
+    /**
+     * Testar conexao WooCommerce (AJAX)
+     */
+    public function testWooCommerce(Request $request): JsonResponse
+    {
+        $request->validate([
+            'store_url' => 'required|url',
+            'consumer_key' => 'required|string',
+            'consumer_secret' => 'required|string',
+        ]);
+
+        $wcService = app(WooCommerceService::class);
+        $result = $wcService->testConnection($request->store_url, $request->consumer_key, $request->consumer_secret);
+
+        return response()->json($result);
+    }
+
+    /**
+     * Criar investimento manual
+     */
+    public function storeManualEntry(Request $request)
+    {
+        $request->validate([
+            'brand_id' => 'required|exists:brands,id',
+            'platform' => 'required|string|in:' . implode(',', array_keys(ManualAdEntry::platformOptions())),
+            'platform_label' => 'nullable|string|max:255',
+            'date_start' => 'required|date',
+            'date_end' => 'required|date|after_or_equal:date_start',
+            'amount' => 'required|numeric|min:0.01',
+            'description' => 'nullable|string|max:1000',
+        ]);
+
+        ManualAdEntry::create([
+            'brand_id' => $request->brand_id,
+            'user_id' => auth()->id(),
+            'platform' => $request->platform,
+            'platform_label' => $request->platform === 'other' ? $request->platform_label : null,
+            'date_start' => $request->date_start,
+            'date_end' => $request->date_end,
+            'amount' => $request->amount,
+            'description' => $request->description,
+        ]);
+
+        // Recalcular sumarios do periodo afetado
+        $this->syncService->rebuildDailySummaries(
+            $request->brand_id,
+            $request->date_start,
+            $request->date_end
+        );
+
+        return back()->with('success', 'Investimento manual cadastrado com sucesso!');
+    }
+
+    /**
+     * Atualizar investimento manual
+     */
+    public function updateManualEntry(Request $request, ManualAdEntry $entry)
+    {
+        $request->validate([
+            'platform' => 'required|string|in:' . implode(',', array_keys(ManualAdEntry::platformOptions())),
+            'platform_label' => 'nullable|string|max:255',
+            'date_start' => 'required|date',
+            'date_end' => 'required|date|after_or_equal:date_start',
+            'amount' => 'required|numeric|min:0.01',
+            'description' => 'nullable|string|max:1000',
+        ]);
+
+        // Guardar periodo antigo para recalcular
+        $oldStart = $entry->date_start->format('Y-m-d');
+        $oldEnd = $entry->date_end->format('Y-m-d');
+
+        $entry->update([
+            'platform' => $request->platform,
+            'platform_label' => $request->platform === 'other' ? $request->platform_label : null,
+            'date_start' => $request->date_start,
+            'date_end' => $request->date_end,
+            'amount' => $request->amount,
+            'description' => $request->description,
+        ]);
+
+        // Recalcular sumarios do periodo antigo e novo
+        $minStart = min($oldStart, $request->date_start);
+        $maxEnd = max($oldEnd, $request->date_end);
+        $this->syncService->rebuildDailySummaries($entry->brand_id, $minStart, $maxEnd);
+
+        return back()->with('success', 'Investimento manual atualizado!');
+    }
+
+    /**
+     * Remover investimento manual
+     */
+    public function destroyManualEntry(ManualAdEntry $entry)
+    {
+        $brandId = $entry->brand_id;
+        $start = $entry->date_start->format('Y-m-d');
+        $end = $entry->date_end->format('Y-m-d');
+
+        $entry->delete();
+
+        // Recalcular sumarios
+        $this->syncService->rebuildDailySummaries($brandId, $start, $end);
+
+        return back()->with('success', 'Investimento manual removido!');
     }
 
     /**

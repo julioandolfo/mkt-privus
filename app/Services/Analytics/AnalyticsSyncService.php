@@ -5,6 +5,7 @@ namespace App\Services\Analytics;
 use App\Models\AnalyticsConnection;
 use App\Models\AnalyticsDailySummary;
 use App\Models\AnalyticsDataPoint;
+use App\Models\ManualAdEntry;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
@@ -14,17 +15,20 @@ class AnalyticsSyncService
     protected MetaAdsService $metaAdsService;
     protected GoogleSearchConsoleService $gscService;
     protected GoogleAdsService $googleAdsService;
+    protected WooCommerceService $wooCommerceService;
 
     public function __construct(
         GoogleAnalyticsService $gaService,
         MetaAdsService $metaAdsService,
         GoogleSearchConsoleService $gscService,
-        GoogleAdsService $googleAdsService
+        GoogleAdsService $googleAdsService,
+        WooCommerceService $wooCommerceService
     ) {
         $this->gaService = $gaService;
         $this->metaAdsService = $metaAdsService;
         $this->gscService = $gscService;
         $this->googleAdsService = $googleAdsService;
+        $this->wooCommerceService = $wooCommerceService;
     }
 
     /**
@@ -58,6 +62,7 @@ class AnalyticsSyncService
             'meta_ads' => $this->metaAdsService->syncData($connection, $startDate, $endDate),
             'google_search_console' => $this->gscService->syncData($connection, $startDate, $endDate),
             'google_ads' => $this->googleAdsService->syncData($connection, $startDate, $endDate),
+            'woocommerce' => $this->wooCommerceService->syncData($connection, $startDate, $endDate),
             default => ['success' => false, 'error' => "Plataforma {$connection->platform} não suportada"],
         };
     }
@@ -69,6 +74,9 @@ class AnalyticsSyncService
     {
         $start = Carbon::parse($startDate);
         $end = Carbon::parse($endDate);
+
+        // Pre-carregar manual entries do periodo para performance
+        $manualEntries = ManualAdEntry::forBrandPeriod($brandId, $startDate, $endDate)->get();
 
         for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
             $dateStr = $date->format('Y-m-d');
@@ -93,38 +101,84 @@ class AnalyticsSyncService
                 ->get()
                 ->keyBy('metric_key');
 
-            // Agregar dados de ads (soma de todas as fontes)
-            $totalSpend = $adData->where('metric_key', 'spend')->sum('value');
+            $wcData = AnalyticsDataPoint::where('brand_id', $brandId)
+                ->where('platform', 'woocommerce')
+                ->where('date', $dateStr)
+                ->whereNull('dimension_key')
+                ->get()
+                ->keyBy('metric_key');
+
+            // Agregar dados de ads (soma de API)
+            $apiAdSpend = $adData->where('metric_key', 'spend')->sum('value');
             $totalImpressions = $adData->where('metric_key', 'impressions')->sum('value');
             $totalClicks = $adData->where('metric_key', 'clicks')->sum('value');
             $totalConversions = $adData->where('metric_key', 'conversions')->sum('value');
-            $totalRevenue = $adData->where('metric_key', 'revenue')->sum('value') + $adData->where('metric_key', 'conversion_value')->sum('value');
+            $adRevenue = $adData->where('metric_key', 'revenue')->sum('value') + $adData->where('metric_key', 'conversion_value')->sum('value');
 
             $adCtr = $totalImpressions > 0 ? ($totalClicks / $totalImpressions) * 100 : 0;
-            $adCpc = $totalClicks > 0 ? $totalSpend / $totalClicks : 0;
-            $adRoas = $totalSpend > 0 ? $totalRevenue / $totalSpend : 0;
+            $adCpc = $totalClicks > 0 ? $apiAdSpend / $totalClicks : 0;
+            $adRoas = $apiAdSpend > 0 ? $adRevenue / $apiAdSpend : 0;
+
+            // Investimentos manuais distribuidos para este dia
+            $manualSpend = $manualEntries
+                ->filter(fn($e) => $e->date_start->lte($date) && $e->date_end->gte($date))
+                ->sum(fn($e) => $e->dailyAmount());
+
+            // Total de investimento (API + manual)
+            $totalSpend = $apiAdSpend + $manualSpend;
+
+            // WooCommerce
+            $wcOrders = intval($wcData->get('wc_orders')?->value ?? 0);
+            $wcRevenue = floatval($wcData->get('wc_revenue')?->value ?? 0);
+            $wcAvgOrderValue = floatval($wcData->get('wc_avg_order_value')?->value ?? 0);
+            $wcItemsSold = intval($wcData->get('wc_items_sold')?->value ?? 0);
+            $wcRefunds = floatval($wcData->get('wc_refunds')?->value ?? 0);
+            $wcShipping = floatval($wcData->get('wc_shipping')?->value ?? 0);
+            $wcTax = floatval($wcData->get('wc_tax')?->value ?? 0);
+            $wcNewCustomers = intval($wcData->get('wc_new_customers')?->value ?? 0);
+            $wcCouponsUsed = intval($wcData->get('wc_coupons_used')?->value ?? 0);
+
+            // ROAS Real (receita WooCommerce / investimento total)
+            $realRoas = $totalSpend > 0 && $wcRevenue > 0 ? $wcRevenue / $totalSpend : 0;
 
             AnalyticsDailySummary::updateOrCreate(
                 ['brand_id' => $brandId, 'date' => $dateStr],
                 [
+                    // Website (GA4)
                     'sessions' => intval($gaData->get('sessions')?->value ?? 0),
                     'users' => intval($gaData->get('users')?->value ?? 0),
                     'new_users' => intval($gaData->get('new_users')?->value ?? 0),
                     'pageviews' => intval($gaData->get('pageviews')?->value ?? 0),
                     'bounce_rate' => floatval($gaData->get('bounce_rate')?->value ?? 0),
                     'avg_session_duration' => floatval($gaData->get('avg_session_duration')?->value ?? 0),
-                    'ad_spend' => $totalSpend,
+                    // Ads (API)
+                    'ad_spend' => $apiAdSpend,
                     'ad_impressions' => intval($totalImpressions),
                     'ad_clicks' => intval($totalClicks),
                     'ad_conversions' => intval($totalConversions),
-                    'ad_revenue' => $totalRevenue,
+                    'ad_revenue' => $adRevenue,
                     'ad_ctr' => $adCtr,
                     'ad_cpc' => $adCpc,
                     'ad_roas' => $adRoas,
+                    // SEO
                     'search_impressions' => intval($scData->get('search_impressions')?->value ?? 0),
                     'search_clicks' => intval($scData->get('search_clicks')?->value ?? 0),
                     'search_ctr' => floatval($scData->get('search_ctr')?->value ?? 0),
                     'search_position' => floatval($scData->get('search_position')?->value ?? 0),
+                    // E-commerce (WooCommerce)
+                    'wc_orders' => $wcOrders,
+                    'wc_revenue' => $wcRevenue,
+                    'wc_avg_order_value' => $wcAvgOrderValue,
+                    'wc_items_sold' => $wcItemsSold,
+                    'wc_refunds' => $wcRefunds,
+                    'wc_shipping' => $wcShipping,
+                    'wc_tax' => $wcTax,
+                    'wc_new_customers' => $wcNewCustomers,
+                    'wc_coupons_used' => $wcCouponsUsed,
+                    // Investimentos e ROAS real
+                    'manual_ad_spend' => round($manualSpend, 2),
+                    'total_spend' => round($totalSpend, 2),
+                    'real_roas' => round($realRoas, 2),
                 ]
             );
         }
@@ -188,10 +242,16 @@ class AnalyticsSyncService
             ['key' => 'pageviews', 'label' => 'Pageviews', 'value' => $calc($summaries, 'pageviews'), 'format' => 'number', 'icon' => 'eye', 'color' => 'purple'],
             ['key' => 'bounce_rate', 'label' => 'Taxa de Rejeição', 'value' => round($avg($summaries, 'bounce_rate'), 2), 'format' => 'percent', 'icon' => 'arrow-uturn-left', 'color' => 'red', 'inverse' => true],
             ['key' => 'avg_session_duration', 'label' => 'Duração Média', 'value' => round($avg($summaries, 'avg_session_duration'), 0), 'format' => 'duration', 'icon' => 'clock', 'color' => 'green'],
-            ['key' => 'ad_spend', 'label' => 'Investimento Ads', 'value' => round($calc($summaries, 'ad_spend'), 2), 'format' => 'currency', 'icon' => 'banknotes', 'color' => 'yellow'],
+            ['key' => 'total_spend', 'label' => 'Investimento Total', 'value' => round($calc($summaries, 'total_spend'), 2), 'format' => 'currency', 'icon' => 'banknotes', 'color' => 'yellow'],
+            ['key' => 'ad_spend', 'label' => 'Invest. API (Ads)', 'value' => round($calc($summaries, 'ad_spend'), 2), 'format' => 'currency', 'icon' => 'banknotes', 'color' => 'amber'],
+            ['key' => 'manual_ad_spend', 'label' => 'Invest. Manual', 'value' => round($calc($summaries, 'manual_ad_spend'), 2), 'format' => 'currency', 'icon' => 'pencil-square', 'color' => 'orange'],
             ['key' => 'ad_clicks', 'label' => 'Cliques Ads', 'value' => $calc($summaries, 'ad_clicks'), 'format' => 'number', 'icon' => 'cursor-arrow-rays', 'color' => 'orange'],
             ['key' => 'ad_conversions', 'label' => 'Conversões', 'value' => $calc($summaries, 'ad_conversions'), 'format' => 'number', 'icon' => 'check-circle', 'color' => 'emerald'],
-            ['key' => 'ad_roas', 'label' => 'ROAS', 'value' => round($avg($summaries, 'ad_roas'), 2), 'format' => 'decimal', 'icon' => 'arrow-trending-up', 'color' => 'teal'],
+            ['key' => 'ad_roas', 'label' => 'ROAS Ads', 'value' => round($avg($summaries, 'ad_roas'), 2), 'format' => 'decimal', 'icon' => 'arrow-trending-up', 'color' => 'teal'],
+            ['key' => 'wc_orders', 'label' => 'Pedidos', 'value' => $calc($summaries, 'wc_orders'), 'format' => 'number', 'icon' => 'shopping-bag', 'color' => 'violet'],
+            ['key' => 'wc_revenue', 'label' => 'Receita Loja', 'value' => round($calc($summaries, 'wc_revenue'), 2), 'format' => 'currency', 'icon' => 'currency-dollar', 'color' => 'fuchsia'],
+            ['key' => 'wc_avg_order_value', 'label' => 'Ticket Médio', 'value' => round($avg($summaries, 'wc_avg_order_value'), 2), 'format' => 'currency', 'icon' => 'receipt-percent', 'color' => 'pink'],
+            ['key' => 'real_roas', 'label' => 'ROAS Real', 'value' => round($avg($summaries, 'real_roas'), 2), 'format' => 'decimal', 'icon' => 'arrow-trending-up', 'color' => 'rose'],
             ['key' => 'search_clicks', 'label' => 'Cliques SEO', 'value' => $calc($summaries, 'search_clicks'), 'format' => 'number', 'icon' => 'magnifying-glass', 'color' => 'lime'],
             ['key' => 'search_impressions', 'label' => 'Impressões SEO', 'value' => $calc($summaries, 'search_impressions'), 'format' => 'number', 'icon' => 'globe-alt', 'color' => 'cyan'],
             ['key' => 'search_position', 'label' => 'Posição Média', 'value' => round($avg($summaries, 'search_position'), 1), 'format' => 'decimal', 'icon' => 'list-bullet', 'color' => 'sky', 'inverse' => true],
@@ -201,7 +261,7 @@ class AnalyticsSyncService
         if ($compareSummaries && $compareSummaries->isNotEmpty()) {
             foreach ($kpis as &$kpi) {
                 $compareField = $kpi['key'];
-                $isAvg = in_array($compareField, ['bounce_rate', 'avg_session_duration', 'ad_roas', 'search_position', 'search_ctr']);
+                $isAvg = in_array($compareField, ['bounce_rate', 'avg_session_duration', 'ad_roas', 'real_roas', 'wc_avg_order_value', 'search_position', 'search_ctr']);
                 $compareValue = $isAvg ? $avg($compareSummaries, $compareField) : $calc($compareSummaries, $compareField);
 
                 if ($compareValue > 0) {
@@ -235,10 +295,20 @@ class AnalyticsSyncService
             ],
             'ads' => [
                 'spend' => $summaries->pluck('ad_spend')->toArray(),
+                'total_spend' => $summaries->pluck('total_spend')->toArray(),
+                'manual_spend' => $summaries->pluck('manual_ad_spend')->toArray(),
                 'clicks' => $summaries->pluck('ad_clicks')->toArray(),
                 'impressions' => $summaries->pluck('ad_impressions')->toArray(),
                 'conversions' => $summaries->pluck('ad_conversions')->toArray(),
                 'roas' => $summaries->pluck('ad_roas')->toArray(),
+            ],
+            'ecommerce' => [
+                'orders' => $summaries->pluck('wc_orders')->toArray(),
+                'revenue' => $summaries->pluck('wc_revenue')->toArray(),
+                'avg_order_value' => $summaries->pluck('wc_avg_order_value')->toArray(),
+                'items_sold' => $summaries->pluck('wc_items_sold')->toArray(),
+                'refunds' => $summaries->pluck('wc_refunds')->toArray(),
+                'real_roas' => $summaries->pluck('real_roas')->toArray(),
             ],
             'seo' => [
                 'clicks' => $summaries->pluck('search_clicks')->toArray(),
@@ -305,6 +375,15 @@ class AnalyticsSyncService
                 ->orderByDesc('value')
                 ->limit(10)
                 ->get(['dimension_value as name', 'value', 'platform', 'extra'])
+                ->toArray(),
+            'products' => AnalyticsDataPoint::where('brand_id', $brandId)
+                ->where('platform', 'woocommerce')
+                ->where('dimension_key', 'product')
+                ->where('metric_key', 'wc_product_revenue')
+                ->where('date', $endDate)
+                ->orderByDesc('value')
+                ->limit(10)
+                ->get(['dimension_value as name', 'value', 'extra'])
                 ->toArray(),
         ];
     }

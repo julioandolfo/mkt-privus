@@ -51,6 +51,7 @@ class AnalyticsConnection extends Model
             'google_ads' => 'Google Ads',
             'google_search_console' => 'Google Search Console',
             'meta_ads' => 'Meta Ads',
+            'woocommerce' => 'WooCommerce',
         ];
     }
 
@@ -61,6 +62,7 @@ class AnalyticsConnection extends Model
             'google_ads' => '#4285F4',
             'google_search_console' => '#34A853',
             'meta_ads' => '#1877F2',
+            'woocommerce' => '#96588A',
         ];
     }
 }
