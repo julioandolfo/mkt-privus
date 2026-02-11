@@ -252,36 +252,117 @@ class DashboardController extends Controller
             $recentActivity = $recentPosts->toArray();
         }
 
-        // ===== DADOS E-COMMERCE / INVESTIMENTO (ultimos 30 dias) =====
-        $ecommerceSummary = null;
+        // ===== ANALYTICS RESUMO (ultimos 30 dias) =====
+        $analyticsSummary = null;
         if ($brandId) {
             $last30 = AnalyticsDailySummary::where('brand_id', $brandId)
                 ->where('date', '>=', now()->subDays(30))
                 ->get();
 
+            // Periodo anterior (30-60 dias atras) para comparacao
+            $prev30 = AnalyticsDailySummary::where('brand_id', $brandId)
+                ->where('date', '>=', now()->subDays(60))
+                ->where('date', '<', now()->subDays(30))
+                ->get();
+
+            $variation = function ($current, $previous) {
+                if (!$previous || $previous == 0) return $current > 0 ? 100 : null;
+                return round((($current - $previous) / abs($previous)) * 100, 1);
+            };
+
             if ($last30->isNotEmpty()) {
+                // Website (GA4)
+                $sessions = $last30->sum('sessions');
+                $users = $last30->sum('users');
+                $pageviews = $last30->sum('pageviews');
+                $bounceRate = $last30->avg('bounce_rate');
+                $avgDuration = $last30->avg('avg_session_duration');
+
+                // Ads
+                $adSpend = $last30->sum('ad_spend');
+                $adClicks = $last30->sum('ad_clicks');
+                $adConversions = $last30->sum('ad_conversions');
+                $adImpressions = $last30->sum('ad_impressions');
+                $adRevenue = $last30->sum('ad_revenue');
+                $adRoas = $last30->avg('ad_roas');
+                $manualSpend = $last30->sum('manual_ad_spend');
+                $totalSpend = $last30->sum('total_spend');
+
+                // SEO
+                $searchClicks = $last30->sum('search_clicks');
+                $searchImpressions = $last30->sum('search_impressions');
+                $searchPosition = $last30->avg('search_position');
+
+                // E-commerce
                 $wcRevenue = $last30->sum('wc_revenue');
                 $wcOrders = $last30->sum('wc_orders');
-                $totalSpend = $last30->sum('total_spend');
-                $manualSpend = $last30->sum('manual_ad_spend');
-                $apiSpend = $last30->sum('ad_spend');
+                $wcAvgOrder = $wcOrders > 0 ? $wcRevenue / $wcOrders : 0;
+                $realRoas = $totalSpend > 0 && $wcRevenue > 0 ? $wcRevenue / $totalSpend : 0;
 
+                // Variacoes vs periodo anterior
+                $prevSessions = $prev30->sum('sessions');
+                $prevUsers = $prev30->sum('users');
+                $prevAdSpend = $prev30->sum('ad_spend');
+                $prevSearchClicks = $prev30->sum('search_clicks');
+                $prevWcRevenue = $prev30->sum('wc_revenue');
+
+                // Conexoes analytics
+                $analyticsConnections = AnalyticsConnection::where('brand_id', $brandId)
+                    ->where('is_active', true)
+                    ->get(['platform', 'name', 'sync_status', 'last_synced_at'])
+                    ->map(fn($c) => [
+                        'platform' => $c->platform,
+                        'name' => $c->name,
+                        'label' => AnalyticsConnection::platformLabels()[$c->platform] ?? $c->platform,
+                        'color' => AnalyticsConnection::platformColors()[$c->platform] ?? '#6B7280',
+                        'sync_status' => $c->sync_status,
+                        'last_synced_at' => $c->last_synced_at?->diffForHumans(),
+                    ]);
+
+                $hasWebsite = $sessions > 0 || $users > 0;
+                $hasAds = $adSpend > 0 || $totalSpend > 0;
+                $hasSeo = $searchClicks > 0;
                 $hasWc = $wcRevenue > 0 || $wcOrders > 0;
-                $hasSpend = $totalSpend > 0;
 
-                if ($hasWc || $hasSpend) {
-                    $ecommerceSummary = [
-                        'wc_revenue' => round($wcRevenue, 2),
-                        'wc_orders' => $wcOrders,
-                        'wc_avg_order_value' => $wcOrders > 0 ? round($wcRevenue / $wcOrders, 2) : 0,
-                        'total_spend' => round($totalSpend, 2),
-                        'manual_spend' => round($manualSpend, 2),
-                        'api_spend' => round($apiSpend, 2),
-                        'real_roas' => $totalSpend > 0 && $wcRevenue > 0 ? round($wcRevenue / $totalSpend, 2) : 0,
-                        'has_wc' => $hasWc,
-                        'has_spend' => $hasSpend,
-                    ];
-                }
+                $analyticsSummary = [
+                    // Website
+                    'sessions' => $sessions,
+                    'sessions_variation' => $variation($sessions, $prevSessions),
+                    'users' => $users,
+                    'users_variation' => $variation($users, $prevUsers),
+                    'pageviews' => $pageviews,
+                    'bounce_rate' => round($bounceRate, 1),
+                    'avg_session_duration' => round($avgDuration),
+                    // Ads
+                    'ad_spend' => round($adSpend, 2),
+                    'ad_spend_variation' => $variation($adSpend, $prevAdSpend),
+                    'manual_spend' => round($manualSpend, 2),
+                    'total_spend' => round($totalSpend, 2),
+                    'ad_clicks' => $adClicks,
+                    'ad_conversions' => $adConversions,
+                    'ad_impressions' => $adImpressions,
+                    'ad_roas' => round($adRoas, 2),
+                    // SEO
+                    'search_clicks' => $searchClicks,
+                    'search_clicks_variation' => $variation($searchClicks, $prevSearchClicks),
+                    'search_impressions' => $searchImpressions,
+                    'search_position' => round($searchPosition, 1),
+                    // E-commerce
+                    'wc_revenue' => round($wcRevenue, 2),
+                    'wc_revenue_variation' => $variation($wcRevenue, $prevWcRevenue),
+                    'wc_orders' => $wcOrders,
+                    'wc_avg_order_value' => round($wcAvgOrder, 2),
+                    'real_roas' => round($realRoas, 2),
+                    // Flags
+                    'has_website' => $hasWebsite,
+                    'has_ads' => $hasAds,
+                    'has_seo' => $hasSeo,
+                    'has_wc' => $hasWc,
+                    'has_any' => $hasWebsite || $hasAds || $hasSeo || $hasWc,
+                    // Conexoes
+                    'connections' => $analyticsConnections,
+                    'connections_count' => $analyticsConnections->count(),
+                ];
             }
         }
 
@@ -293,7 +374,7 @@ class DashboardController extends Controller
             'activeGoals' => $activeGoals,
             'followersChart' => $followersChart,
             'recentActivity' => $recentActivity,
-            'ecommerceSummary' => $ecommerceSummary,
+            'analyticsSummary' => $analyticsSummary,
         ]);
     }
 }
