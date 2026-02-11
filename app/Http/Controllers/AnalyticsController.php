@@ -6,6 +6,7 @@ use App\Models\AnalyticsConnection;
 use App\Models\AnalyticsDataPoint;
 use App\Models\AnalyticsDailySummary;
 use App\Models\Brand;
+use App\Models\SystemLog;
 use App\Services\Analytics\AnalyticsSyncService;
 use App\Services\Analytics\GoogleAdsService;
 use App\Services\Analytics\GoogleAnalyticsService;
@@ -13,6 +14,7 @@ use App\Services\Analytics\GoogleSearchConsoleService;
 use App\Services\Analytics\MetaAdsService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
@@ -154,6 +156,17 @@ class AnalyticsController extends Controller
         $request->validate(['brand_id' => 'required|exists:brands,id']);
 
         $state = Str::random(40);
+
+        // Armazenar state no Cache (mais confiavel que sessao em Docker)
+        $cacheKey = 'analytics_oauth_' . $state;
+        Cache::put($cacheKey, [
+            'platform' => $platform,
+            'brand_id' => $request->brand_id,
+            'user_id' => auth()->id(),
+            'popup' => $request->boolean('popup', false),
+        ], now()->addMinutes(15));
+
+        // Tambem salvar na sessao como fallback
         session([
             'analytics_oauth_state' => $state,
             'analytics_oauth_platform' => $platform,
@@ -163,13 +176,34 @@ class AnalyticsController extends Controller
 
         $redirectUri = url('/analytics/oauth/callback/' . $platform);
 
-        $url = match ($platform) {
-            'google_analytics' => app(GoogleAnalyticsService::class)->getAuthorizationUrl($redirectUri, $state),
-            'google_ads' => app(GoogleAdsService::class)->getAuthorizationUrl($redirectUri, $state),
-            'google_search_console' => app(GoogleSearchConsoleService::class)->getAuthorizationUrl($redirectUri, $state),
-            'meta_ads' => app(MetaAdsService::class)->getAuthorizationUrl($redirectUri, $state),
-            default => throw new \InvalidArgumentException('Plataforma não suportada'),
-        };
+        SystemLog::info('analytics', 'oauth.redirect', "Iniciando OAuth para {$platform}", [
+            'platform' => $platform,
+            'brand_id' => $request->brand_id,
+            'redirect_uri' => $redirectUri,
+            'state' => substr($state, 0, 10) . '...',
+            'popup' => $request->boolean('popup', false),
+        ]);
+
+        try {
+            $url = match ($platform) {
+                'google_analytics' => app(GoogleAnalyticsService::class)->getAuthorizationUrl($redirectUri, $state),
+                'google_ads' => app(GoogleAdsService::class)->getAuthorizationUrl($redirectUri, $state),
+                'google_search_console' => app(GoogleSearchConsoleService::class)->getAuthorizationUrl($redirectUri, $state),
+                'meta_ads' => app(MetaAdsService::class)->getAuthorizationUrl($redirectUri, $state),
+                default => throw new \InvalidArgumentException("Plataforma '{$platform}' não suportada"),
+            };
+        } catch (\Throwable $e) {
+            SystemLog::error('analytics', 'oauth.redirect.error', "Erro ao gerar URL OAuth: {$e->getMessage()}", [
+                'platform' => $platform,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+
+        SystemLog::debug('analytics', 'oauth.redirect.url', "URL OAuth gerada com sucesso", [
+            'platform' => $platform,
+            'url_preview' => substr($url, 0, 100) . '...',
+        ]);
 
         // Se for popup, retorna JSON com a URL para o frontend abrir em nova janela
         if ($request->boolean('popup')) {
@@ -185,26 +219,106 @@ class AnalyticsController extends Controller
      */
     public function oauthCallback(Request $request, string $platform)
     {
-        $state = session('analytics_oauth_state');
-        $brandId = session('analytics_oauth_brand_id');
-        $isPopup = session('analytics_oauth_popup', false);
+        $requestState = $request->get('state');
+        $code = $request->get('code');
+        $error = $request->get('error');
 
-        if ($request->get('state') !== $state) {
+        SystemLog::info('analytics', 'oauth.callback', "Callback OAuth recebido para {$platform}", [
+            'platform' => $platform,
+            'has_code' => !empty($code),
+            'has_error' => !empty($error),
+            'error_description' => $request->get('error_description'),
+            'state_received' => $requestState ? substr($requestState, 0, 10) . '...' : 'VAZIO',
+            'query_params' => array_keys($request->query()),
+        ]);
+
+        // Tentar recuperar dados do state via Cache (prioridade) ou Sessao (fallback)
+        $oauthData = null;
+
+        if ($requestState) {
+            $cacheKey = 'analytics_oauth_' . $requestState;
+            $oauthData = Cache::get($cacheKey);
+
+            if ($oauthData) {
+                SystemLog::debug('analytics', 'oauth.callback.cache', "Dados OAuth recuperados do Cache", [
+                    'platform' => $oauthData['platform'] ?? 'n/a',
+                    'brand_id' => $oauthData['brand_id'] ?? 'n/a',
+                ]);
+            }
+        }
+
+        // Fallback para sessao
+        if (!$oauthData) {
+            $sessionState = session('analytics_oauth_state');
+            $brandId = session('analytics_oauth_brand_id');
+            $isPopup = session('analytics_oauth_popup', false);
+
+            SystemLog::warning('analytics', 'oauth.callback.session_fallback', "Cache miss, usando sessao como fallback", [
+                'session_state' => $sessionState ? substr($sessionState, 0, 10) . '...' : 'VAZIO',
+                'brand_id' => $brandId,
+                'states_match' => $requestState === $sessionState,
+            ]);
+
+            if ($requestState && $requestState === $sessionState) {
+                $oauthData = [
+                    'platform' => $platform,
+                    'brand_id' => $brandId,
+                    'user_id' => auth()->id(),
+                    'popup' => $isPopup,
+                ];
+            }
+        }
+
+        // Se nao encontrou dados, mas tem usuario logado, tentar sem validacao de state
+        // (cenario de sessao perdida em Docker)
+        if (!$oauthData && auth()->check()) {
+            $brandId = session('analytics_oauth_brand_id') ?? auth()->user()->current_brand_id;
+            $isPopup = session('analytics_oauth_popup', false);
+
+            SystemLog::warning('analytics', 'oauth.callback.no_state', "State nao validado - usando brand do usuario", [
+                'brand_id' => $brandId,
+                'user_id' => auth()->id(),
+            ]);
+
+            $oauthData = [
+                'platform' => $platform,
+                'brand_id' => $brandId,
+                'user_id' => auth()->id(),
+                'popup' => $isPopup,
+            ];
+        }
+
+        $brandId = $oauthData['brand_id'] ?? null;
+        $isPopup = $oauthData['popup'] ?? false;
+
+        // Verificar erro do provider
+        if ($error) {
+            $errorMsg = $request->get('error_description', $error);
+            SystemLog::error('analytics', 'oauth.callback.provider_error', "Erro do provider OAuth: {$errorMsg}", [
+                'platform' => $platform,
+                'error' => $error,
+                'error_description' => $errorMsg,
+            ]);
+
             if ($isPopup) {
                 return view('oauth.callback-popup', [
                     'status' => 'error',
-                    'message' => 'Estado OAuth inválido. Tente novamente.',
+                    'message' => "Erro do Google: {$errorMsg}",
                     'platform' => $platform,
                     'accountsCount' => 0,
                     'brandId' => $brandId,
                 ]);
             }
             return redirect()->route('analytics.connections')
-                ->with('error', 'Estado OAuth inválido. Tente novamente.');
+                ->with('error', "Erro do Google: {$errorMsg}");
         }
 
-        $code = $request->get('code');
         if (!$code) {
+            SystemLog::error('analytics', 'oauth.callback.no_code', "Codigo de autorizacao nao recebido", [
+                'platform' => $platform,
+                'query' => $request->query(),
+            ]);
+
             if ($isPopup) {
                 return view('oauth.callback-popup', [
                     'status' => 'error',
@@ -221,6 +335,12 @@ class AnalyticsController extends Controller
         $redirectUri = url('/analytics/oauth/callback/' . $platform);
 
         try {
+            SystemLog::info('analytics', 'oauth.callback.exchange', "Trocando code por token...", [
+                'platform' => $platform,
+                'redirect_uri' => $redirectUri,
+                'code_preview' => substr($code, 0, 10) . '...',
+            ]);
+
             // Trocar code por token
             $tokenData = match ($platform) {
                 'google_analytics' => app(GoogleAnalyticsService::class)->exchangeCode($code, $redirectUri),
@@ -231,10 +351,27 @@ class AnalyticsController extends Controller
 
             $accessToken = $tokenData['access_token'] ?? null;
             if (!$accessToken) {
-                throw new \RuntimeException('Token de acesso não recebido');
+                SystemLog::error('analytics', 'oauth.callback.no_token', "Token de acesso nao recebido", [
+                    'platform' => $platform,
+                    'token_keys' => array_keys($tokenData),
+                    'has_error' => isset($tokenData['error']),
+                    'error' => $tokenData['error'] ?? null,
+                    'error_description' => $tokenData['error_description'] ?? null,
+                ]);
+                throw new \RuntimeException('Token de acesso não recebido. Response: ' . json_encode(array_diff_key($tokenData, ['access_token' => 1, 'refresh_token' => 1])));
             }
 
+            SystemLog::info('analytics', 'oauth.callback.token_ok', "Token recebido com sucesso", [
+                'platform' => $platform,
+                'has_refresh' => !empty($tokenData['refresh_token']),
+                'expires_in' => $tokenData['expires_in'] ?? 'N/A',
+            ]);
+
             // Buscar propriedades/contas disponíveis
+            SystemLog::info('analytics', 'oauth.callback.fetch', "Buscando contas/propriedades...", [
+                'platform' => $platform,
+            ]);
+
             $accounts = match ($platform) {
                 'google_analytics' => app(GoogleAnalyticsService::class)->fetchProperties($accessToken),
                 'google_ads' => app(GoogleAdsService::class)->fetchCustomers($accessToken),
@@ -242,12 +379,23 @@ class AnalyticsController extends Controller
                 'meta_ads' => app(MetaAdsService::class)->fetchAdAccounts($accessToken),
             };
 
+            SystemLog::info('analytics', 'oauth.callback.accounts', count($accounts) . " conta(s) encontrada(s)", [
+                'platform' => $platform,
+                'count' => count($accounts),
+                'accounts' => array_map(fn($a) => ['id' => $a['id'] ?? '?', 'name' => $a['name'] ?? '?'], array_slice($accounts, 0, 5)),
+            ]);
+
             // Salvar na sessão para seleção
             session([
                 'analytics_discovered_accounts' => $accounts,
                 'analytics_oauth_token' => $tokenData,
                 'analytics_oauth_platform' => $platform,
             ]);
+
+            // Limpar cache do state
+            if ($requestState) {
+                Cache::forget('analytics_oauth_' . $requestState);
+            }
 
             $message = count($accounts) . ' conta(s) encontrada(s). Selecione as que deseja conectar.';
 
@@ -265,9 +413,17 @@ class AnalyticsController extends Controller
                 ->with('success', $message);
 
         } catch (\Throwable $e) {
+            SystemLog::error('analytics', 'oauth.callback.error', "ERRO no callback OAuth: {$e->getMessage()}", [
+                'platform' => $platform,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+                'trace' => array_slice(array_map(fn($t) => ($t['file'] ?? '?') . ':' . ($t['line'] ?? '?') . ' ' . ($t['class'] ?? '') . ($t['type'] ?? '') . ($t['function'] ?? ''), $e->getTrace()), 0, 8),
+            ]);
+
             Log::error('Analytics OAuth callback error', [
                 'platform' => $platform,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
 
             $errorMessage = 'Erro na autenticação: ' . $e->getMessage();
@@ -302,36 +458,55 @@ class AnalyticsController extends Controller
         $platform = session('analytics_oauth_platform');
         $tokenData = session('analytics_oauth_token');
 
+        SystemLog::info('analytics', 'oauth.save', "Salvando contas Analytics OAuth", [
+            'brand_id' => $request->brand_id,
+            'platform' => $platform,
+            'has_token' => !empty($tokenData),
+            'accounts_count' => count($request->accounts),
+        ]);
+
         if (!$platform || !$tokenData) {
+            SystemLog::error('analytics', 'oauth.save.expired', "Sessao OAuth expirada", [
+                'has_platform' => !empty($platform),
+                'has_token' => !empty($tokenData),
+            ]);
             return back()->with('error', 'Sessão OAuth expirada. Conecte novamente.');
         }
 
         $saved = 0;
         foreach ($request->accounts as $account) {
-            AnalyticsConnection::updateOrCreate(
-                [
-                    'brand_id' => $request->brand_id,
-                    'platform' => $platform,
-                    'external_id' => $account['id'],
-                ],
-                [
-                    'user_id' => auth()->id(),
-                    'name' => $account['name'],
-                    'external_name' => $account['name'],
-                    'access_token' => $tokenData['access_token'],
-                    'refresh_token' => $tokenData['refresh_token'] ?? null,
-                    'token_expires_at' => isset($tokenData['expires_in'])
-                        ? now()->addSeconds($tokenData['expires_in'])
-                        : null,
-                    'config' => [
-                        'property_id' => $account['id'],
-                        'account_name' => $account['account_name'] ?? null,
+            try {
+                AnalyticsConnection::updateOrCreate(
+                    [
+                        'brand_id' => $request->brand_id,
+                        'platform' => $platform,
+                        'external_id' => $account['id'],
                     ],
-                    'is_active' => true,
-                    'sync_status' => 'pending',
-                ]
-            );
-            $saved++;
+                    [
+                        'user_id' => auth()->id(),
+                        'name' => $account['name'],
+                        'external_name' => $account['name'],
+                        'access_token' => $tokenData['access_token'],
+                        'refresh_token' => $tokenData['refresh_token'] ?? null,
+                        'token_expires_at' => isset($tokenData['expires_in'])
+                            ? now()->addSeconds($tokenData['expires_in'])
+                            : null,
+                        'config' => [
+                            'property_id' => $account['id'],
+                            'account_name' => $account['account_name'] ?? null,
+                        ],
+                        'is_active' => true,
+                        'sync_status' => 'pending',
+                    ]
+                );
+                $saved++;
+            } catch (\Throwable $e) {
+                SystemLog::error('analytics', 'oauth.save.account_error', "Erro ao salvar conta: {$e->getMessage()}", [
+                    'account_id' => $account['id'],
+                    'account_name' => $account['name'],
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         // Limpar sessão
@@ -341,6 +516,11 @@ class AnalyticsController extends Controller
             'analytics_oauth_platform',
             'analytics_oauth_state',
             'analytics_oauth_brand_id',
+        ]);
+
+        SystemLog::info('analytics', 'oauth.save.complete', "{$saved} conexao(oes) salva(s)", [
+            'saved' => $saved,
+            'platform' => $platform,
         ]);
 
         return back()->with('success', "{$saved} conexão(ões) salva(s) com sucesso!");

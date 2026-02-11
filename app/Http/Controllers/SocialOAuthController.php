@@ -9,6 +9,7 @@ use App\Services\Social\SocialOAuthService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -57,6 +58,16 @@ class SocialOAuthController extends Controller
 
         // Gerar state para segurança CSRF
         $state = Str::random(40);
+
+        // Salvar no Cache (mais confiavel que sessao em Docker)
+        Cache::put('social_oauth_' . $state, [
+            'platform' => $platform,
+            'brand_id' => $brand->id,
+            'user_id' => auth()->id(),
+            'popup' => $isPopup,
+        ], now()->addMinutes(15));
+
+        // Tambem na sessao como fallback
         session([
             'oauth_state' => $state,
             'oauth_platform' => $platform,
@@ -107,30 +118,56 @@ class SocialOAuthController extends Controller
      */
     public function callback(Request $request, string $platform): RedirectResponse|\Illuminate\Contracts\View\View
     {
-        $isPopup = session('oauth_popup', false);
+        $receivedState = $request->get('state');
+
+        // Tentar recuperar dados do Cache (prioridade) ou Sessao (fallback)
+        $oauthData = null;
+        if ($receivedState) {
+            $oauthData = Cache::get('social_oauth_' . $receivedState);
+            if ($oauthData) {
+                SystemLog::debug('oauth', 'oauth.callback.cache_hit', "Dados OAuth recuperados do Cache");
+            }
+        }
+
+        // Fallback: sessao
+        if (!$oauthData) {
+            $storedState = session('oauth_state');
+            if ($storedState && $storedState === $receivedState) {
+                $oauthData = [
+                    'platform' => session('oauth_platform', $platform),
+                    'brand_id' => session('oauth_brand_id'),
+                    'user_id' => auth()->id(),
+                    'popup' => session('oauth_popup', false),
+                ];
+                SystemLog::debug('oauth', 'oauth.callback.session_fallback', "Dados OAuth recuperados da sessao");
+            }
+        }
+
+        // Fallback final: usuario autenticado sem state
+        if (!$oauthData && auth()->check()) {
+            $oauthData = [
+                'platform' => session('oauth_platform', $platform),
+                'brand_id' => session('oauth_brand_id'),
+                'user_id' => auth()->id(),
+                'popup' => session('oauth_popup', false),
+            ];
+            SystemLog::warning('oauth', 'oauth.callback.no_state', "State nao validado - usando dados do usuario logado");
+        }
+
+        $isPopup = $oauthData['popup'] ?? false;
 
         SystemLog::info('oauth', 'oauth.callback.start', "Callback OAuth recebido para {$platform}", [
             'platform' => $platform,
             'is_popup' => $isPopup,
             'has_code' => $request->has('code'),
             'has_error' => $request->has('error'),
+            'has_oauth_data' => !empty($oauthData),
             'session_id' => session()->getId(),
         ]);
 
-        // Validar state
-        $storedState = session('oauth_state');
-        $receivedState = $request->get('state');
-
-        SystemLog::debug('oauth', 'oauth.callback.state_check', 'Verificando state CSRF', [
-            'stored_state_exists' => !empty($storedState),
-            'received_state_exists' => !empty($receivedState),
-            'states_match' => $storedState === $receivedState,
-        ]);
-
-        if (!$storedState || $storedState !== $receivedState) {
-            SystemLog::error('oauth', 'oauth.callback.invalid_state', 'State CSRF invalido - sessao pode ter expirado', [
-                'stored_exists' => !empty($storedState),
-                'received_exists' => !empty($receivedState),
+        if (!$oauthData) {
+            SystemLog::error('oauth', 'oauth.callback.invalid_state', 'State CSRF invalido e nenhum fallback disponivel', [
+                'received_state_exists' => !empty($receivedState),
             ]);
             if ($isPopup) {
                 return view('oauth.callback-popup', [
@@ -181,9 +218,9 @@ class SocialOAuthController extends Controller
                 ->with('error', 'Código de autorização não recebido.');
         }
 
-        $originalPlatform = session('oauth_platform', $platform);
-        $brandId = session('oauth_brand_id');
-        $userId = auth()->id();
+        $originalPlatform = $oauthData['platform'] ?? $platform;
+        $brandId = $oauthData['brand_id'] ?? null;
+        $userId = $oauthData['user_id'] ?? auth()->id();
 
         // Limpar dados temporários da sessao
         session()->forget(['oauth_state', 'oauth_popup']);
@@ -264,8 +301,11 @@ class SocialOAuthController extends Controller
                 'expires_at' => $discovery->expires_at->toIso8601String(),
             ]);
 
-            // Limpar sessao de dados oauth antigos
-            session()->forget(['oauth_discovered_accounts', 'oauth_token_data', 'oauth_brand_id', 'oauth_platform']);
+            // Limpar sessao e cache de dados oauth antigos
+            session()->forget(['oauth_discovered_accounts', 'oauth_token_data', 'oauth_brand_id', 'oauth_platform', 'oauth_state', 'oauth_popup']);
+            if ($receivedState) {
+                Cache::forget('social_oauth_' . $receivedState);
+            }
 
             if ($isPopup) {
                 return view('oauth.callback-popup', [

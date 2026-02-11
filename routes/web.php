@@ -29,6 +29,17 @@ Route::get('/', function () {
 
 /*
 |--------------------------------------------------------------------------
+| Callbacks OAuth (fora do auth para evitar problemas de sessão)
+|--------------------------------------------------------------------------
+*/
+Route::get('/analytics/oauth/callback/{platform}', [AnalyticsController::class, 'oauthCallback'])
+    ->name('analytics.oauth.callback');
+
+Route::get('/social/oauth/callback/{platform}', [SocialOAuthController::class, 'callback'])
+    ->name('social.oauth.callback');
+
+/*
+|--------------------------------------------------------------------------
 | Rotas autenticadas
 |--------------------------------------------------------------------------
 */
@@ -145,10 +156,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{account}/toggle', [SocialAccountController::class, 'toggle'])->name('toggle');
         });
 
-        // OAuth Social (fluxo de conexão integrada)
+        // OAuth Social (callback está fora do auth - ver acima)
         Route::prefix('oauth')->name('oauth.')->group(function () {
             Route::get('/redirect/{platform}', [SocialOAuthController::class, 'redirect'])->name('redirect');
-            Route::get('/callback/{platform}', [SocialOAuthController::class, 'callback'])->name('callback');
             Route::get('/discovered', [SocialOAuthController::class, 'discoveredAccounts'])->name('discovered');
             Route::post('/save', [SocialOAuthController::class, 'saveAccounts'])->name('save');
             Route::get('/check-credentials', [SocialOAuthController::class, 'checkCredentials'])->name('check');
@@ -197,9 +207,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/connections/{connection}/sync', [AnalyticsController::class, 'syncConnection'])->name('connections.sync');
         Route::post('/sync-all', [AnalyticsController::class, 'syncAll'])->name('sync-all');
 
-        // OAuth Analytics
+        // OAuth Analytics (callback está fora do auth - ver acima)
         Route::get('/oauth/redirect/{platform}', [AnalyticsController::class, 'oauthRedirect'])->name('oauth.redirect');
-        Route::get('/oauth/callback/{platform}', [AnalyticsController::class, 'oauthCallback'])->name('oauth.callback');
         Route::post('/oauth/save', [AnalyticsController::class, 'saveOAuthAccounts'])->name('oauth.save');
     });
 

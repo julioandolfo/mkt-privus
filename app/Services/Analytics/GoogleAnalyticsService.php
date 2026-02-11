@@ -5,6 +5,7 @@ namespace App\Services\Analytics;
 use App\Models\AnalyticsConnection;
 use App\Models\AnalyticsDataPoint;
 use App\Models\Setting;
+use App\Models\SystemLog;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -20,18 +21,31 @@ class GoogleAnalyticsService
     {
         $clientId = Setting::get('oauth', 'google_client_id') ?: config('social_oauth.google.client_id');
 
+        if (empty($clientId)) {
+            SystemLog::error('analytics', 'ga.auth.no_client_id', 'Google Client ID nao configurado');
+            throw new \RuntimeException('Google Client ID não configurado. Verifique as configurações OAuth.');
+        }
+
+        $scopes = [
+            'https://www.googleapis.com/auth/analytics.readonly',
+            'https://www.googleapis.com/auth/userinfo.profile',
+            'https://www.googleapis.com/auth/userinfo.email',
+        ];
+
         $params = http_build_query([
             'client_id' => $clientId,
             'redirect_uri' => $redirectUri,
             'response_type' => 'code',
-            'scope' => implode(' ', [
-                'https://www.googleapis.com/auth/analytics.readonly',
-                'https://www.googleapis.com/auth/userinfo.profile',
-                'https://www.googleapis.com/auth/userinfo.email',
-            ]),
+            'scope' => implode(' ', $scopes),
             'access_type' => 'offline',
             'prompt' => 'consent',
             'state' => $state,
+        ]);
+
+        SystemLog::debug('analytics', 'ga.auth.url', 'URL de autorizacao GA4 gerada', [
+            'client_id_preview' => substr($clientId, 0, 15) . '...',
+            'redirect_uri' => $redirectUri,
+            'scopes' => $scopes,
         ]);
 
         return "https://accounts.google.com/o/oauth2/v2/auth?{$params}";
@@ -45,6 +59,23 @@ class GoogleAnalyticsService
         $clientId = Setting::get('oauth', 'google_client_id') ?: config('social_oauth.google.client_id');
         $clientSecret = Setting::get('oauth', 'google_client_secret') ?: config('social_oauth.google.client_secret');
 
+        SystemLog::info('analytics', 'ga.exchange.start', 'Trocando code por token GA4', [
+            'redirect_uri' => $redirectUri,
+            'has_client_id' => !empty($clientId),
+            'has_client_secret' => !empty($clientSecret),
+            'code_preview' => substr($code, 0, 15) . '...',
+        ]);
+
+        if (empty($clientId) || empty($clientSecret)) {
+            SystemLog::error('analytics', 'ga.exchange.missing_creds', 'Client ID ou Secret nao configurados', [
+                'has_client_id' => !empty($clientId),
+                'has_client_secret' => !empty($clientSecret),
+                'source_db_client_id' => !empty(Setting::get('oauth', 'google_client_id')),
+                'source_config_client_id' => !empty(config('social_oauth.google.client_id')),
+            ]);
+            throw new \RuntimeException('Client ID ou Client Secret não configurados');
+        }
+
         $response = Http::post('https://oauth2.googleapis.com/token', [
             'client_id' => $clientId,
             'client_secret' => $clientSecret,
@@ -54,11 +85,28 @@ class GoogleAnalyticsService
         ]);
 
         if (!$response->successful()) {
-            Log::error('Google Analytics OAuth error', ['response' => $response->json()]);
-            throw new \RuntimeException('Falha ao obter token do Google Analytics');
+            $body = $response->json();
+            SystemLog::error('analytics', 'ga.exchange.failed', 'Falha ao trocar code por token GA4', [
+                'status' => $response->status(),
+                'error' => $body['error'] ?? 'unknown',
+                'error_description' => $body['error_description'] ?? 'N/A',
+                'redirect_uri' => $redirectUri,
+                'body' => $body,
+            ]);
+            Log::error('Google Analytics OAuth error', ['response' => $body]);
+            throw new \RuntimeException('Falha ao obter token do Google Analytics: ' . ($body['error_description'] ?? $body['error'] ?? 'HTTP ' . $response->status()));
         }
 
-        return $response->json();
+        $data = $response->json();
+        SystemLog::info('analytics', 'ga.exchange.success', 'Token GA4 recebido com sucesso', [
+            'has_access_token' => !empty($data['access_token']),
+            'has_refresh_token' => !empty($data['refresh_token']),
+            'expires_in' => $data['expires_in'] ?? 'N/A',
+            'token_type' => $data['token_type'] ?? 'N/A',
+            'scope' => $data['scope'] ?? 'N/A',
+        ]);
+
+        return $data;
     }
 
     /**
@@ -69,6 +117,8 @@ class GoogleAnalyticsService
         $clientId = Setting::get('oauth', 'google_client_id') ?: config('social_oauth.google.client_id');
         $clientSecret = Setting::get('oauth', 'google_client_secret') ?: config('social_oauth.google.client_secret');
 
+        SystemLog::debug('analytics', 'ga.refresh.start', "Renovando token GA4 para conexao #{$connection->id}");
+
         $response = Http::post('https://oauth2.googleapis.com/token', [
             'client_id' => $clientId,
             'client_secret' => $clientSecret,
@@ -77,8 +127,14 @@ class GoogleAnalyticsService
         ]);
 
         if (!$response->successful()) {
-            Log::error('Google token refresh failed', ['response' => $response->json()]);
-            throw new \RuntimeException('Falha ao renovar token do Google');
+            $body = $response->json();
+            SystemLog::error('analytics', 'ga.refresh.failed', "Falha ao renovar token GA4 para conexao #{$connection->id}", [
+                'status' => $response->status(),
+                'error' => $body['error'] ?? 'unknown',
+                'error_description' => $body['error_description'] ?? 'N/A',
+            ]);
+            Log::error('Google token refresh failed', ['response' => $body]);
+            throw new \RuntimeException('Falha ao renovar token do Google: ' . ($body['error_description'] ?? $body['error'] ?? 'unknown'));
         }
 
         $data = $response->json();
@@ -86,6 +142,8 @@ class GoogleAnalyticsService
             'access_token' => $data['access_token'],
             'token_expires_at' => now()->addSeconds($data['expires_in'] ?? 3600),
         ]);
+
+        SystemLog::info('analytics', 'ga.refresh.success', "Token GA4 renovado para conexao #{$connection->id}");
 
         return $data['access_token'];
     }
@@ -95,17 +153,40 @@ class GoogleAnalyticsService
      */
     public function fetchProperties(string $accessToken): array
     {
+        SystemLog::info('analytics', 'ga.properties.start', 'Buscando propriedades GA4...');
+
         $response = Http::withToken($accessToken)
             ->get('https://analyticsadmin.googleapis.com/v1beta/accountSummaries');
 
         if (!$response->successful()) {
-            Log::error('GA4 fetch properties error', ['response' => $response->json()]);
-            return [];
+            $body = $response->json();
+            SystemLog::error('analytics', 'ga.properties.failed', 'Falha ao buscar propriedades GA4', [
+                'status' => $response->status(),
+                'error' => $body['error']['message'] ?? 'unknown',
+                'code' => $body['error']['code'] ?? 'N/A',
+                'body' => $body,
+            ]);
+            Log::error('GA4 fetch properties error', ['response' => $body]);
+            throw new \RuntimeException('Falha ao buscar propriedades GA4: ' . ($body['error']['message'] ?? 'HTTP ' . $response->status()));
         }
 
         $properties = [];
-        foreach ($response->json('accountSummaries', []) as $account) {
-            foreach ($account['propertySummaries'] ?? [] as $prop) {
+        $accountSummaries = $response->json('accountSummaries', []);
+
+        SystemLog::debug('analytics', 'ga.properties.raw', 'Resposta da API accountSummaries', [
+            'accounts_count' => count($accountSummaries),
+            'raw_keys' => array_keys($response->json()),
+        ]);
+
+        foreach ($accountSummaries as $account) {
+            $propertySummaries = $account['propertySummaries'] ?? [];
+            SystemLog::debug('analytics', 'ga.properties.account', "Conta: " . ($account['displayName'] ?? 'N/A'), [
+                'account_id' => $account['account'] ?? 'N/A',
+                'account_name' => $account['displayName'] ?? 'N/A',
+                'properties_count' => count($propertySummaries),
+            ]);
+
+            foreach ($propertySummaries as $prop) {
                 $propertyId = str_replace('properties/', '', $prop['property']);
                 $properties[] = [
                     'id' => $propertyId,
@@ -115,6 +196,11 @@ class GoogleAnalyticsService
                 ];
             }
         }
+
+        SystemLog::info('analytics', 'ga.properties.complete', count($properties) . " propriedade(s) GA4 encontrada(s)", [
+            'count' => count($properties),
+            'properties' => array_map(fn($p) => "{$p['id']}: {$p['name']}", $properties),
+        ]);
 
         return $properties;
     }
@@ -130,6 +216,13 @@ class GoogleAnalyticsService
         $end = $endDate ?: now()->format('Y-m-d');
 
         $connection->update(['sync_status' => 'syncing']);
+
+        SystemLog::info('analytics', 'ga.sync.start', "Sincronizando GA4 #{$connection->id} ({$propertyId})", [
+            'connection_id' => $connection->id,
+            'property_id' => $propertyId,
+            'start_date' => $start,
+            'end_date' => $end,
+        ]);
 
         try {
             // Buscar dados diários
@@ -203,8 +296,18 @@ class GoogleAnalyticsService
                 'sync_error' => null,
             ]);
 
+            SystemLog::info('analytics', 'ga.sync.complete', "GA4 sincronizado: {$synced} pontos", [
+                'connection_id' => $connection->id,
+                'synced' => $synced,
+            ]);
+
             return ['success' => true, 'synced' => $synced];
         } catch (\Throwable $e) {
+            SystemLog::error('analytics', 'ga.sync.error', "Erro ao sincronizar GA4: {$e->getMessage()}", [
+                'connection_id' => $connection->id,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+            ]);
             Log::error('GA4 sync error', [
                 'connection_id' => $connection->id,
                 'error' => $e->getMessage(),
