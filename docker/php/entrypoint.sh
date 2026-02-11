@@ -21,6 +21,13 @@ fi
 
 # Garantir permissoes do storage e cache
 chown -R www:www /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
+chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
+
+# Garantir que o diretorio de logs existe e tem permissao
+mkdir -p /var/www/html/storage/logs
+touch /var/www/html/storage/logs/laravel.log
+chown www:www /var/www/html/storage/logs/laravel.log
+chmod 664 /var/www/html/storage/logs/laravel.log
 
 # Apenas o container principal (php-fpm) faz setup do banco
 if [ "$1" = "php-fpm" ]; then
