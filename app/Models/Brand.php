@@ -92,6 +92,11 @@ class Brand extends Model
         return $this->hasMany(ContentSuggestion::class);
     }
 
+    public function calendarItems(): HasMany
+    {
+        return $this->hasMany(ContentCalendarItem::class);
+    }
+
     // ===== METHODS =====
 
     /**

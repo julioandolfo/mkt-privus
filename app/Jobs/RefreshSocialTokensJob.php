@@ -3,73 +3,113 @@
 namespace App\Jobs;
 
 use App\Models\SocialAccount;
+use App\Models\SystemLog;
+use App\Services\Social\SocialOAuthService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Job que roda a cada hora via Scheduler.
- * Busca contas sociais cujo token esta prestes a expirar
- * e tenta renovar. Por enquanto apenas registra log - a renovacao
- * real sera implementada quando as APIs forem integradas.
+ * Busca contas sociais cujo token está prestes a expirar
+ * e renova usando o refresh_token de cada plataforma.
+ *
+ * Fluxo por plataforma:
+ * - Meta (Facebook/Instagram): fb_exchange_token para user tokens, page tokens não expiram
+ * - Google/YouTube: refresh_token -> novo access_token (refresh_token não expira)
+ * - LinkedIn: refresh_token -> novo access_token + refresh_token
+ * - TikTok: refresh_token -> novo access_token + refresh_token
+ * - Pinterest: refresh_token -> novo access_token + refresh_token
  */
 class RefreshSocialTokensJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public int $timeout = 120;
+    public int $tries = 1;
 
     public function __construct()
     {
         $this->onQueue('autopilot');
     }
 
-    public function handle(): void
+    public function handle(SocialOAuthService $oauthService): void
     {
+        // Buscar contas ativas que precisam de refresh
+        // (token expira em menos de 24h OU já expirou)
         $accounts = SocialAccount::where('is_active', true)
             ->whereNotNull('token_expires_at')
-            ->get()
-            ->filter(fn($account) => $account->needsRefresh());
+            ->where('token_expires_at', '<=', now()->addDay())
+            ->get();
 
         if ($accounts->isEmpty()) {
             return;
         }
 
-        Log::info("Autopilot TokenRefresh: {$accounts->count()} contas precisam de refresh");
+        $refreshed = 0;
+        $failed = 0;
+        $skipped = 0;
 
         foreach ($accounts as $account) {
+            $platform = $account->platform->value ?? $account->platform;
+
             try {
-                $this->refreshToken($account);
-            } catch (\Exception $e) {
-                Log::error("Autopilot TokenRefresh: Falha ao renovar token", [
+                $result = $oauthService->refreshToken($account);
+
+                if ($result && !empty($result['access_token'])) {
+                    $updateData = [
+                        'access_token' => $result['access_token'],
+                        'token_expires_at' => isset($result['expires_in'])
+                            ? now()->addSeconds($result['expires_in'])
+                            : now()->addDays(60),
+                    ];
+
+                    // Atualizar refresh_token se um novo foi fornecido
+                    if (!empty($result['refresh_token'])) {
+                        $updateData['refresh_token'] = $result['refresh_token'];
+                    }
+
+                    $account->update($updateData);
+                    $refreshed++;
+
+                    SystemLog::info('oauth', 'token.refresh.success', "Token renovado: @{$account->username} ({$platform})", [
+                        'account_id' => $account->id,
+                        'new_expires_at' => $updateData['token_expires_at']->toDateTimeString(),
+                        'has_new_refresh' => !empty($result['refresh_token']),
+                    ]);
+                } else {
+                    $failed++;
+
+                    SystemLog::warning('oauth', 'token.refresh.failed', "Nao foi possivel renovar token: @{$account->username} ({$platform})", [
+                        'account_id' => $account->id,
+                        'has_refresh_token' => !empty($account->refresh_token),
+                        'expires_at' => $account->token_expires_at?->toDateTimeString(),
+                    ]);
+
+                    // Se o token já expirou e não pode ser renovado, marcar para o usuário
+                    if ($account->isTokenExpired()) {
+                        $account->update([
+                            'metadata' => array_merge($account->metadata ?? [], [
+                                'token_error' => 'Token expirado e não renovável. Reconecte a conta.',
+                                'token_error_at' => now()->toIso8601String(),
+                            ]),
+                        ]);
+                    }
+                }
+            } catch (\Throwable $e) {
+                $failed++;
+
+                SystemLog::error('oauth', 'token.refresh.error', "Erro ao renovar token: @{$account->username} ({$platform}): {$e->getMessage()}", [
                     'account_id' => $account->id,
-                    'platform' => $account->platform->value,
-                    'username' => $account->username,
-                    'error' => $e->getMessage(),
+                    'exception' => get_class($e),
                 ]);
             }
         }
-    }
 
-    /**
-     * Renova o token de uma conta social.
-     * TODO: Implementar refresh real por plataforma quando APIs forem integradas.
-     */
-    private function refreshToken(SocialAccount $account): void
-    {
-        Log::info("Autopilot TokenRefresh: Simulando renovação de token", [
-            'account_id' => $account->id,
-            'platform' => $account->platform->label(),
-            'username' => $account->username,
-            'expires_at' => $account->token_expires_at->toDateTimeString(),
-        ]);
-
-        // Simulacao: estender validade do token por mais 60 dias
-        $account->update([
-            'token_expires_at' => now()->addDays(60),
-        ]);
-
-        Log::info("Autopilot TokenRefresh: Token renovado (simulado) para @{$account->username}");
+        if ($refreshed > 0 || $failed > 0) {
+            SystemLog::info('oauth', 'token.refresh.complete', "Refresh de tokens: {$refreshed} renovados, {$failed} falharam de {$accounts->count()} contas");
+        }
     }
 }

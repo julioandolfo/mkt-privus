@@ -1,0 +1,141 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class ContentCalendarItem extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'brand_id',
+        'user_id',
+        'scheduled_date',
+        'title',
+        'description',
+        'category',
+        'platforms',
+        'post_type',
+        'tone',
+        'instructions',
+        'status',
+        'post_id',
+        'suggestion_id',
+        'ai_model_used',
+        'metadata',
+    ];
+
+    protected $casts = [
+        'scheduled_date' => 'date',
+        'platforms' => 'array',
+        'metadata' => 'array',
+    ];
+
+    // ===== RELATIONSHIPS =====
+
+    public function brand(): BelongsTo
+    {
+        return $this->belongsTo(Brand::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function post(): BelongsTo
+    {
+        return $this->belongsTo(Post::class);
+    }
+
+    public function suggestion(): BelongsTo
+    {
+        return $this->belongsTo(ContentSuggestion::class, 'suggestion_id');
+    }
+
+    // ===== SCOPES =====
+
+    public function scopeForBrand($query, int $brandId)
+    {
+        return $query->where('brand_id', $brandId);
+    }
+
+    public function scopePending($query)
+    {
+        return $query->where('status', 'pending');
+    }
+
+    public function scopeGenerated($query)
+    {
+        return $query->where('status', 'generated');
+    }
+
+    public function scopeReadyToGenerate($query)
+    {
+        return $query->where('status', 'pending')
+            ->where('scheduled_date', '>=', now()->toDateString());
+    }
+
+    public function scopeForDateRange($query, string $start, string $end)
+    {
+        return $query->whereBetween('scheduled_date', [$start, $end]);
+    }
+
+    // ===== METHODS =====
+
+    public function isPending(): bool
+    {
+        return $this->status === 'pending';
+    }
+
+    public function isGenerated(): bool
+    {
+        return $this->status === 'generated';
+    }
+
+    public function statusLabel(): string
+    {
+        return match ($this->status) {
+            'pending' => 'Pauta pendente',
+            'generated' => 'Post gerado',
+            'approved' => 'Aprovado',
+            'published' => 'Publicado',
+            'skipped' => 'Pulado',
+            default => ucfirst($this->status),
+        };
+    }
+
+    public function statusColor(): string
+    {
+        return match ($this->status) {
+            'pending' => 'yellow',
+            'generated' => 'blue',
+            'approved' => 'indigo',
+            'published' => 'green',
+            'skipped' => 'gray',
+            default => 'gray',
+        };
+    }
+
+    public function categoryLabel(): string
+    {
+        return match ($this->category) {
+            'dica' => 'Dica',
+            'novidade' => 'Novidade',
+            'bastidores' => 'Bastidores',
+            'promocao' => 'Promocao',
+            'educativo' => 'Educativo',
+            'inspiracional' => 'Inspiracional',
+            'engajamento' => 'Engajamento',
+            'produto' => 'Produto',
+            'institucional' => 'Institucional',
+            'depoimento' => 'Depoimento',
+            'lancamento' => 'Lancamento',
+            'tendencia' => 'Tendencia',
+            default => ucfirst($this->category),
+        };
+    }
+}

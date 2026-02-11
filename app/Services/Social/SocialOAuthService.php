@@ -593,6 +593,198 @@ class SocialOAuthService
     }
 
     // ================================================================
+    // TOKEN REFRESH
+    // ================================================================
+
+    /**
+     * Renova o access_token de uma conta social usando o refresh_token.
+     * Retorna os novos dados de token ou null se não for possível renovar.
+     */
+    public function refreshToken(\App\Models\SocialAccount $account): ?array
+    {
+        $platform = $account->platform->value ?? $account->platform;
+
+        return match ($platform) {
+            'facebook', 'instagram' => $this->refreshMetaToken($account),
+            'linkedin' => $this->refreshLinkedinToken($account),
+            'youtube' => $this->refreshGoogleToken($account),
+            'tiktok' => $this->refreshTiktokToken($account),
+            'pinterest' => $this->refreshPinterestToken($account),
+            default => null,
+        };
+    }
+
+    /**
+     * Meta (Facebook/Instagram): Page tokens não expiram quando derivados de
+     * long-lived user tokens. Para user tokens, trocamos por um novo long-lived.
+     */
+    private function refreshMetaToken(\App\Models\SocialAccount $account): ?array
+    {
+        $config = $this->metaConfig();
+        $currentToken = $account->access_token;
+
+        // Tentar trocar o token atual por um novo long-lived token
+        $response = Http::get("https://graph.facebook.com/{$config['api_version']}/oauth/access_token", [
+            'grant_type' => 'fb_exchange_token',
+            'client_id' => $config['app_id'],
+            'client_secret' => $config['app_secret'],
+            'fb_exchange_token' => $currentToken,
+        ]);
+
+        if ($response->successful()) {
+            $data = $response->json();
+            return [
+                'access_token' => $data['access_token'],
+                'expires_in' => $data['expires_in'] ?? 5184000, // ~60 dias
+            ];
+        }
+
+        // Se for token de página, verificar se ainda é válido
+        $check = Http::get("https://graph.facebook.com/{$config['api_version']}/me", [
+            'access_token' => $currentToken,
+            'fields' => 'id',
+        ]);
+
+        if ($check->successful()) {
+            // Token de página ainda válido, apenas estender a data
+            return [
+                'access_token' => $currentToken,
+                'expires_in' => 5184000, // Page tokens não expiram, marcar 60d
+            ];
+        }
+
+        return null; // Token inválido e não renovável
+    }
+
+    /**
+     * LinkedIn: Refresh via standard OAuth2 refresh_token flow.
+     * Tokens duram ~60 dias, refresh_token dura ~365 dias.
+     */
+    private function refreshLinkedinToken(\App\Models\SocialAccount $account): ?array
+    {
+        if (!$account->refresh_token) {
+            return null;
+        }
+
+        $config = $this->linkedinConfig();
+
+        $response = Http::asForm()->post('https://www.linkedin.com/oauth/v2/accessToken', [
+            'grant_type' => 'refresh_token',
+            'refresh_token' => $account->refresh_token,
+            'client_id' => $config['client_id'],
+            'client_secret' => $config['client_secret'],
+        ]);
+
+        if (!$response->successful()) {
+            return null;
+        }
+
+        $data = $response->json();
+
+        return [
+            'access_token' => $data['access_token'],
+            'refresh_token' => $data['refresh_token'] ?? $account->refresh_token,
+            'expires_in' => $data['expires_in'] ?? 5184000,
+        ];
+    }
+
+    /**
+     * Google/YouTube: Refresh via standard OAuth2 refresh_token flow.
+     * Access tokens duram ~1h, refresh_tokens não expiram (a menos que revogados).
+     */
+    private function refreshGoogleToken(\App\Models\SocialAccount $account): ?array
+    {
+        if (!$account->refresh_token) {
+            return null;
+        }
+
+        $config = $this->googleConfig();
+
+        $response = Http::asForm()->post('https://oauth2.googleapis.com/token', [
+            'grant_type' => 'refresh_token',
+            'refresh_token' => $account->refresh_token,
+            'client_id' => $config['client_id'],
+            'client_secret' => $config['client_secret'],
+        ]);
+
+        if (!$response->successful()) {
+            return null;
+        }
+
+        $data = $response->json();
+
+        return [
+            'access_token' => $data['access_token'],
+            'refresh_token' => $account->refresh_token, // Google não retorna novo refresh_token
+            'expires_in' => $data['expires_in'] ?? 3600,
+        ];
+    }
+
+    /**
+     * TikTok: Refresh via OAuth2 refresh_token flow.
+     * Access tokens duram ~24h, refresh_tokens duram ~365 dias.
+     */
+    private function refreshTiktokToken(\App\Models\SocialAccount $account): ?array
+    {
+        if (!$account->refresh_token) {
+            return null;
+        }
+
+        $config = $this->tiktokConfig();
+
+        $response = Http::post('https://open.tiktokapis.com/v2/oauth/token/', [
+            'client_key' => $config['client_key'],
+            'client_secret' => $config['client_secret'],
+            'grant_type' => 'refresh_token',
+            'refresh_token' => $account->refresh_token,
+        ]);
+
+        if (!$response->successful()) {
+            return null;
+        }
+
+        $data = $response->json();
+
+        return [
+            'access_token' => $data['access_token'],
+            'refresh_token' => $data['refresh_token'] ?? $account->refresh_token,
+            'expires_in' => $data['expires_in'] ?? 86400,
+        ];
+    }
+
+    /**
+     * Pinterest: Refresh via OAuth2 refresh_token flow.
+     * Access tokens duram ~30 dias, refresh_tokens duram ~365 dias.
+     */
+    private function refreshPinterestToken(\App\Models\SocialAccount $account): ?array
+    {
+        if (!$account->refresh_token) {
+            return null;
+        }
+
+        $config = $this->pinterestConfig();
+
+        $response = Http::withBasicAuth($config['app_id'], $config['app_secret'])
+            ->asForm()
+            ->post('https://api.pinterest.com/v5/oauth/token', [
+                'grant_type' => 'refresh_token',
+                'refresh_token' => $account->refresh_token,
+            ]);
+
+        if (!$response->successful()) {
+            return null;
+        }
+
+        $data = $response->json();
+
+        return [
+            'access_token' => $data['access_token'],
+            'refresh_token' => $data['refresh_token'] ?? $account->refresh_token,
+            'expires_in' => $data['expires_in'] ?? 2592000,
+        ];
+    }
+
+    // ================================================================
     // HELPERS
     // ================================================================
 

@@ -63,7 +63,15 @@ class SocialAccount extends Model
             return false;
         }
 
-        // Renovar 5 minutos antes de expirar
-        return $this->token_expires_at->subMinutes(5)->isPast();
+        // Renovar quando faltar menos de 24h para expirar
+        return $this->token_expires_at->subDay()->isPast();
+    }
+
+    /**
+     * Verifica se o token tem erro registrado (não renovável).
+     */
+    public function hasTokenError(): bool
+    {
+        return !empty($this->metadata['token_error'] ?? null);
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\SyncSingleSocialAccountJob;
 use App\Models\OAuthDiscoveredAccount;
 use App\Models\SocialAccount;
 use App\Models\SystemLog;
@@ -506,6 +507,26 @@ class SocialOAuthController extends Controller
 
         // Limpar registro do banco
         $discovery->delete();
+
+        // Disparar sync de insights automaticamente para as contas salvas
+        // para que engajamento, alcance etc. aparecam imediatamente
+        if ($savedCount > 0) {
+            $savedAccountIds = SocialAccount::where('brand_id', $brandId)
+                ->where('is_active', true)
+                ->whereIn('platform', collect($selectedIndexes)
+                    ->filter(fn($idx) => isset($discoveredAccounts[$idx]))
+                    ->map(fn($idx) => $discoveredAccounts[$idx]['platform'])
+                    ->unique()
+                    ->toArray()
+                )
+                ->pluck('id');
+
+            foreach ($savedAccountIds as $accountId) {
+                SyncSingleSocialAccountJob::dispatch($accountId)->delay(now()->addSeconds(5));
+            }
+
+            SystemLog::info('oauth', 'oauth.save.auto_sync_dispatched', "Auto-sync disparado para {$savedAccountIds->count()} conta(s)");
+        }
 
         SystemLog::info('oauth', 'oauth.save.complete', "Salvamento concluido: {$savedCount} salvas, " . count($errors) . " erros", [
             'saved_count' => $savedCount,

@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BrandsController;
 use App\Http\Controllers\ChatController;
+use App\Http\Controllers\ContentCalendarController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MetricsController;
 use App\Http\Controllers\AutopilotController;
@@ -121,6 +122,17 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // Calendario
         Route::get('/calendar', [PostController::class, 'calendar'])->name('calendar.index');
         Route::get('/calendar/data', [PostController::class, 'calendarData'])->name('calendar.data');
+
+        // Calendario de Conteudo (AI)
+        Route::prefix('calendar/content')->name('calendar.content.')->group(function () {
+            Route::get('/items', [ContentCalendarController::class, 'items'])->name('items');
+            Route::post('/generate', [ContentCalendarController::class, 'generate'])->name('generate');
+            Route::post('/{item}/generate-post', [ContentCalendarController::class, 'generatePost'])->name('generate-post');
+            Route::post('/generate-all-posts', [ContentCalendarController::class, 'generateAllPosts'])->name('generate-all-posts');
+            Route::put('/{item}', [ContentCalendarController::class, 'update'])->name('update');
+            Route::delete('/{item}', [ContentCalendarController::class, 'destroy'])->name('destroy');
+            Route::post('/clear-period', [ContentCalendarController::class, 'clearPeriod'])->name('clear-period');
+        });
 
         // Content Engine
         Route::prefix('content-engine')->name('content-engine.')->group(function () {

@@ -1,10 +1,12 @@
 <?php
 
+use App\Jobs\GenerateCalendarPostsJob;
 use App\Jobs\GenerateScheduledContentJob;
 use App\Jobs\GenerateSmartSuggestionsJob;
 use App\Jobs\ProcessScheduledPostsJob;
 use App\Jobs\RetryFailedPostsJob;
 use App\Jobs\RefreshSocialTokensJob;
+use App\Jobs\SyncAnalyticsConnectionsJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -47,6 +49,9 @@ Schedule::job(new GenerateScheduledContentJob)->hourly()->withoutOverlapping();
 // Gerar sugestões inteligentes automaticas - 1x por dia às 7h
 Schedule::job(new GenerateSmartSuggestionsJob)->dailyAt('07:00')->withoutOverlapping();
 
+// Gerar posts automaticos das pautas do calendario editorial - 1x por dia às 6h
+Schedule::job(new GenerateCalendarPostsJob)->dailyAt('06:00')->withoutOverlapping(15);
+
 /*
 |--------------------------------------------------------------------------
 | Social Insights - Coleta de Métricas
@@ -64,6 +69,28 @@ Schedule::command('social:sync-insights --all')->dailyAt('20:00')->withoutOverla
 // Auto-sync metricas vinculadas a contas sociais - logo apos o sync de insights
 Schedule::job(new \App\Jobs\SyncSocialMetricEntriesJob)->dailyAt('08:30')->withoutOverlapping();
 Schedule::job(new \App\Jobs\SyncSocialMetricEntriesJob)->dailyAt('20:30')->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Analytics - Sincronizacao de Dados
+|--------------------------------------------------------------------------
+|
+| Sincronizar conexoes analytics (GA4, Google Ads, Search Console,
+| Meta Ads, WooCommerce) automaticamente.
+| Roda 3x por dia para manter dados atualizados.
+|
+*/
+
+// Sincronizar todas as conexoes analytics - 3x por dia (6h, 12h, 18h)
+Schedule::job(new SyncAnalyticsConnectionsJob)->dailyAt('06:00')->withoutOverlapping(30);
+Schedule::job(new SyncAnalyticsConnectionsJob)->dailyAt('12:00')->withoutOverlapping(30);
+Schedule::job(new SyncAnalyticsConnectionsJob)->dailyAt('18:00')->withoutOverlapping(30);
+
+/*
+|--------------------------------------------------------------------------
+| Limpeza e Manutenção
+|--------------------------------------------------------------------------
+*/
 
 // Limpar registros temporarios de OAuth discovery - 1x por dia
 Schedule::call(fn() => \App\Models\OAuthDiscoveredAccount::cleanup())->daily();
