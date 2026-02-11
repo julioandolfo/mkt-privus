@@ -111,18 +111,21 @@ class GoogleAdsService
      */
     public function fetchCustomers(string $accessToken): array
     {
-        $developerToken = Setting::get('google', 'ads_developer_token') ?: config('services.google_ads.developer_token', '');
+        $developerToken = Setting::get('oauth', 'google_ads_developer_token')
+            ?: Setting::get('google', 'ads_developer_token')
+            ?: config('services.google_ads.developer_token', '');
 
         SystemLog::info('analytics', 'gads.customers.start', 'Buscando contas Google Ads...', [
             'has_developer_token' => !empty($developerToken),
         ]);
 
         if (empty($developerToken)) {
-            SystemLog::error('analytics', 'gads.customers.no_dev_token', 'Developer Token do Google Ads nao configurado. Configure em Configuracoes > API Keys ou variavel de ambiente.', [
-                'setting_key' => 'google.ads_developer_token',
+            SystemLog::error('analytics', 'gads.customers.no_dev_token', 'Developer Token do Google Ads nao configurado. Configure em Configuracoes > Integracoes OAuth > Google ou variavel de ambiente.', [
+                'setting_key_oauth' => 'oauth.google_ads_developer_token',
+                'setting_key_legacy' => 'google.ads_developer_token',
                 'config_key' => 'services.google_ads.developer_token',
             ]);
-            throw new \RuntimeException('Developer Token do Google Ads não configurado. O Google Ads API requer um Developer Token aprovado. Configure em Configurações.');
+            throw new \RuntimeException('Developer Token do Google Ads não configurado. Configure em Configurações → Integrações OAuth → Google.');
         }
 
         try {
@@ -205,7 +208,9 @@ class GoogleAdsService
     {
         $token = $this->getValidToken($connection);
         $customerId = $connection->external_id;
-        $developerToken = Setting::get('google', 'ads_developer_token') ?: config('services.google_ads.developer_token', '');
+        $developerToken = Setting::get('oauth', 'google_ads_developer_token')
+            ?: Setting::get('google', 'ads_developer_token')
+            ?: config('services.google_ads.developer_token', '');
         $start = $startDate ?: now()->subDays(30)->format('Y-m-d');
         $end = $endDate ?: now()->format('Y-m-d');
 

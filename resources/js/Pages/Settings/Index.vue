@@ -507,6 +507,7 @@ const oauthForm = useForm({
     linkedin_client_secret: '',
     google_client_id: props.oauthCredentials?.google_client_id || '',
     google_client_secret: '',
+    google_ads_developer_token: '',
     tiktok_client_key: props.oauthCredentials?.tiktok_client_key || '',
     tiktok_client_secret: '',
     pinterest_app_id: props.oauthCredentials?.pinterest_app_id || '',
@@ -521,6 +522,7 @@ function saveOAuth() {
             oauthForm.meta_app_secret = '';
             oauthForm.linkedin_client_secret = '';
             oauthForm.google_client_secret = '';
+            oauthForm.google_ads_developer_token = '';
             oauthForm.tiktok_client_secret = '';
             oauthForm.pinterest_app_secret = '';
         },
@@ -557,9 +559,10 @@ const oauthProviders = [
         fields: [
             { key: 'google_client_id', label: 'Client ID', type: 'text' },
             { key: 'google_client_secret', label: 'Client Secret', type: 'password', isSet: props.oauthCredentials?.google_client_secret_set },
+            { key: 'google_ads_developer_token', label: 'Google Ads Developer Token', type: 'password', isSet: props.oauthCredentials?.google_ads_developer_token_set, hint: 'Obtido em ads.google.com → Ferramentas → Centro de API' },
         ],
         helpUrl: 'https://console.cloud.google.com/apis/credentials',
-        helpText: 'Crie credenciais OAuth no Google Cloud Console. Habilite YouTube Data API, Analytics Data API, Google Ads API e Search Console API.',
+        helpText: 'Crie credenciais OAuth no Google Cloud Console. Habilite YouTube Data API, Analytics Data API, Google Ads API e Search Console API. O Developer Token do Google Ads é obtido em ads.google.com → Ferramentas → Centro de API.',
     },
     {
         key: 'tiktok',
@@ -1325,6 +1328,7 @@ onMounted(() => {
                                                 class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
                                                 :placeholder="field.type === 'password' && field.isSet ? '••••••• (configurado)' : ''"
                                             />
+                                            <p v-if="field.hint" class="text-[10px] text-gray-500 mt-0.5">{{ field.hint }}</p>
                                             <p v-if="field.type === 'password' && field.isSet" class="text-[10px] text-emerald-500 mt-0.5">Configurado. Deixe vazio para manter.</p>
                                         </div>
                                     </div>

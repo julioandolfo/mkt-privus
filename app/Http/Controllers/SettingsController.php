@@ -149,6 +149,7 @@ class SettingsController extends Controller
             'linkedin_client_secret_set' => !empty(Setting::get('oauth', 'linkedin_client_secret')) || !empty(config('social_oauth.linkedin.client_secret')),
             'google_client_id' => Setting::get('oauth', 'google_client_id') ?: config('social_oauth.google.client_id', ''),
             'google_client_secret_set' => !empty(Setting::get('oauth', 'google_client_secret')) || !empty(config('social_oauth.google.client_secret')),
+            'google_ads_developer_token_set' => !empty(Setting::get('oauth', 'google_ads_developer_token')) || !empty(config('services.google_ads.developer_token')),
             'tiktok_client_key' => Setting::get('oauth', 'tiktok_client_key') ?: config('social_oauth.tiktok.client_key', ''),
             'tiktok_client_secret_set' => !empty(Setting::get('oauth', 'tiktok_client_secret')) || !empty(config('social_oauth.tiktok.client_secret')),
             'pinterest_app_id' => Setting::get('oauth', 'pinterest_app_id') ?: config('social_oauth.pinterest.app_id', ''),
@@ -283,6 +284,7 @@ class SettingsController extends Controller
             'linkedin_client_secret' => 'nullable|string|max:255',
             'google_client_id' => 'nullable|string|max:500',
             'google_client_secret' => 'nullable|string|max:255',
+            'google_ads_developer_token' => 'nullable|string|max:255',
             'tiktok_client_key' => 'nullable|string|max:255',
             'tiktok_client_secret' => 'nullable|string|max:255',
             'pinterest_app_id' => 'nullable|string|max:255',
@@ -290,10 +292,12 @@ class SettingsController extends Controller
         ]);
 
         // Salvar apenas os que foram preenchidos (não sobrescrever com vazio)
+        $sensitiveKeys = ['secret', 'token'];
         $types = [];
         foreach ($validated as $key => $value) {
             if ($value !== null && $value !== '') {
-                $types[$key] = str_contains($key, 'secret') ? 'encrypted' : 'string';
+                $isSensitive = collect($sensitiveKeys)->contains(fn($s) => str_contains($key, $s));
+                $types[$key] = $isSensitive ? 'encrypted' : 'string';
             }
         }
 
