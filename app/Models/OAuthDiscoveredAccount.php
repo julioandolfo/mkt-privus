@@ -8,6 +8,9 @@ use Illuminate\Support\Str;
 
 class OAuthDiscoveredAccount extends Model
 {
+    // Laravel converte OAuth para o_auth (snake_case), mas a tabela e oauth_discovered_accounts
+    protected $table = 'oauth_discovered_accounts';
+
     protected $fillable = [
         'session_token',
         'user_id',
