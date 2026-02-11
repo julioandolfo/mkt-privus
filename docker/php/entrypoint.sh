@@ -4,9 +4,14 @@ set -e
 # Copiar assets compilados para o volume compartilhado (executado em TODOS os containers)
 if [ -d "/var/www/html/build-assets" ]; then
     echo "==> Copiando assets Vite para volume compartilhado..."
+    # Limpar assets antigos do volume para evitar manifest desatualizado
+    rm -rf /var/www/html/public/build/*
+    rm -rf /var/www/html/public/build/.vite
     mkdir -p /var/www/html/public/build
-    cp -r /var/www/html/build-assets/* /var/www/html/public/build/ 2>/dev/null || true
+    # Copiar TUDO incluindo diretorios ocultos (.vite/manifest.json)
+    cp -a /var/www/html/build-assets/. /var/www/html/public/build/
     echo "==> Assets copiados com sucesso."
+    echo "==> Manifest: $(ls -la /var/www/html/public/build/.vite/manifest.json 2>/dev/null || echo 'NAO ENCONTRADO')"
 fi
 
 # Apenas o container principal (php-fpm) faz setup do banco
