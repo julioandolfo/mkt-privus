@@ -37,6 +37,7 @@ const props = defineProps<{
     oauthConfigured: Record<string, boolean>;
     discoveredAccounts: DiscoveredAccount[];
     discoveredPlatform: string | null;
+    discoveryToken: string | null;
     platforms: Record<string, string>;
     platformColors: Record<string, string>;
 }>();
@@ -46,6 +47,9 @@ const showDiscoveredModal = ref(props.discoveredAccounts?.length > 0);
 const selectedAccounts = ref<string[]>([]);
 const syncingId = ref<number | null>(null);
 const connectingPlatform = ref<string | null>(null);
+const currentDiscoveryToken = ref<string | null>(props.discoveryToken ?? null);
+const discoveredAccountsLocal = ref<DiscoveredAccount[]>(props.discoveredAccounts ?? []);
+const discoveredPlatformLocal = ref<string | null>(props.discoveredPlatform ?? null);
 
 const manualForm = useForm({
     brand_id: props.brand?.id,
@@ -146,8 +150,36 @@ function handleOAuthMessage(event: MessageEvent) {
     connectingPlatform.value = null;
 
     if (event.data.status === 'success') {
-        // Recarregar a página para mostrar as contas descobertas
-        router.reload({ preserveScroll: true });
+        const token = event.data.discoveryToken;
+
+        if (token) {
+            // Buscar contas descobertas via API usando o token
+            currentDiscoveryToken.value = token;
+            fetch(route('analytics.oauth.discovered') + '?token=' + token, {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.accounts?.length > 0) {
+                    discoveredAccountsLocal.value = data.accounts;
+                    discoveredPlatformLocal.value = data.platform;
+                    currentDiscoveryToken.value = data.token;
+                    showDiscoveredModal.value = true;
+                } else {
+                    // Fallback: recarregar a pagina
+                    router.reload({ preserveScroll: true });
+                }
+            })
+            .catch(() => {
+                router.reload({ preserveScroll: true });
+            });
+        } else {
+            // Sem token, recarregar a página
+            router.reload({ preserveScroll: true });
+        }
     }
 }
 
@@ -166,17 +198,24 @@ function toggleAccountSelection(id: string) {
 }
 
 function saveSelectedAccounts() {
-    const accounts = props.discoveredAccounts
+    const allAccounts = discoveredAccountsLocal.value.length > 0
+        ? discoveredAccountsLocal.value
+        : props.discoveredAccounts;
+
+    const accounts = allAccounts
         .filter(a => selectedAccounts.value.includes(a.id))
         .map(a => ({ id: a.id, name: a.name, account_name: a.account_name }));
 
     router.post(route('analytics.oauth.save'), {
         brand_id: props.brand?.id,
         accounts,
+        discovery_token: currentDiscoveryToken.value || props.discoveryToken,
     }, {
         onSuccess: () => {
             showDiscoveredModal.value = false;
             selectedAccounts.value = [];
+            discoveredAccountsLocal.value = [];
+            currentDiscoveryToken.value = null;
         },
     });
 }
@@ -450,17 +489,17 @@ function isConnected(platform: string): boolean {
             </div>
 
             <!-- Discovered Accounts Modal -->
-            <div v-if="showDiscoveredModal && discoveredAccounts.length > 0" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div v-if="showDiscoveredModal && (discoveredAccountsLocal.length > 0 || discoveredAccounts.length > 0)" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
                 <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-lg mx-4">
                     <h3 class="text-lg font-semibold text-white mb-2">Contas Encontradas</h3>
                     <p class="text-sm text-gray-400 mb-4">
                         Selecione as contas que deseja conectar ao MKT Privus.
-                        <span class="text-indigo-400 capitalize">{{ discoveredPlatform?.replace('_', ' ') }}</span>
+                        <span class="text-indigo-400 capitalize">{{ (discoveredPlatformLocal || discoveredPlatform)?.replace('_', ' ') }}</span>
                     </p>
 
                     <div class="space-y-2 max-h-64 overflow-y-auto mb-4">
                         <button
-                            v-for="account in discoveredAccounts"
+                            v-for="account in (discoveredAccountsLocal.length > 0 ? discoveredAccountsLocal : discoveredAccounts)"
                             :key="account.id"
                             @click="toggleAccountSelection(account.id)"
                             :class="[

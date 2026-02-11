@@ -5,6 +5,7 @@ namespace App\Services\Analytics;
 use App\Models\AnalyticsConnection;
 use App\Models\AnalyticsDataPoint;
 use App\Models\Setting;
+use App\Models\SystemLog;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -21,6 +22,11 @@ class GoogleSearchConsoleService
     {
         $clientId = Setting::get('oauth', 'google_client_id') ?: config('social_oauth.google.client_id');
 
+        if (empty($clientId)) {
+            SystemLog::error('analytics', 'gsc.auth.no_client_id', 'Google Client ID nao configurado');
+            throw new \RuntimeException('Google Client ID não configurado.');
+        }
+
         $params = http_build_query([
             'client_id' => $clientId,
             'redirect_uri' => $redirectUri,
@@ -35,12 +41,14 @@ class GoogleSearchConsoleService
     }
 
     /**
-     * Troca code por access token (mesma lógica do Google OAuth)
+     * Troca code por access token
      */
     public function exchangeCode(string $code, string $redirectUri): array
     {
         $clientId = Setting::get('oauth', 'google_client_id') ?: config('social_oauth.google.client_id');
         $clientSecret = Setting::get('oauth', 'google_client_secret') ?: config('social_oauth.google.client_secret');
+
+        SystemLog::info('analytics', 'gsc.exchange.start', 'Trocando code por token Google Search Console');
 
         $response = Http::post('https://oauth2.googleapis.com/token', [
             'client_id' => $clientId,
@@ -51,9 +59,16 @@ class GoogleSearchConsoleService
         ]);
 
         if (!$response->successful()) {
-            throw new \RuntimeException('Falha ao obter token do Google Search Console');
+            $body = $response->json();
+            SystemLog::error('analytics', 'gsc.exchange.failed', 'Falha ao trocar code por token GSC', [
+                'status' => $response->status(),
+                'error' => $body['error'] ?? 'unknown',
+                'error_description' => $body['error_description'] ?? 'N/A',
+            ]);
+            throw new \RuntimeException('Falha ao obter token do Google Search Console: ' . ($body['error_description'] ?? $body['error'] ?? 'HTTP ' . $response->status()));
         }
 
+        SystemLog::info('analytics', 'gsc.exchange.success', 'Token GSC recebido');
         return $response->json();
     }
 
@@ -73,7 +88,12 @@ class GoogleSearchConsoleService
         ]);
 
         if (!$response->successful()) {
-            throw new \RuntimeException('Falha ao renovar token');
+            $body = $response->json();
+            SystemLog::error('analytics', 'gsc.refresh.failed', "Falha ao renovar token GSC", [
+                'connection_id' => $connection->id,
+                'error' => $body['error'] ?? 'unknown',
+            ]);
+            throw new \RuntimeException('Falha ao renovar token do Search Console');
         }
 
         $data = $response->json();
@@ -90,11 +110,23 @@ class GoogleSearchConsoleService
      */
     public function fetchSites(string $accessToken): array
     {
-        $response = Http::withToken($accessToken)->get("{$this->baseUrl}/sites");
+        SystemLog::info('analytics', 'gsc.sites.start', 'Buscando sites do Search Console...');
+
+        try {
+            $response = Http::withToken($accessToken)->get("{$this->baseUrl}/sites");
+        } catch (\Throwable $e) {
+            SystemLog::error('analytics', 'gsc.sites.request_error', "Erro HTTP ao buscar sites: {$e->getMessage()}");
+            throw new \RuntimeException('Erro ao conectar com a API do Search Console: ' . $e->getMessage());
+        }
 
         if (!$response->successful()) {
-            Log::error('Search Console fetch sites error', ['response' => $response->json()]);
-            return [];
+            $body = $response->json();
+            SystemLog::error('analytics', 'gsc.sites.failed', 'Falha ao buscar sites do Search Console', [
+                'status' => $response->status(),
+                'error' => $body['error']['message'] ?? 'unknown',
+                'body' => $body,
+            ]);
+            throw new \RuntimeException('Falha ao buscar sites do Search Console: ' . ($body['error']['message'] ?? 'HTTP ' . $response->status()));
         }
 
         $sites = [];
@@ -105,6 +137,11 @@ class GoogleSearchConsoleService
                 'permission' => $site['permissionLevel'] ?? 'unknown',
             ];
         }
+
+        SystemLog::info('analytics', 'gsc.sites.complete', count($sites) . " site(s) encontrado(s)", [
+            'count' => count($sites),
+            'sites' => array_map(fn($s) => $s['name'], $sites),
+        ]);
 
         return $sites;
     }
@@ -117,7 +154,7 @@ class GoogleSearchConsoleService
         $token = $this->getValidToken($connection);
         $siteUrl = $connection->external_id;
         $start = $startDate ?: now()->subDays(30)->format('Y-m-d');
-        $end = $endDate ?: now()->subDays(2)->format('Y-m-d'); // SC tem delay de ~2 dias
+        $end = $endDate ?: now()->subDays(2)->format('Y-m-d');
 
         $connection->update(['sync_status' => 'syncing']);
 
@@ -170,14 +207,8 @@ class GoogleSearchConsoleService
 
             // Top queries
             $this->syncDimensionData($connection, $token, $siteUrl, $start, $end, 'query');
-
-            // Top pages
             $this->syncDimensionData($connection, $token, $siteUrl, $start, $end, 'page');
-
-            // Devices
             $this->syncDimensionData($connection, $token, $siteUrl, $start, $end, 'device');
-
-            // Countries
             $this->syncDimensionData($connection, $token, $siteUrl, $start, $end, 'country');
 
             $connection->update([
@@ -186,11 +217,12 @@ class GoogleSearchConsoleService
                 'sync_error' => null,
             ]);
 
+            SystemLog::info('analytics', 'gsc.sync.complete', "Search Console sincronizado: {$synced} pontos");
+
             return ['success' => true, 'synced' => $synced];
         } catch (\Throwable $e) {
-            Log::error('Search Console sync error', [
+            SystemLog::error('analytics', 'gsc.sync.error', "Erro ao sincronizar Search Console: {$e->getMessage()}", [
                 'connection_id' => $connection->id,
-                'error' => $e->getMessage(),
             ]);
 
             $connection->update([

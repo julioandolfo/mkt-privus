@@ -209,6 +209,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         // OAuth Analytics (callback está fora do auth - ver acima)
         Route::get('/oauth/redirect/{platform}', [AnalyticsController::class, 'oauthRedirect'])->name('oauth.redirect');
+        Route::get('/oauth/discovered', [AnalyticsController::class, 'discoveredAccounts'])->name('oauth.discovered');
         Route::post('/oauth/save', [AnalyticsController::class, 'saveOAuthAccounts'])->name('oauth.save');
     });
 

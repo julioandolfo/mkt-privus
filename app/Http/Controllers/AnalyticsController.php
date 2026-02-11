@@ -6,6 +6,7 @@ use App\Models\AnalyticsConnection;
 use App\Models\AnalyticsDataPoint;
 use App\Models\AnalyticsDailySummary;
 use App\Models\Brand;
+use App\Models\OAuthDiscoveredAccount;
 use App\Models\SystemLog;
 use App\Services\Analytics\AnalyticsSyncService;
 use App\Services\Analytics\GoogleAdsService;
@@ -13,6 +14,7 @@ use App\Services\Analytics\GoogleAnalyticsService;
 use App\Services\Analytics\GoogleSearchConsoleService;
 use App\Services\Analytics\MetaAdsService;
 use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -129,9 +131,35 @@ class AnalyticsController extends Controller
         // Verificar quais plataformas já têm OAuth configurado
         $oauthConfigured = $this->checkOAuthConfig();
 
-        // Contas descobertas via OAuth (na sessão)
-        $discoveredAccounts = session('analytics_discovered_accounts', []);
-        $discoveredPlatform = session('analytics_oauth_platform');
+        // Contas descobertas via OAuth (do banco de dados)
+        $discoveredAccounts = [];
+        $discoveredPlatform = null;
+        $discoveryToken = $request->get('discovery_token');
+
+        if ($discoveryToken && auth()->check()) {
+            $discovery = OAuthDiscoveredAccount::where('session_token', $discoveryToken)
+                ->where('user_id', auth()->id())
+                ->where('expires_at', '>', now())
+                ->first();
+
+            if ($discovery) {
+                $discoveredAccounts = $discovery->accounts;
+                $discoveredPlatform = $discovery->platform;
+            }
+        } elseif (auth()->check()) {
+            // Fallback: buscar o mais recente do usuario para analytics
+            $discovery = OAuthDiscoveredAccount::where('user_id', auth()->id())
+                ->whereIn('platform', ['google_analytics', 'google_ads', 'google_search_console', 'meta_ads'])
+                ->where('expires_at', '>', now())
+                ->orderByDesc('created_at')
+                ->first();
+
+            if ($discovery) {
+                $discoveredAccounts = $discovery->accounts;
+                $discoveredPlatform = $discovery->platform;
+                $discoveryToken = $discovery->session_token;
+            }
+        }
 
         $brands = Brand::orderBy('name')->get(['id', 'name']);
 
@@ -142,6 +170,7 @@ class AnalyticsController extends Controller
             'oauthConfigured' => $oauthConfigured,
             'discoveredAccounts' => $discoveredAccounts,
             'discoveredPlatform' => $discoveredPlatform,
+            'discoveryToken' => $discoveryToken,
             'platforms' => AnalyticsConnection::platformLabels(),
             'platformColors' => AnalyticsConnection::platformColors(),
         ]);
@@ -385,17 +414,47 @@ class AnalyticsController extends Controller
                 'accounts' => array_map(fn($a) => ['id' => $a['id'] ?? '?', 'name' => $a['name'] ?? '?'], array_slice($accounts, 0, 5)),
             ]);
 
-            // Salvar na sessão para seleção
-            session([
-                'analytics_discovered_accounts' => $accounts,
-                'analytics_oauth_token' => $tokenData,
-                'analytics_oauth_platform' => $platform,
+            // ===== SALVAR NO BANCO (nao mais sessao) =====
+            $userId = $oauthData['user_id'] ?? auth()->id();
+            $expiresAt = isset($tokenData['expires_in'])
+                ? now()->addSeconds($tokenData['expires_in'])
+                : null;
+
+            $discoveryToken = OAuthDiscoveredAccount::generateToken();
+
+            // Limpar registros anteriores deste usuario/brand para analytics
+            OAuthDiscoveredAccount::where('user_id', $userId)
+                ->where('brand_id', $brandId)
+                ->whereIn('platform', ['google_analytics', 'google_ads', 'google_search_console', 'meta_ads'])
+                ->delete();
+
+            $discovery = OAuthDiscoveredAccount::create([
+                'session_token' => $discoveryToken,
+                'user_id' => $userId,
+                'brand_id' => $brandId,
+                'platform' => $platform,
+                'accounts' => $accounts,
+                'token_data' => [
+                    'access_token' => $tokenData['access_token'],
+                    'refresh_token' => $tokenData['refresh_token'] ?? null,
+                    'expires_at' => $expiresAt?->toIso8601String(),
+                ],
+                'expires_at' => now()->addMinutes(30),
+            ]);
+
+            SystemLog::info('analytics', 'oauth.callback.saved_db', "Contas salvas no banco com token", [
+                'discovery_id' => $discovery->id,
+                'token_prefix' => substr($discoveryToken, 0, 12) . '...',
+                'count' => count($accounts),
             ]);
 
             // Limpar cache do state
             if ($requestState) {
                 Cache::forget('analytics_oauth_' . $requestState);
             }
+
+            // Limpar sessao de dados antigos
+            session()->forget(['analytics_discovered_accounts', 'analytics_oauth_token', 'analytics_oauth_platform', 'analytics_oauth_state', 'analytics_oauth_brand_id']);
 
             $message = count($accounts) . ' conta(s) encontrada(s). Selecione as que deseja conectar.';
 
@@ -405,11 +464,11 @@ class AnalyticsController extends Controller
                     'message' => $message,
                     'platform' => $platform,
                     'accountsCount' => count($accounts),
-                    'brandId' => $brandId,
+                    'discoveryToken' => $discoveryToken,
                 ]);
             }
 
-            return redirect()->route('analytics.connections', ['brand_id' => $brandId])
+            return redirect()->route('analytics.connections', ['brand_id' => $brandId, 'discovery_token' => $discoveryToken])
                 ->with('success', $message);
 
         } catch (\Throwable $e) {
@@ -453,25 +512,31 @@ class AnalyticsController extends Controller
             'accounts' => 'required|array|min:1',
             'accounts.*.id' => 'required',
             'accounts.*.name' => 'required|string',
+            'discovery_token' => 'required|string',
         ]);
 
-        $platform = session('analytics_oauth_platform');
-        $tokenData = session('analytics_oauth_token');
+        $token = $request->input('discovery_token');
+        $userId = auth()->id();
+
+        // Buscar do banco
+        $discovery = OAuthDiscoveredAccount::where('session_token', $token)
+            ->where('user_id', $userId)
+            ->where('expires_at', '>', now())
+            ->first();
+
+        if (!$discovery) {
+            SystemLog::error('analytics', 'oauth.save.expired', "Token de descoberta expirado ou invalido");
+            return back()->with('error', 'Sessão OAuth expirada. Conecte novamente.');
+        }
+
+        $platform = $discovery->platform;
+        $tokenData = $discovery->token_data;
 
         SystemLog::info('analytics', 'oauth.save', "Salvando contas Analytics OAuth", [
             'brand_id' => $request->brand_id,
             'platform' => $platform,
-            'has_token' => !empty($tokenData),
             'accounts_count' => count($request->accounts),
         ]);
-
-        if (!$platform || !$tokenData) {
-            SystemLog::error('analytics', 'oauth.save.expired', "Sessao OAuth expirada", [
-                'has_platform' => !empty($platform),
-                'has_token' => !empty($tokenData),
-            ]);
-            return back()->with('error', 'Sessão OAuth expirada. Conecte novamente.');
-        }
 
         $saved = 0;
         foreach ($request->accounts as $account) {
@@ -483,13 +548,13 @@ class AnalyticsController extends Controller
                         'external_id' => $account['id'],
                     ],
                     [
-                        'user_id' => auth()->id(),
+                        'user_id' => $userId,
                         'name' => $account['name'],
                         'external_name' => $account['name'],
                         'access_token' => $tokenData['access_token'],
                         'refresh_token' => $tokenData['refresh_token'] ?? null,
-                        'token_expires_at' => isset($tokenData['expires_in'])
-                            ? now()->addSeconds($tokenData['expires_in'])
+                        'token_expires_at' => !empty($tokenData['expires_at'])
+                            ? Carbon::parse($tokenData['expires_at'])
                             : null,
                         'config' => [
                             'property_id' => $account['id'],
@@ -509,14 +574,8 @@ class AnalyticsController extends Controller
             }
         }
 
-        // Limpar sessão
-        session()->forget([
-            'analytics_discovered_accounts',
-            'analytics_oauth_token',
-            'analytics_oauth_platform',
-            'analytics_oauth_state',
-            'analytics_oauth_brand_id',
-        ]);
+        // Limpar registro do banco
+        $discovery->delete();
 
         SystemLog::info('analytics', 'oauth.save.complete', "{$saved} conexao(oes) salva(s)", [
             'saved' => $saved,
@@ -524,6 +583,42 @@ class AnalyticsController extends Controller
         ]);
 
         return back()->with('success', "{$saved} conexão(ões) salva(s) com sucesso!");
+    }
+
+    /**
+     * Retorna contas descobertas do banco via AJAX
+     */
+    public function discoveredAccounts(Request $request): JsonResponse
+    {
+        $token = $request->get('token');
+        $userId = auth()->id();
+
+        if ($token) {
+            $discovery = OAuthDiscoveredAccount::where('session_token', $token)
+                ->where('user_id', $userId)
+                ->where('expires_at', '>', now())
+                ->first();
+        } else {
+            $discovery = OAuthDiscoveredAccount::where('user_id', $userId)
+                ->whereIn('platform', ['google_analytics', 'google_ads', 'google_search_console', 'meta_ads'])
+                ->where('expires_at', '>', now())
+                ->orderByDesc('created_at')
+                ->first();
+        }
+
+        if ($discovery) {
+            return response()->json([
+                'accounts' => $discovery->accounts,
+                'platform' => $discovery->platform,
+                'token' => $discovery->session_token,
+            ]);
+        }
+
+        return response()->json([
+            'accounts' => [],
+            'platform' => null,
+            'token' => null,
+        ]);
     }
 
     /**
