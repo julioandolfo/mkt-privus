@@ -19,6 +19,7 @@ class Brand extends Model
         'logo_path',
         'description',
         'website',
+        'urls',
         'segment',
         'target_audience',
         'tone_of_voice',
@@ -33,6 +34,7 @@ class Brand extends Model
 
     protected $casts = [
         'keywords' => 'array',
+        'urls' => 'array',
         'is_active' => 'boolean',
     ];
 
@@ -114,6 +116,9 @@ class Brand extends Model
         // Listar assets disponiveis
         $assetsContext = $this->getAssetsContextForAI();
 
+        // Listar URLs/sites da marca
+        $urlsContext = $this->getUrlsContextForAI();
+
         $context = <<<EOT
         CONTEXTO DA MARCA:
         - Nome: {$this->name}
@@ -124,6 +129,10 @@ class Brand extends Model
         - Cores: Primária {$this->primary_color}, Secundária {$this->secondary_color}, Acento {$this->accent_color}
         {$this->ai_context}
         EOT;
+
+        if ($urlsContext) {
+            $context .= "\n\n        URLS E SITES DA MARCA:\n{$urlsContext}";
+        }
 
         if ($assetsContext) {
             $context .= "\n\n        ASSETS VISUAIS DISPONÍVEIS:\n{$assetsContext}";
@@ -137,6 +146,7 @@ class Brand extends Model
         - Mantenha a consistência visual com as cores da marca.
         - Considere o público-alvo ao criar conteúdo.
         - Use as palavras-chave naturalmente no conteúdo.
+        - Quando relevante, utilize as URLs da marca para direcionar o público (links de produtos, site, etc).
         EOT;
 
         return $context;
@@ -172,6 +182,76 @@ class Brand extends Model
         }
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * Monta lista de URLs para contexto de IA
+     */
+    private function getUrlsContextForAI(): string
+    {
+        $urls = is_array($this->urls) ? $this->urls : [];
+
+        // Incluir o website legado se existir
+        if ($this->website && !collect($urls)->contains('url', $this->website)) {
+            array_unshift($urls, [
+                'label' => 'Site Principal',
+                'url' => $this->website,
+                'type' => 'website',
+            ]);
+        }
+
+        if (empty($urls)) {
+            return '';
+        }
+
+        $typeLabels = [
+            'website' => 'Site',
+            'ecommerce' => 'E-commerce',
+            'landing_page' => 'Landing Page',
+            'blog' => 'Blog',
+            'catalog' => 'Catálogo',
+            'linktree' => 'Link Tree',
+            'other' => 'Outro',
+        ];
+
+        $lines = [];
+        foreach ($urls as $entry) {
+            $label = $entry['label'] ?? '';
+            $url = $entry['url'] ?? '';
+            $type = $typeLabels[$entry['type'] ?? 'other'] ?? 'Outro';
+            $lines[] = "        - [{$type}] {$label}: {$url}";
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Retorna todas as URLs da marca (campo urls + website legado)
+     */
+    public function getAllUrls(): array
+    {
+        $urls = is_array($this->urls) ? $this->urls : [];
+
+        if ($this->website && !collect($urls)->contains('url', $this->website)) {
+            array_unshift($urls, [
+                'label' => 'Site Principal',
+                'url' => $this->website,
+                'type' => 'website',
+            ]);
+        }
+
+        return $urls;
+    }
+
+    /**
+     * Retorna URLs filtradas por tipo
+     */
+    public function getUrlsByType(string $type): array
+    {
+        return collect($this->getAllUrls())
+            ->filter(fn($u) => ($u['type'] ?? '') === $type)
+            ->values()
+            ->toArray();
     }
 
     /**

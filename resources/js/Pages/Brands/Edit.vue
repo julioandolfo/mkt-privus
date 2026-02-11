@@ -20,11 +20,18 @@ interface BrandAsset {
     url: string | null;
 }
 
+interface BrandUrl {
+    label: string;
+    url: string;
+    type: string;
+}
+
 interface Brand {
     id: number;
     name: string;
     description: string | null;
     website: string | null;
+    urls: BrandUrl[] | null;
     segment: string | null;
     target_audience: string | null;
     tone_of_voice: string | null;
@@ -44,6 +51,7 @@ const form = useForm({
     name: props.brand.name ?? '',
     description: props.brand.description ?? '',
     website: props.brand.website ?? '',
+    urls: (props.brand.urls ?? []) as BrandUrl[],
     segment: props.brand.segment ?? '',
     target_audience: props.brand.target_audience ?? '',
     tone_of_voice: props.brand.tone_of_voice ?? 'profissional',
@@ -93,6 +101,15 @@ function addKeyword() {
 
 function removeKeyword(index: number) {
     form.keywords.splice(index, 1);
+}
+
+// URLs
+function addUrl() {
+    form.urls.push({ label: '', url: '', type: 'website' });
+}
+
+function removeUrl(index: number) {
+    form.urls.splice(index, 1);
 }
 
 function submit() {
@@ -184,6 +201,16 @@ const toneOptions = [
     { value: 'educativo', label: 'Educativo' },
     { value: 'autoritativo', label: 'Autoritativo' },
 ];
+
+const urlTypeOptions = [
+    { value: 'website', label: 'Site Principal' },
+    { value: 'ecommerce', label: 'E-commerce / Loja' },
+    { value: 'landing_page', label: 'Landing Page' },
+    { value: 'blog', label: 'Blog' },
+    { value: 'catalog', label: 'Catálogo de Produtos' },
+    { value: 'linktree', label: 'Link Tree / Bio' },
+    { value: 'other', label: 'Outro' },
+];
 </script>
 
 <template>
@@ -226,6 +253,81 @@ const toneOptions = [
                             <InputLabel for="segment" value="Segmento" class="text-gray-300" />
                             <TextInput id="segment" v-model="form.segment" type="text" class="mt-1 block w-full bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500 rounded-xl" placeholder="Ex: Tecnologia, Saúde, Moda..." />
                             <InputError :message="form.errors.segment" class="mt-2" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- URLs e Sites -->
+                <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <h2 class="text-lg font-semibold text-white">URLs e Sites</h2>
+                        <button
+                            type="button"
+                            @click="addUrl"
+                            class="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600/20 px-3 py-1.5 text-sm font-medium text-indigo-400 hover:bg-indigo-600/30 transition"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                            </svg>
+                            Adicionar URL
+                        </button>
+                    </div>
+                    <p class="text-sm text-gray-500 mb-5">Sites, lojas e páginas da marca. A IA utilizará essas URLs para criar posts com links de produtos.</p>
+
+                    <div v-if="form.urls.length === 0" class="rounded-xl border-2 border-dashed border-gray-700 p-8 text-center">
+                        <svg class="mx-auto h-10 w-10 text-gray-600 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-1.06l4.5-4.5a4.5 4.5 0 00-6.364-6.364l-1.757 1.757" />
+                        </svg>
+                        <p class="text-sm text-gray-500">Nenhuma URL adicionada ainda.</p>
+                        <p class="text-xs text-gray-600 mt-1">Adicione o site principal, e-commerce ou catálogo de produtos da marca.</p>
+                    </div>
+
+                    <div v-else class="space-y-3">
+                        <div
+                            v-for="(urlEntry, index) in form.urls"
+                            :key="index"
+                            class="rounded-xl bg-gray-800 border border-gray-700 p-4"
+                        >
+                            <div class="flex items-start gap-3">
+                                <div class="flex-1 grid grid-cols-1 gap-3 sm:grid-cols-12">
+                                    <div class="sm:col-span-3">
+                                        <select
+                                            v-model="urlEntry.type"
+                                            class="block w-full rounded-lg bg-gray-700 border-gray-600 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        >
+                                            <option v-for="opt in urlTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                        </select>
+                                    </div>
+                                    <div class="sm:col-span-3">
+                                        <input
+                                            v-model="urlEntry.label"
+                                            type="text"
+                                            class="block w-full rounded-lg bg-gray-700 border-gray-600 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                            placeholder="Nome / Rótulo"
+                                        />
+                                    </div>
+                                    <div class="sm:col-span-6">
+                                        <input
+                                            v-model="urlEntry.url"
+                                            type="url"
+                                            class="block w-full rounded-lg bg-gray-700 border-gray-600 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                            placeholder="https://..."
+                                        />
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    @click="removeUrl(index)"
+                                    class="mt-1 rounded-lg p-1.5 text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition"
+                                    title="Remover URL"
+                                >
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <InputError :message="(form.errors as any)[`urls.${index}.url`]" class="mt-2" />
+                            <InputError :message="(form.errors as any)[`urls.${index}.label`]" class="mt-1" />
                         </div>
                     </div>
                 </div>
