@@ -1,18 +1,28 @@
 #!/bin/sh
 set -e
 
-# Copiar assets compilados para o volume compartilhado (executado em TODOS os containers)
+# =====================================================
+# Entrypoint roda como ROOT para ter permissao no volume
+# No final, usa su-exec para dropar para usuario www
+# =====================================================
+
+# Copiar assets compilados para o volume compartilhado
 if [ -d "/var/www/html/build-assets" ]; then
     echo "==> Copiando assets Vite para volume compartilhado..."
-    # Limpar assets antigos do volume para evitar manifest desatualizado
-    rm -rf /var/www/html/public/build/*
-    rm -rf /var/www/html/public/build/.vite
+    # Limpar assets antigos do volume (precisa root pois volume pode ter files de outro container)
+    rm -rf /var/www/html/public/build/* 2>/dev/null || true
+    rm -rf /var/www/html/public/build/.vite 2>/dev/null || true
     mkdir -p /var/www/html/public/build
     # Copiar TUDO incluindo diretorios ocultos (.vite/manifest.json)
     cp -a /var/www/html/build-assets/. /var/www/html/public/build/
+    # Garantir permissoes corretas para o usuario www
+    chown -R www:www /var/www/html/public/build
     echo "==> Assets copiados com sucesso."
     echo "==> Manifest: $(ls -la /var/www/html/public/build/.vite/manifest.json 2>/dev/null || echo 'NAO ENCONTRADO')"
 fi
+
+# Garantir permissoes do storage e cache
+chown -R www:www /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
 
 # Apenas o container principal (php-fpm) faz setup do banco
 if [ "$1" = "php-fpm" ]; then
@@ -31,17 +41,18 @@ if [ "$1" = "php-fpm" ]; then
     done
 
     echo "==> [app] Rodando migrations..."
-    php artisan migrate --force 2>&1 || echo "AVISO: Migrations falharam"
+    su-exec www:www php artisan migrate --force 2>&1 || echo "AVISO: Migrations falharam"
 
     echo "==> [app] Cacheando configuracoes..."
-    php artisan config:cache 2>&1 || echo "AVISO: config:cache falhou"
-    php artisan route:cache 2>&1 || echo "AVISO: route:cache falhou"
-    php artisan view:cache 2>&1 || echo "AVISO: view:cache falhou"
+    su-exec www:www php artisan config:cache 2>&1 || echo "AVISO: config:cache falhou"
+    su-exec www:www php artisan route:cache 2>&1 || echo "AVISO: route:cache falhou"
+    su-exec www:www php artisan view:cache 2>&1 || echo "AVISO: view:cache falhou"
 
     echo "==> [app] Storage link..."
-    php artisan storage:link 2>/dev/null || true
+    su-exec www:www php artisan storage:link 2>/dev/null || true
 
     echo "==> [app] Iniciando PHP-FPM..."
 fi
 
-exec "$@"
+# Executar o processo final como usuario www (drop de privilegios)
+exec su-exec www:www "$@"

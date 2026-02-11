@@ -1,6 +1,6 @@
 FROM php:8.3-fpm-alpine
 
-# Instalar dependencias do sistema
+# Instalar dependencias do sistema (inclui su-exec para drop de privilegios)
 RUN apk add --no-cache \
     git \
     curl \
@@ -14,6 +14,7 @@ RUN apk add --no-cache \
     libzip-dev \
     icu-dev \
     linux-headers \
+    su-exec \
     $PHPIZE_DEPS
 
 # Instalar extensoes PHP
@@ -72,7 +73,9 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # Permissoes
 RUN chown -R www:www /var/www/html/storage /var/www/html/bootstrap/cache
 
-USER www
+# NAO usar USER www aqui - o entrypoint roda como root para
+# ter permissao de limpar o volume compartilhado, depois usa
+# su-exec para dropar para www antes de iniciar o processo
 
 EXPOSE 9000
 
