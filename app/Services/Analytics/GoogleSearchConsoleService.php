@@ -170,12 +170,14 @@ class GoogleSearchConsoleService
 
     /**
      * Constroi a URL da API com o siteUrl encodado corretamente
+     * Usa webmasters/v3 que funciona corretamente com sc-domain: properties
      */
     protected function buildApiUrl(string $siteUrl, string $path = ''): string
     {
         // A API exige que o siteUrl seja URL-encoded no path
         $encoded = urlencode($siteUrl);
-        $url = "{$this->searchUrl}/sites/{$encoded}";
+        // Usar baseUrl (webmasters/v3) - funciona melhor que searchconsole/v1 para sc-domain:
+        $url = "{$this->baseUrl}/sites/{$encoded}";
         if ($path) {
             $url .= '/' . ltrim($path, '/');
         }
@@ -205,62 +207,13 @@ class GoogleSearchConsoleService
         ]);
 
         try {
-            // Primeiro, verificar se o site existe listando os sites
-            $verifyUrl = "{$this->searchUrl}/sites/" . urlencode($siteUrl);
-            $verifyResponse = Http::withToken($token)->get($verifyUrl);
-
-            if (!$verifyResponse->successful()) {
-                $statusCode = $verifyResponse->status();
-                $body = $verifyResponse->body();
-                $isHtml = str_contains($body, '<!DOCTYPE') || str_contains($body, '<html');
-
-                SystemLog::error('analytics', 'gsc.sync.site_not_found', "Site nao encontrado no Search Console (HTTP {$statusCode})", [
-                    'connection_id' => $connection->id,
-                    'site_url' => $siteUrl,
-                    'verify_url' => $verifyUrl,
-                    'status' => $statusCode,
-                    'is_html_response' => $isHtml,
-                    'body_preview' => $isHtml ? '(HTML error page)' : mb_substr($body, 0, 500),
-                ]);
-
-                // Se 404, tentar com e sem trailing slash e com sc-domain:
-                if ($statusCode === 404) {
-                    $alternativeUrl = $this->tryAlternativeSiteUrls($token, $rawSiteUrl);
-                    if ($alternativeUrl) {
-                        SystemLog::info('analytics', 'gsc.sync.alternative_found', "URL alternativa encontrada: {$alternativeUrl}", [
-                            'original' => $siteUrl,
-                            'alternative' => $alternativeUrl,
-                        ]);
-                        $siteUrl = $alternativeUrl;
-
-                        // Atualizar o external_id da conexao para evitar o erro no futuro
-                        $connection->update(['external_id' => $alternativeUrl]);
-                    } else {
-                        // Listar sites disponiveis para ajudar o usuario
-                        $availableSites = $this->fetchSitesQuiet($token);
-                        SystemLog::error('analytics', 'gsc.sync.no_site_match', "Nenhuma URL alternativa encontrada. Sites disponiveis no GSC: " . implode(', ', $availableSites), [
-                            'tried_url' => $siteUrl,
-                            'available_sites' => $availableSites,
-                        ]);
-
-                        throw new \RuntimeException(
-                            "Site \"{$siteUrl}\" nao encontrado no Search Console. " .
-                            (count($availableSites) > 0
-                                ? "Sites disponíveis: " . implode(', ', $availableSites)
-                                : "Nenhum site encontrado na conta. Verifique se o site está verificado no Search Console.")
-                        );
-                    }
-                } else {
-                    throw new \RuntimeException("Erro ao verificar site no Search Console (HTTP {$statusCode})");
-                }
-            }
-
-            // Dados diários
+            // Ir direto para a query de dados (o GET /sites/ nao funciona bem com sc-domain:)
             $apiUrl = $this->buildApiUrl($siteUrl, 'searchAnalytics/query');
 
             SystemLog::info('analytics', 'gsc.sync.query', "Buscando dados diarios GSC", [
                 'api_url' => $apiUrl,
                 'site_url' => $siteUrl,
+                'encoded' => urlencode($siteUrl),
             ]);
 
             $response = Http::withToken($token)->post($apiUrl, [
@@ -271,17 +224,54 @@ class GoogleSearchConsoleService
             ]);
 
             if (!$response->successful()) {
+                $statusCode = $response->status();
                 $body = $response->body();
                 $isHtml = str_contains($body, '<!DOCTYPE') || str_contains($body, '<html');
+                $jsonBody = $isHtml ? null : $response->json();
+                $apiError = $jsonBody['error']['message'] ?? null;
 
-                SystemLog::error('analytics', 'gsc.sync.query_failed', "Falha ao buscar dados (HTTP {$response->status()})", [
-                    'status' => $response->status(),
+                SystemLog::error('analytics', 'gsc.sync.query_failed', "Falha ao buscar dados GSC (HTTP {$statusCode})", [
+                    'status' => $statusCode,
                     'is_html' => $isHtml,
+                    'api_error' => $apiError,
                     'body_preview' => $isHtml ? '(HTML error page)' : mb_substr($body, 0, 500),
                     'api_url' => $apiUrl,
+                    'site_url' => $siteUrl,
                 ]);
 
-                throw new \RuntimeException('Erro ao buscar dados do Search Console (HTTP ' . $response->status() . ')');
+                // Se 404 ou 403, tentar variantes da URL
+                if (in_array($statusCode, [404, 403])) {
+                    $alternativeUrl = $this->tryAlternativeSiteUrls($token, $rawSiteUrl, $start, $end);
+                    if ($alternativeUrl) {
+                        SystemLog::info('analytics', 'gsc.sync.alternative_found', "URL alternativa encontrada: {$alternativeUrl}");
+                        $siteUrl = $alternativeUrl;
+                        $connection->update(['external_id' => $alternativeUrl]);
+
+                        // Refazer a query com a URL correta
+                        $apiUrl = $this->buildApiUrl($siteUrl, 'searchAnalytics/query');
+                        $response = Http::withToken($token)->post($apiUrl, [
+                            'startDate' => $start,
+                            'endDate' => $end,
+                            'dimensions' => ['date'],
+                            'rowLimit' => 500,
+                        ]);
+
+                        if (!$response->successful()) {
+                            throw new \RuntimeException("Erro ao buscar dados do Search Console (HTTP {$response->status()})");
+                        }
+                    } else {
+                        $availableSites = $this->fetchSitesQuiet($token);
+                        throw new \RuntimeException(
+                            "Não foi possível acessar dados do Search Console para \"{$siteUrl}\". " .
+                            ($apiError ? "Erro: {$apiError}. " : '') .
+                            (count($availableSites) > 0
+                                ? "Sites disponíveis: " . implode(', ', $availableSites)
+                                : "Verifique se o site está verificado no Search Console e a API está habilitada.")
+                        );
+                    }
+                } else {
+                    throw new \RuntimeException('Erro ao buscar dados do Search Console: ' . ($apiError ?? "HTTP {$statusCode}"));
+                }
             }
 
             $synced = 0;
@@ -349,8 +339,9 @@ class GoogleSearchConsoleService
 
     /**
      * Tenta URLs alternativas para encontrar o site no GSC
+     * Usa searchAnalytics/query POST que funciona melhor que GET /sites/
      */
-    protected function tryAlternativeSiteUrls(string $token, string $originalUrl): ?string
+    protected function tryAlternativeSiteUrls(string $token, string $originalUrl, string $start, string $end): ?string
     {
         $candidates = [];
         $clean = trim($originalUrl);
@@ -362,26 +353,21 @@ class GoogleSearchConsoleService
                 "https://{$domain}/",
                 "http://{$domain}/",
                 "https://www.{$domain}/",
-                $clean,
             ];
         } elseif (preg_match('#^https?://#', $clean)) {
-            // Extrair dominio
             $parsed = parse_url($clean);
             $domain = $parsed['host'] ?? '';
-
-            // Remover www. para dominio base
             $baseDomain = preg_replace('/^www\./', '', $domain);
 
             $candidates = [
-                rtrim($clean, '/') . '/',  // com trailing slash
-                rtrim($clean, '/'),         // sem trailing slash
-                "sc-domain:{$baseDomain}",  // domain property
-                "sc-domain:{$domain}",      // domain com www
+                rtrim($clean, '/') . '/',
+                rtrim($clean, '/'),
+                "sc-domain:{$baseDomain}",
+                "sc-domain:{$domain}",
                 "https://{$domain}/",
                 "http://{$domain}/",
             ];
         } else {
-            // Provavelmente so um dominio
             $candidates = [
                 "sc-domain:{$clean}",
                 "https://{$clean}/",
@@ -390,16 +376,22 @@ class GoogleSearchConsoleService
             ];
         }
 
-        // Remover duplicatas e o original
         $candidates = array_unique($candidates);
+        $normalizedOriginal = $this->normalizeSiteUrl($originalUrl);
 
         foreach ($candidates as $candidate) {
-            if ($candidate === $this->normalizeSiteUrl($originalUrl)) continue;
+            if ($candidate === $normalizedOriginal) continue;
 
-            $url = "{$this->searchUrl}/sites/" . urlencode($candidate);
+            $apiUrl = $this->buildApiUrl($candidate, 'searchAnalytics/query');
             try {
-                $response = Http::withToken($token)->timeout(10)->get($url);
+                $response = Http::withToken($token)->timeout(10)->post($apiUrl, [
+                    'startDate' => $start,
+                    'endDate' => $end,
+                    'dimensions' => ['date'],
+                    'rowLimit' => 1,
+                ]);
                 if ($response->successful()) {
+                    SystemLog::info('analytics', 'gsc.alternative.success', "URL alternativa funciona: {$candidate}");
                     return $candidate;
                 }
             } catch (\Throwable) {
