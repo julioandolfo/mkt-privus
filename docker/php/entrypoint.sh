@@ -49,6 +49,9 @@ if [ "$1" = "php-fpm" ]; then
     echo "==> [app] Storage link..."
     su-exec www:www php artisan storage:link 2>/dev/null || true
 
+    echo "==> [app] Seed templates de metricas sociais..."
+    su-exec www:www php artisan social:sync-insights --seed-templates 2>&1 || echo "AVISO: seed-templates falhou"
+
     echo "==> [app] Iniciando PHP-FPM..."
     # PHP-FPM DEVE iniciar como root - ele faz o drop para www nos workers via pool config
     exec "$@"

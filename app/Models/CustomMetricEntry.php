@@ -17,12 +17,15 @@ class CustomMetricEntry extends Model
         'date',
         'notes',
         'metadata',
+        'tags',
+        'source',
     ];
 
     protected $casts = [
         'value' => 'decimal:2',
         'date' => 'date',
         'metadata' => 'array',
+        'tags' => 'array',
     ];
 
     // ===== RELATIONSHIPS =====

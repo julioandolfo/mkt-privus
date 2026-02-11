@@ -5,6 +5,30 @@ import InputError from '@/Components/InputError.vue';
 import { Head, Link, useForm, router, usePage } from '@inertiajs/vue3';
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 
+interface SocialAccountInsight {
+    date: string;
+    followers_count: number | null;
+    following_count: number | null;
+    posts_count: number | null;
+    impressions: number | null;
+    reach: number | null;
+    engagement: number | null;
+    engagement_rate: number | null;
+    likes: number | null;
+    comments: number | null;
+    shares: number | null;
+    saves: number | null;
+    clicks: number | null;
+    video_views: number | null;
+    net_followers: number | null;
+    audience_gender: Record<string, number> | null;
+    audience_age: Record<string, number> | null;
+    audience_cities: Record<string, number> | null;
+    audience_countries: Record<string, number> | null;
+    platform_data: Record<string, any> | null;
+    followers_variation: number | null;
+}
+
 interface SocialAccount {
     id: number;
     platform: string;
@@ -17,6 +41,7 @@ interface SocialAccount {
     token_status: string;
     metadata: Record<string, any> | null;
     created_at: string;
+    insights: SocialAccountInsight | null;
 }
 
 interface Platform {
@@ -67,6 +92,9 @@ function checkFlash() {
 
 // Watch flash changes de forma robusta (funciona com redirect do Inertia)
 watch(() => page.props.flash, () => checkFlash(), { deep: true });
+
+// Insights expandidos
+const expandedAccount = ref<number | null>(null);
 
 // Estado do modal de selecao OAuth
 const showDiscoveryModal = ref(false);
@@ -441,48 +469,149 @@ function formatNumber(num: number | null | undefined): string {
 
                     <!-- Account rows -->
                     <div class="divide-y divide-gray-800/50">
-                        <div v-for="account in accountsByPlatform[plat.value]" :key="account.id" class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-800/30 transition">
-                            <!-- Avatar -->
-                            <div class="relative shrink-0">
-                                <img v-if="account.avatar_url" :src="account.avatar_url" :alt="account.display_name || account.username" class="w-10 h-10 rounded-xl object-cover" />
-                                <div v-else class="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold" :style="{ backgroundColor: account.platform_color }">
-                                    {{ (account.display_name || account.username || 'A')[0].toUpperCase() }}
+                        <div v-for="account in accountsByPlatform[plat.value]" :key="account.id">
+                            <div class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-800/30 transition">
+                                <!-- Avatar -->
+                                <div class="relative shrink-0">
+                                    <img v-if="account.avatar_url" :src="account.avatar_url" :alt="account.display_name || account.username" class="w-10 h-10 rounded-xl object-cover" />
+                                    <div v-else class="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold" :style="{ backgroundColor: account.platform_color }">
+                                        {{ (account.display_name || account.username || 'A')[0].toUpperCase() }}
+                                    </div>
+                                </div>
+
+                                <!-- Info -->
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2">
+                                        <p class="font-medium text-white text-sm truncate">{{ account.display_name || account.username }}</p>
+                                        <span :class="['rounded-full border px-2 py-0.5 text-[10px] font-medium', tokenStatusLabels[account.token_status]?.bg, tokenStatusLabels[account.token_status]?.color]">
+                                            {{ tokenStatusLabels[account.token_status]?.icon }} {{ tokenStatusLabels[account.token_status]?.label }}
+                                        </span>
+                                        <span v-if="!account.is_active" class="rounded-full bg-gray-700 px-2 py-0.5 text-[10px] text-gray-400">Inativa</span>
+                                    </div>
+                                    <div class="flex items-center gap-3 mt-0.5">
+                                        <p class="text-xs text-gray-500">@{{ account.username }}</p>
+                                        <span v-if="account.insights?.followers_count" class="text-[10px] text-gray-500 font-medium">
+                                            {{ formatNumber(account.insights.followers_count) }} seguidores
+                                            <span v-if="account.insights.followers_variation !== null" :class="account.insights.followers_variation >= 0 ? 'text-emerald-500' : 'text-red-500'">
+                                                ({{ account.insights.followers_variation >= 0 ? '+' : '' }}{{ account.insights.followers_variation }}%)
+                                            </span>
+                                        </span>
+                                        <span v-else-if="account.metadata?.followers_count" class="text-[10px] text-gray-600">{{ formatNumber(account.metadata.followers_count) }} seguidores</span>
+                                        <span v-if="account.metadata?.fan_count && !account.insights?.followers_count" class="text-[10px] text-gray-600">{{ formatNumber(account.metadata.fan_count) }} fas</span>
+                                        <span v-if="account.metadata?.subscriber_count && !account.insights?.followers_count" class="text-[10px] text-gray-600">{{ formatNumber(account.metadata.subscriber_count) }} inscritos</span>
+                                        <span v-if="account.metadata?.type" class="text-[10px] text-gray-600 bg-gray-800 rounded px-1.5 py-0.5">{{ account.metadata.type }}</span>
+                                        <span class="text-[10px] text-gray-700">{{ account.created_at }}</span>
+                                    </div>
+                                </div>
+
+                                <!-- Actions -->
+                                <div class="flex items-center gap-1.5 shrink-0">
+                                    <button v-if="account.token_status === 'expirado' || account.token_status === 'renovar'" @click="reconnectOAuth(account)"
+                                        class="rounded-lg bg-indigo-600/20 border border-indigo-500/30 px-2.5 py-1 text-[11px] font-medium text-indigo-400 hover:bg-indigo-600/30 transition" title="Reconectar OAuth">
+                                        ↻ Reconectar
+                                    </button>
+                                    <button @click="expandedAccount = expandedAccount === account.id ? null : account.id"
+                                        class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:bg-gray-700/50 border border-gray-700 transition" title="Ver insights">
+                                        {{ expandedAccount === account.id ? '▲ Fechar' : '▼ Insights' }}
+                                    </button>
+                                    <button @click="toggleAccount(account.id)"
+                                        :class="['rounded-lg px-2.5 py-1 text-[11px] font-medium transition border', account.is_active ? 'text-amber-400 hover:bg-amber-500/10 border-amber-500/30' : 'text-emerald-400 hover:bg-emerald-500/10 border-emerald-500/30']"
+                                        :title="account.is_active ? 'Desativar conta' : 'Ativar conta'">
+                                        {{ account.is_active ? 'Desativar' : 'Ativar' }}
+                                    </button>
+                                    <button @click="removeAccount(account.id)" class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/10 border border-red-500/30 transition" title="Remover conta">
+                                        Remover
+                                    </button>
                                 </div>
                             </div>
 
-                            <!-- Info -->
-                            <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2">
-                                    <p class="font-medium text-white text-sm truncate">{{ account.display_name || account.username }}</p>
-                                    <span :class="['rounded-full border px-2 py-0.5 text-[10px] font-medium', tokenStatusLabels[account.token_status]?.bg, tokenStatusLabels[account.token_status]?.color]">
-                                        {{ tokenStatusLabels[account.token_status]?.icon }} {{ tokenStatusLabels[account.token_status]?.label }}
-                                    </span>
-                                    <span v-if="!account.is_active" class="rounded-full bg-gray-700 px-2 py-0.5 text-[10px] text-gray-400">Inativa</span>
+                            <!-- Insights expandidos -->
+                            <div v-if="expandedAccount === account.id && account.insights" class="px-5 pb-4">
+                                <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+                                    <div v-if="account.insights.followers_count !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Seguidores</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.followers_count) }}</p>
+                                        <p v-if="account.insights.net_followers !== null" :class="['text-[10px] font-medium', account.insights.net_followers >= 0 ? 'text-emerald-400' : 'text-red-400']">
+                                            {{ account.insights.net_followers >= 0 ? '+' : '' }}{{ formatNumber(account.insights.net_followers) }} hoje
+                                        </p>
+                                    </div>
+                                    <div v-if="account.insights.reach !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Alcance</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.reach) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.impressions !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Impressoes</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.impressions) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.engagement !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Engajamento</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.engagement) }}</p>
+                                        <p v-if="account.insights.engagement_rate" class="text-[10px] text-indigo-400">{{ account.insights.engagement_rate }}%</p>
+                                    </div>
+                                    <div v-if="account.insights.likes !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Curtidas</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.likes) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.comments !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Comentarios</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.comments) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.shares !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Compartilhamentos</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.shares) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.saves !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Salvamentos</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.saves) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.clicks !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Cliques</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.clicks) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.video_views !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Views Video</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.video_views) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.posts_count !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Posts</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.posts_count) }}</p>
+                                    </div>
                                 </div>
-                                <div class="flex items-center gap-3 mt-0.5">
-                                    <p class="text-xs text-gray-500">@{{ account.username }}</p>
-                                    <span v-if="account.metadata?.followers_count" class="text-[10px] text-gray-600">{{ formatNumber(account.metadata.followers_count) }} seguidores</span>
-                                    <span v-if="account.metadata?.fan_count" class="text-[10px] text-gray-600">{{ formatNumber(account.metadata.fan_count) }} fas</span>
-                                    <span v-if="account.metadata?.subscriber_count" class="text-[10px] text-gray-600">{{ formatNumber(account.metadata.subscriber_count) }} inscritos</span>
-                                    <span v-if="account.metadata?.type" class="text-[10px] text-gray-600 bg-gray-800 rounded px-1.5 py-0.5">{{ account.metadata.type }}</span>
-                                    <span class="text-[10px] text-gray-700">{{ account.created_at }}</span>
+
+                                <!-- Audiencia (se disponivel) -->
+                                <div v-if="account.insights.audience_gender || account.insights.audience_cities" class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div v-if="account.insights.audience_gender" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Genero da Audiencia</p>
+                                        <div class="space-y-1.5">
+                                            <div v-for="(pct, gender) in account.insights.audience_gender" :key="gender" class="flex items-center gap-2">
+                                                <span class="text-xs text-gray-400 w-16">{{ gender === 'male' ? 'Masc.' : gender === 'female' ? 'Fem.' : 'Outro' }}</span>
+                                                <div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                                    <div class="h-full rounded-full" :class="gender === 'male' ? 'bg-blue-500' : gender === 'female' ? 'bg-pink-500' : 'bg-gray-500'" :style="{ width: pct + '%' }"></div>
+                                                </div>
+                                                <span class="text-xs text-gray-400 w-10 text-right">{{ pct }}%</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div v-if="account.insights.audience_cities" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Top Cidades</p>
+                                        <div class="space-y-1">
+                                            <div v-for="(pct, city) in account.insights.audience_cities" :key="city" class="flex items-center justify-between">
+                                                <span class="text-xs text-gray-300 truncate">{{ city }}</span>
+                                                <span class="text-xs text-gray-500">{{ pct }}%</span>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
+
+                                <p class="text-[10px] text-gray-600 mt-2">Ultima atualizacao: {{ account.insights.date }}</p>
                             </div>
 
-                            <!-- Actions -->
-                            <div class="flex items-center gap-1.5 shrink-0">
-                                <button v-if="account.token_status === 'expirado' || account.token_status === 'renovar'" @click="reconnectOAuth(account)"
-                                    class="rounded-lg bg-indigo-600/20 border border-indigo-500/30 px-2.5 py-1 text-[11px] font-medium text-indigo-400 hover:bg-indigo-600/30 transition" title="Reconectar OAuth">
-                                    ↻ Reconectar
-                                </button>
-                                <button @click="toggleAccount(account.id)"
-                                    :class="['rounded-lg px-2.5 py-1 text-[11px] font-medium transition border', account.is_active ? 'text-amber-400 hover:bg-amber-500/10 border-amber-500/30' : 'text-emerald-400 hover:bg-emerald-500/10 border-emerald-500/30']"
-                                    :title="account.is_active ? 'Desativar conta' : 'Ativar conta'">
-                                    {{ account.is_active ? 'Desativar' : 'Ativar' }}
-                                </button>
-                                <button @click="removeAccount(account.id)" class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/10 border border-red-500/30 transition" title="Remover conta">
-                                    Remover
-                                </button>
+                            <!-- Sem insights -->
+                            <div v-else-if="expandedAccount === account.id && !account.insights" class="px-5 pb-4">
+                                <div class="rounded-xl bg-gray-800/30 border border-gray-700/50 p-4 text-center">
+                                    <p class="text-sm text-gray-400">Nenhum insight disponivel ainda.</p>
+                                    <p class="text-xs text-gray-500 mt-1">Os insights serao coletados automaticamente 2x ao dia.</p>
+                                </div>
                             </div>
                         </div>
                     </div>

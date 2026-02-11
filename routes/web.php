@@ -75,6 +75,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::put('/goals/{goal}', [MetricsController::class, 'updateGoal'])->name('goals.update');
         Route::delete('/goals/{goal}', [MetricsController::class, 'destroyGoal'])->name('goals.destroy');
 
+        // Social Insights
+        Route::post('/sync-social', [MetricsController::class, 'syncSocialInsights'])->name('syncSocial');
+        Route::post('/from-templates', [MetricsController::class, 'createFromTemplates'])->name('fromTemplates');
+        Route::get('/social-insights/{account}', [MetricsController::class, 'socialInsightsData'])->name('socialInsights');
+
         // Rotas com {metric}
         Route::get('/{metric}', [MetricsController::class, 'show'])->name('show');
         Route::get('/{metric}/edit', [MetricsController::class, 'edit'])->name('edit');

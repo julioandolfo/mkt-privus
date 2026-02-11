@@ -40,6 +40,11 @@ class CustomMetric extends Model
         'goal_period',
         'is_active',
         'sort_order',
+        // Social link
+        'social_account_id',
+        'social_metric_key',
+        'auto_sync',
+        'last_synced_at',
     ];
 
     protected $casts = [
@@ -51,6 +56,8 @@ class CustomMetric extends Model
         'sort_order' => 'integer',
         'decimal_places' => 'integer',
         'tags' => 'array',
+        'auto_sync' => 'boolean',
+        'last_synced_at' => 'datetime',
     ];
 
     // ===== RELATIONSHIPS =====
@@ -68,6 +75,11 @@ class CustomMetric extends Model
     public function metricCategory(): BelongsTo
     {
         return $this->belongsTo(MetricCategory::class);
+    }
+
+    public function socialAccount(): BelongsTo
+    {
+        return $this->belongsTo(SocialAccount::class);
     }
 
     public function entries(): HasMany

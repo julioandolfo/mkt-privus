@@ -6,6 +6,10 @@ use App\Models\CustomMetric;
 use App\Models\CustomMetricEntry;
 use App\Models\MetricCategory;
 use App\Models\MetricGoal;
+use App\Models\SocialAccount;
+use App\Models\SocialInsight;
+use App\Models\SocialMetricTemplate;
+use App\Services\Social\SocialInsightsService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -133,10 +137,60 @@ class MetricsController extends Controller
 
         $allTags = CustomMetric::getAllTagsForBrand($brandId);
 
+        // Contas sociais conectadas (para vincular metricas)
+        $connectedAccounts = SocialAccount::where('brand_id', $brandId)
+            ->where('is_active', true)
+            ->get()
+            ->map(fn($a) => [
+                'id' => $a->id,
+                'platform' => $a->platform->value ?? $a->platform,
+                'username' => $a->username,
+                'display_name' => $a->display_name,
+                'avatar_url' => $a->avatar_url,
+                'metadata' => $a->metadata,
+            ]);
+
+        // Templates de metricas sociais agrupados por plataforma
+        $socialTemplates = SocialMetricTemplate::where('is_active', true)
+            ->orderBy('platform')
+            ->orderBy('sort_order')
+            ->get()
+            ->groupBy('platform')
+            ->map(function ($templates, $platform) {
+                return $templates->map(fn($t) => [
+                    'id' => $t->id,
+                    'platform' => $t->platform,
+                    'metric_key' => $t->metric_key,
+                    'name' => $t->name,
+                    'description' => $t->description,
+                    'unit' => $t->unit,
+                    'value_prefix' => $t->value_prefix,
+                    'value_suffix' => $t->value_suffix,
+                    'decimal_places' => $t->decimal_places,
+                    'direction' => $t->direction,
+                    'aggregation' => $t->aggregation,
+                    'color' => $t->color,
+                    'icon' => $t->icon,
+                    'category' => $t->category,
+                ]);
+            });
+
+        // Metricas sociais ja vinculadas (para evitar duplicatas)
+        $linkedMetrics = CustomMetric::where('brand_id', $brandId)
+            ->whereNotNull('social_account_id')
+            ->whereNotNull('social_metric_key')
+            ->select('social_account_id', 'social_metric_key')
+            ->get()
+            ->map(fn($m) => $m->social_account_id . ':' . $m->social_metric_key)
+            ->toArray();
+
         return Inertia::render('Metrics/Create', [
             'categories' => $categories,
             'allTags' => $allTags,
             'availablePlatforms' => CustomMetric::availablePlatforms(),
+            'connectedAccounts' => $connectedAccounts,
+            'socialTemplates' => $socialTemplates,
+            'linkedMetrics' => $linkedMetrics,
         ]);
     }
 
@@ -173,6 +227,10 @@ class MetricsController extends Controller
             // Nova categoria inline
             'new_category_name' => 'nullable|string|max:100',
             'new_category_color' => 'nullable|string|max:7',
+            // Social link
+            'social_account_id' => 'nullable|exists:social_accounts,id',
+            'social_metric_key' => 'nullable|string|max:50',
+            'auto_sync' => 'nullable|boolean',
         ]);
 
         $brandId = $request->user()->current_brand_id;
@@ -193,6 +251,13 @@ class MetricsController extends Controller
             $validated['custom_frequency_days'] = null;
             $validated['custom_start_date'] = null;
             $validated['custom_end_date'] = null;
+        }
+
+        // Se tem social link, forcar auto_sync e data_source
+        if (!empty($validated['social_account_id']) && !empty($validated['social_metric_key'])) {
+            $validated['auto_sync'] = $validated['auto_sync'] ?? true;
+            $validated['data_source'] = 'social_api';
+            $validated['tracking_frequency'] = 'daily';
         }
 
         // Separar dados da meta antes de criar a métrica
@@ -217,8 +282,13 @@ class MetricsController extends Controller
             ]);
         }
 
+        // Se e uma metrica social com auto_sync, importar dados historicos
+        if ($metric->auto_sync && $metric->social_account_id) {
+            $this->importHistoricalSocialData($metric);
+        }
+
         return redirect()->route('metrics.index')
-            ->with('success', 'Metrica criada com sucesso!');
+            ->with('success', 'Metrica criada com sucesso!' . ($metric->auto_sync ? ' Dados historicos importados automaticamente.' : ''));
     }
 
     /**
@@ -541,6 +611,224 @@ class MetricsController extends Controller
         $goal->delete();
 
         return back()->with('success', 'Meta removida.');
+    }
+
+    // ===== SOCIAL INSIGHTS =====
+
+    /**
+     * Sincronizar insights de uma conta social manualmente
+     */
+    public function syncSocialInsights(Request $request): RedirectResponse
+    {
+        $brandId = $request->user()->current_brand_id;
+        $accountId = $request->get('account_id');
+
+        $service = app(SocialInsightsService::class);
+
+        if ($accountId) {
+            $account = SocialAccount::where('id', $accountId)
+                ->where('brand_id', $brandId)
+                ->firstOrFail();
+
+            $result = $service->syncAccount($account);
+
+            if ($result) {
+                // Auto-sync metricas vinculadas
+                $this->syncLinkedMetrics($account);
+                return back()->with('success', "Insights de {$account->display_name} sincronizados!");
+            } else {
+                return back()->with('error', "Falha ao sincronizar insights de {$account->display_name}.");
+            }
+        }
+
+        // Sync todas as contas da brand
+        $results = $service->syncBrand($brandId);
+        $success = count(array_filter($results));
+        $total = count($results);
+
+        // Auto-sync todas metricas vinculadas
+        $accounts = SocialAccount::where('brand_id', $brandId)->where('is_active', true)->get();
+        foreach ($accounts as $account) {
+            $this->syncLinkedMetrics($account);
+        }
+
+        return back()->with('success', "{$success}/{$total} contas sincronizadas com sucesso!");
+    }
+
+    /**
+     * API: Buscar insights de uma conta (para graficos no frontend)
+     */
+    public function socialInsightsData(Request $request, SocialAccount $account): JsonResponse
+    {
+        if ($account->brand_id !== $request->user()->current_brand_id) {
+            abort(403);
+        }
+
+        $period = $request->get('period', '30');
+        $startDate = now()->subDays((int) $period);
+
+        $insights = SocialInsight::where('social_account_id', $account->id)
+            ->where('date', '>=', $startDate)
+            ->orderBy('date')
+            ->get()
+            ->map(fn($i) => [
+                'date' => $i->date->format('Y-m-d'),
+                'date_formatted' => $i->date->format('d/m/Y'),
+                'followers_count' => $i->followers_count,
+                'following_count' => $i->following_count,
+                'posts_count' => $i->posts_count,
+                'impressions' => $i->impressions,
+                'reach' => $i->reach,
+                'engagement' => $i->engagement,
+                'engagement_rate' => $i->engagement_rate,
+                'likes' => $i->likes,
+                'comments' => $i->comments,
+                'shares' => $i->shares,
+                'saves' => $i->saves,
+                'clicks' => $i->clicks,
+                'video_views' => $i->video_views,
+                'net_followers' => $i->net_followers,
+                'platform_data' => $i->platform_data,
+            ]);
+
+        // Ultimo insight para resumo
+        $latest = $insights->last();
+
+        return response()->json([
+            'account' => [
+                'id' => $account->id,
+                'platform' => $account->platform->value ?? $account->platform,
+                'display_name' => $account->display_name,
+                'username' => $account->username,
+            ],
+            'insights' => $insights,
+            'latest' => $latest,
+            'period' => $period,
+        ]);
+    }
+
+    /**
+     * Criar multiplas metricas de uma vez a partir de templates sociais
+     */
+    public function createFromTemplates(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'social_account_id' => 'required|exists:social_accounts,id',
+            'template_ids' => 'required|array|min:1',
+            'template_ids.*' => 'exists:social_metric_templates,id',
+            'auto_sync' => 'boolean',
+        ]);
+
+        $brandId = $request->user()->current_brand_id;
+        $account = SocialAccount::where('id', $validated['social_account_id'])
+            ->where('brand_id', $brandId)
+            ->firstOrFail();
+
+        $templates = SocialMetricTemplate::whereIn('id', $validated['template_ids'])->get();
+        $created = 0;
+        $skipped = 0;
+
+        foreach ($templates as $template) {
+            // Verificar se ja existe
+            $exists = CustomMetric::where('brand_id', $brandId)
+                ->where('social_account_id', $account->id)
+                ->where('social_metric_key', $template->metric_key)
+                ->exists();
+
+            if ($exists) {
+                $skipped++;
+                continue;
+            }
+
+            $metric = CustomMetric::create([
+                'brand_id' => $brandId,
+                'user_id' => $request->user()->id,
+                'name' => $template->name . ' - ' . $account->display_name,
+                'description' => $template->description,
+                'category' => $template->category,
+                'unit' => $template->unit,
+                'value_prefix' => $template->value_prefix,
+                'value_suffix' => $template->value_suffix,
+                'decimal_places' => $template->decimal_places,
+                'direction' => $template->direction,
+                'aggregation' => $template->aggregation,
+                'color' => $template->color,
+                'icon' => $template->icon,
+                'platform' => $template->platform,
+                'data_source' => 'social_api',
+                'tracking_frequency' => 'daily',
+                'social_account_id' => $account->id,
+                'social_metric_key' => $template->metric_key,
+                'auto_sync' => $validated['auto_sync'] ?? true,
+            ]);
+
+            // Importar dados historicos
+            $this->importHistoricalSocialData($metric);
+            $created++;
+        }
+
+        $msg = "{$created} metrica(s) criada(s) com sucesso!";
+        if ($skipped > 0) {
+            $msg .= " ({$skipped} ja existiam e foram ignoradas)";
+        }
+
+        return redirect()->route('metrics.index')->with('success', $msg);
+    }
+
+    /**
+     * Sync metricas vinculadas a uma conta
+     */
+    private function syncLinkedMetrics(SocialAccount $account): void
+    {
+        $metrics = CustomMetric::where('social_account_id', $account->id)
+            ->where('auto_sync', true)
+            ->where('is_active', true)
+            ->get();
+
+        foreach ($metrics as $metric) {
+            $this->importHistoricalSocialData($metric);
+        }
+    }
+
+    /**
+     * Importar dados historicos de insights para entries de uma metrica
+     */
+    private function importHistoricalSocialData(CustomMetric $metric): void
+    {
+        if (!$metric->social_account_id || !$metric->social_metric_key) {
+            return;
+        }
+
+        $insights = SocialInsight::where('social_account_id', $metric->social_account_id)
+            ->where('sync_status', 'success')
+            ->orderBy('date')
+            ->get();
+
+        foreach ($insights as $insight) {
+            $value = $insight->getMetricValue($metric->social_metric_key);
+
+            if ($value === null) {
+                continue;
+            }
+
+            $metric->entries()->updateOrCreate(
+                [
+                    'date' => $insight->date->format('Y-m-d'),
+                    'custom_metric_id' => $metric->id,
+                ],
+                [
+                    'value' => (float) $value,
+                    'user_id' => $metric->user_id,
+                    'source' => 'social_sync',
+                    'metadata' => [
+                        'social_insight_id' => $insight->id,
+                        'synced_at' => now()->toIso8601String(),
+                    ],
+                ]
+            );
+        }
+
+        $metric->update(['last_synced_at' => now()]);
     }
 
     // ===== PRIVATE =====

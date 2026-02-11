@@ -46,3 +46,27 @@ Schedule::job(new GenerateScheduledContentJob)->hourly()->withoutOverlapping();
 
 // Gerar sugestões inteligentes automaticas - 1x por dia às 7h
 Schedule::job(new GenerateSmartSuggestionsJob)->dailyAt('07:00')->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Social Insights - Coleta de Métricas
+|--------------------------------------------------------------------------
+|
+| Sincronizar insights das contas sociais conectadas.
+| Roda 2x ao dia (manhã e noite) para manter dados atualizados.
+|
+*/
+
+// Sincronizar insights sociais - 2x por dia (8h e 20h)
+Schedule::command('social:sync-insights --all')->dailyAt('08:00')->withoutOverlapping();
+Schedule::command('social:sync-insights --all')->dailyAt('20:00')->withoutOverlapping();
+
+// Auto-sync metricas vinculadas a contas sociais - logo apos o sync de insights
+Schedule::job(new \App\Jobs\SyncSocialMetricEntriesJob)->dailyAt('08:30')->withoutOverlapping();
+Schedule::job(new \App\Jobs\SyncSocialMetricEntriesJob)->dailyAt('20:30')->withoutOverlapping();
+
+// Limpar registros temporarios de OAuth discovery - 1x por dia
+Schedule::call(fn() => \App\Models\OAuthDiscoveredAccount::cleanup())->daily();
+
+// Limpar logs antigos (30+ dias) - 1x por semana
+Schedule::call(fn() => \App\Models\SystemLog::cleanup(30))->weekly();

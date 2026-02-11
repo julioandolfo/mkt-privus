@@ -57,5 +57,8 @@ class DatabaseSeeder extends Seeder
 
         // Definir primeira marca como ativa
         $admin->update(['current_brand_id' => Brand::first()->id]);
+
+        // Seed templates de metricas sociais
+        \App\Models\SocialMetricTemplate::seedDefaults();
     }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Enums\SocialPlatform;
 use App\Models\OAuthDiscoveredAccount;
 use App\Models\SocialAccount;
+use App\Models\SocialInsight;
 use App\Models\Setting;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -25,19 +26,67 @@ class SocialAccountController extends Controller
             $accounts = $brand->socialAccounts()
                 ->orderBy('platform')
                 ->get()
-                ->map(fn($acc) => [
-                    'id' => $acc->id,
-                    'platform' => $acc->platform->value,
-                    'platform_label' => $acc->platform->label(),
-                    'platform_color' => $acc->platform->color(),
-                    'username' => $acc->username,
-                    'display_name' => $acc->display_name,
-                    'avatar_url' => $acc->avatar_url,
-                    'is_active' => $acc->is_active,
-                    'token_status' => $this->getTokenStatus($acc),
-                    'metadata' => $acc->metadata,
-                    'created_at' => $acc->created_at->format('d/m/Y'),
-                ]);
+                ->map(function ($acc) {
+                    // Ultimo insight disponivel
+                    $latestInsight = SocialInsight::where('social_account_id', $acc->id)
+                        ->where('sync_status', 'success')
+                        ->orderByDesc('date')
+                        ->first();
+
+                    // Insight anterior para calcular variacao
+                    $previousInsight = null;
+                    if ($latestInsight) {
+                        $previousInsight = SocialInsight::where('social_account_id', $acc->id)
+                            ->where('sync_status', 'success')
+                            ->where('date', '<', $latestInsight->date)
+                            ->orderByDesc('date')
+                            ->first();
+                    }
+
+                    $insightData = null;
+                    if ($latestInsight) {
+                        $insightData = [
+                            'date' => $latestInsight->date->format('d/m/Y'),
+                            'followers_count' => $latestInsight->followers_count,
+                            'following_count' => $latestInsight->following_count,
+                            'posts_count' => $latestInsight->posts_count,
+                            'impressions' => $latestInsight->impressions,
+                            'reach' => $latestInsight->reach,
+                            'engagement' => $latestInsight->engagement,
+                            'engagement_rate' => $latestInsight->engagement_rate,
+                            'likes' => $latestInsight->likes,
+                            'comments' => $latestInsight->comments,
+                            'shares' => $latestInsight->shares,
+                            'saves' => $latestInsight->saves,
+                            'clicks' => $latestInsight->clicks,
+                            'video_views' => $latestInsight->video_views,
+                            'net_followers' => $latestInsight->net_followers,
+                            'audience_gender' => $latestInsight->audience_gender,
+                            'audience_age' => $latestInsight->audience_age,
+                            'audience_cities' => $latestInsight->audience_cities,
+                            'audience_countries' => $latestInsight->audience_countries,
+                            'platform_data' => $latestInsight->platform_data,
+                            'followers_variation' => $previousInsight && $previousInsight->followers_count > 0
+                                ? round((($latestInsight->followers_count - $previousInsight->followers_count) / $previousInsight->followers_count) * 100, 1)
+                                : null,
+                        ];
+                    }
+
+                    return [
+                        'id' => $acc->id,
+                        'platform' => $acc->platform->value,
+                        'platform_label' => $acc->platform->label(),
+                        'platform_color' => $acc->platform->color(),
+                        'username' => $acc->username,
+                        'display_name' => $acc->display_name,
+                        'avatar_url' => $acc->avatar_url,
+                        'is_active' => $acc->is_active,
+                        'token_status' => $this->getTokenStatus($acc),
+                        'metadata' => $acc->metadata,
+                        'created_at' => $acc->created_at->format('d/m/Y'),
+                        'insights' => $insightData,
+                    ];
+                });
         }
 
         $platforms = collect(SocialPlatform::cases())->map(fn($p) => [
