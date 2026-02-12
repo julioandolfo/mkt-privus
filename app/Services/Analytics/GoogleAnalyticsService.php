@@ -446,29 +446,47 @@ class GoogleAnalyticsService
         string $start,
         string $end
     ): void {
+        SystemLog::info('analytics', 'ga.ads_cost.start', "Buscando dados de custo Google Ads via GA4 (property: {$propertyId})", [
+            'connection_id' => $connection->id,
+            'property_id' => $propertyId,
+            'start' => $start,
+            'end' => $end,
+        ]);
+
         try {
+            $requestPayload = [
+                'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
+                'dimensions' => [['name' => 'date']],
+                'metrics' => [
+                    ['name' => 'advertiserAdCost'],
+                    ['name' => 'advertiserAdClicks'],
+                    ['name' => 'advertiserAdImpressions'],
+                    ['name' => 'advertiserAdCostPerClick'],
+                    ['name' => 'returnOnAdSpend'],
+                    ['name' => 'advertiserAdCostPerConversion'],
+                    ['name' => 'conversions'],
+                ],
+            ];
+
             $response = Http::withToken($token)->post(
                 "{$this->reportingUrl}/properties/{$propertyId}:runReport",
-                [
-                    'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
-                    'dimensions' => [['name' => 'date']],
-                    'metrics' => [
-                        ['name' => 'advertiserAdCost'],
-                        ['name' => 'advertiserAdClicks'],
-                        ['name' => 'advertiserAdImpressions'],
-                        ['name' => 'advertiserAdCostPerClick'],
-                        ['name' => 'returnOnAdSpend'],
-                        ['name' => 'advertiserAdCostPerConversion'],
-                        ['name' => 'conversions'],
-                    ],
-                ]
+                $requestPayload
             );
 
             if (!$response->successful()) {
-                SystemLog::warning('analytics', 'ga.ads_cost.unavailable', 'Dados de custo Google Ads via GA4 não disponíveis (Ads pode não estar vinculado)', [
+                $body = $response->json();
+                $errorMsg = $body['error']['message'] ?? 'N/A';
+                $errorCode = $body['error']['code'] ?? $response->status();
+                $errorStatus = $body['error']['status'] ?? 'N/A';
+
+                SystemLog::warning('analytics', 'ga.ads_cost.api_error', "API GA4 retornou erro ao buscar custo Ads: HTTP {$response->status()} - {$errorMsg}", [
                     'connection_id' => $connection->id,
-                    'status' => $response->status(),
-                    'body_preview' => substr($response->body(), 0, 200),
+                    'property_id' => $propertyId,
+                    'http_status' => $response->status(),
+                    'error_code' => $errorCode,
+                    'error_status' => $errorStatus,
+                    'error_message' => $errorMsg,
+                    'body_preview' => substr($response->body(), 0, 500),
                 ]);
                 return;
             }
@@ -477,6 +495,17 @@ class GoogleAnalyticsService
             $metricHeaders = $response->json('metricHeaders', []);
             $synced = 0;
             $hasData = false;
+            $totalCost = 0;
+            $totalClicks = 0;
+            $totalImpressions = 0;
+            $skippedZeroRows = 0;
+
+            SystemLog::debug('analytics', 'ga.ads_cost.response', "Resposta GA4 Ads: {$response->json('rowCount', 0)} linhas, " . count($metricHeaders) . " métricas", [
+                'connection_id' => $connection->id,
+                'row_count' => $response->json('rowCount', 0),
+                'actual_rows' => count($rows),
+                'metric_headers' => array_map(fn($h) => $h['name'] ?? '?', $metricHeaders),
+            ]);
 
             foreach ($rows as $row) {
                 $dateStr = $row['dimensionValues'][0]['value'] ?? null;
@@ -490,18 +519,25 @@ class GoogleAnalyticsService
                     $metrics[$header['name']] = $value;
                 }
 
-                // Só salvar se houver dados reais de custo (senão o Ads não está vinculado)
+                // Só salvar se houver dados reais de custo
                 $adCost = $metrics['advertiserAdCost'] ?? 0;
-                if ($adCost <= 0 && ($metrics['advertiserAdClicks'] ?? 0) <= 0 && ($metrics['advertiserAdImpressions'] ?? 0) <= 0) {
+                $adClicks = $metrics['advertiserAdClicks'] ?? 0;
+                $adImpressions = $metrics['advertiserAdImpressions'] ?? 0;
+
+                if ($adCost <= 0 && $adClicks <= 0 && $adImpressions <= 0) {
+                    $skippedZeroRows++;
                     continue;
                 }
 
                 $hasData = true;
+                $totalCost += $adCost;
+                $totalClicks += $adClicks;
+                $totalImpressions += $adImpressions;
 
                 $dataPoints = [
                     'ga4_ad_cost' => $adCost,
-                    'ga4_ad_clicks' => $metrics['advertiserAdClicks'] ?? 0,
-                    'ga4_ad_impressions' => $metrics['advertiserAdImpressions'] ?? 0,
+                    'ga4_ad_clicks' => $adClicks,
+                    'ga4_ad_impressions' => $adImpressions,
                     'ga4_ad_cpc' => $metrics['advertiserAdCostPerClick'] ?? 0,
                     'ga4_ad_roas' => $metrics['returnOnAdSpend'] ?? 0,
                     'ga4_ad_cost_per_conversion' => $metrics['advertiserAdCostPerConversion'] ?? 0,
@@ -528,20 +564,30 @@ class GoogleAnalyticsService
             }
 
             if ($hasData) {
-                SystemLog::info('analytics', 'ga.ads_cost.synced', "Dados de custo Google Ads via GA4 sincronizados: {$synced} pontos", [
+                SystemLog::info('analytics', 'ga.ads_cost.synced', "Google Ads via GA4: R$ " . number_format($totalCost, 2, ',', '.') . " | {$totalClicks} cliques | {$totalImpressions} impressões | {$synced} pontos salvos", [
                     'connection_id' => $connection->id,
                     'synced' => $synced,
+                    'total_cost' => round($totalCost, 2),
+                    'total_clicks' => $totalClicks,
+                    'total_impressions' => $totalImpressions,
+                    'days_with_data' => count($rows) - $skippedZeroRows,
+                    'days_skipped_zero' => $skippedZeroRows,
                 ]);
             } else {
-                SystemLog::debug('analytics', 'ga.ads_cost.no_data', 'Nenhum dado de custo Google Ads encontrado via GA4 (Ads pode não estar vinculado ou sem gastos no período)', [
+                SystemLog::warning('analytics', 'ga.ads_cost.no_data', "Nenhum dado de custo Google Ads via GA4. A API respondeu OK com {$response->json('rowCount', 0)} linhas, mas todas com custo/cliques/impressões = 0. Verifique se o Google Ads está vinculado ao GA4.", [
                     'connection_id' => $connection->id,
+                    'property_id' => $propertyId,
+                    'rows_returned' => count($rows),
+                    'skipped_zero_rows' => $skippedZeroRows,
+                    'hint' => 'No GA4: Admin > Product Links > Google Ads linking. Verifique se há um link ativo.',
                 ]);
             }
         } catch (\Throwable $e) {
-            // Não interromper o sync principal se falhar — é dados complementares
-            SystemLog::warning('analytics', 'ga.ads_cost.error', "Erro ao buscar custo Ads via GA4: {$e->getMessage()}", [
+            SystemLog::error('analytics', 'ga.ads_cost.error', "Erro ao buscar custo Ads via GA4: {$e->getMessage()}", [
                 'connection_id' => $connection->id,
+                'property_id' => $propertyId,
                 'error' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
             ]);
         }
     }
@@ -580,7 +626,16 @@ class GoogleAnalyticsService
                 ]
             );
 
-            if (!$response->successful()) return;
+            if (!$response->successful()) {
+                $body = $response->json();
+                SystemLog::warning('analytics', 'ga.ads_campaigns.api_error', "API GA4 retornou erro ao buscar campanhas Ads: HTTP {$response->status()}", [
+                    'connection_id' => $connection->id,
+                    'http_status' => $response->status(),
+                    'error_message' => $body['error']['message'] ?? 'N/A',
+                    'body_preview' => substr($response->body(), 0, 300),
+                ]);
+                return;
+            }
 
             $rows = $response->json('rows', []);
             $endDate = $end;
@@ -633,13 +688,17 @@ class GoogleAnalyticsService
                 }
             }
 
-            SystemLog::debug('analytics', 'ga.ads_campaigns.synced', 'Campanhas Google Ads via GA4 sincronizadas', [
+            $savedCampaigns = collect($rows)->filter(fn($r) => ($r['dimensionValues'][1]['value'] ?? '(not set)') !== '(not set)' || ($r['dimensionValues'][0]['value'] ?? '(not set)') !== '(not set)')->count();
+            SystemLog::info('analytics', 'ga.ads_campaigns.synced', "Campanhas Google Ads via GA4: {$savedCampaigns} campanhas encontradas", [
                 'connection_id' => $connection->id,
-                'campaigns_count' => count($rows),
+                'total_rows' => count($rows),
+                'campaigns_saved' => $savedCampaigns,
             ]);
         } catch (\Throwable $e) {
-            SystemLog::warning('analytics', 'ga.ads_campaigns.error', "Erro ao buscar campanhas Ads via GA4: {$e->getMessage()}", [
+            SystemLog::error('analytics', 'ga.ads_campaigns.error', "Erro ao buscar campanhas Ads via GA4: {$e->getMessage()}", [
                 'connection_id' => $connection->id,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
             ]);
         }
     }

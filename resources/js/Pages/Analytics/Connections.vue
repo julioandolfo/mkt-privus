@@ -221,7 +221,14 @@ function openWcStatusEditor(conn: Connection) {
     wcStatusEditAvailable.value = [];
     showWcStatusModal.value = true;
 
-    // Buscar status disponíveis da loja
+    // Buscar status disponíveis da loja automaticamente
+    refreshWcEditStatuses();
+}
+
+function refreshWcEditStatuses() {
+    const conn = wcStatusEditConnection.value;
+    if (!conn) return;
+
     wcStatusEditLoading.value = true;
     const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
 
@@ -237,7 +244,12 @@ function openWcStatusEditor(conn: Connection) {
     .then(r => r.json())
     .then(data => {
         if (data.success && data.statuses) {
-            wcStatusEditAvailable.value = data.statuses;
+            // Mesclar status já selecionados que possam não vir na API (status customizados adicionados manualmente)
+            const apiSlugs = data.statuses.map((s: any) => s.slug);
+            const missingCustom = wcStatusEditStatuses.value
+                .filter(slug => !apiSlugs.includes(slug))
+                .map(slug => ({ slug, name: slug, total: undefined }));
+            wcStatusEditAvailable.value = [...data.statuses, ...missingCustom];
         }
     })
     .catch(() => {})
@@ -905,17 +917,36 @@ function isConnected(platform: string): boolean {
 
                         <!-- Status de Pedido (aparece após teste bem-sucedido) -->
                         <div v-if="wcTestResult?.success || wcAvailableStatuses.length > 0">
-                            <div class="flex items-center justify-between mb-2">
-                                <label class="block text-xs text-gray-400">Status que contam como receita</label>
-                                <button v-if="!wcLoadingStatuses && wcAvailableStatuses.length === 0" type="button" @click="fetchWcStatuses" class="text-[10px] text-indigo-400 hover:text-indigo-300">Carregar status</button>
+                            <!-- Botão Sincronizar Status no form de nova conexão -->
+                            <div class="flex items-center justify-between mb-2 p-2 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                                <div class="flex items-center gap-2">
+                                    <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                    </svg>
+                                    <span class="text-[11px] text-gray-400">
+                                        <template v-if="wcAvailableStatuses.length > 0">{{ wcAvailableStatuses.length }} status encontrados</template>
+                                        <template v-else>Status que contam como receita</template>
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    @click="fetchWcStatuses"
+                                    :disabled="wcLoadingStatuses"
+                                    class="flex items-center gap-1 px-2 py-1 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30 disabled:opacity-50 rounded text-[10px] transition border border-indigo-500/20"
+                                >
+                                    <svg :class="['w-3 h-3', { 'animate-spin': wcLoadingStatuses }]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                    </svg>
+                                    {{ wcLoadingStatuses ? 'Buscando...' : 'Sincronizar' }}
+                                </button>
                             </div>
 
-                            <div v-if="wcLoadingStatuses" class="flex items-center gap-2 py-2">
+                            <div v-if="wcLoadingStatuses && wcAvailableStatuses.length === 0" class="flex items-center gap-2 py-2">
                                 <svg class="w-3.5 h-3.5 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                                 <span class="text-[11px] text-gray-500">Buscando status da loja...</span>
                             </div>
 
-                            <div v-else-if="wcAvailableStatuses.length > 0" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                            <div v-if="wcAvailableStatuses.length > 0" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
                                 <label
                                     v-for="st in wcAvailableStatuses"
                                     :key="st.slug"
@@ -932,7 +963,7 @@ function isConnected(platform: string): boolean {
                                         <span class="text-xs text-white truncate">{{ st.name }}</span>
                                         <span class="text-[10px] text-gray-500 font-mono">{{ st.slug }}</span>
                                     </div>
-                                    <span v-if="st.total !== undefined" class="text-[10px] text-gray-500">{{ st.total }} pedidos</span>
+                                    <span v-if="st.total !== undefined && st.total > 0" class="text-[10px] text-gray-500">{{ st.total }}</span>
                                 </label>
                             </div>
 
@@ -978,51 +1009,88 @@ function isConnected(platform: string): boolean {
                         </button>
                     </div>
 
-                    <p class="text-xs text-gray-400 mb-4">
+                    <p class="text-xs text-gray-400 mb-3">
                         Selecione quais status de pedido devem contar como <strong class="text-white">receita</strong>.
                         Inclua status personalizados do plugin <strong class="text-purple-400">Woo Order Status</strong> ou similar.
                     </p>
 
-                    <div v-if="wcStatusEditLoading" class="flex items-center justify-center gap-2 py-8">
+                    <!-- Botão Sincronizar Status -->
+                    <div class="flex items-center justify-between mb-3 p-2.5 bg-gray-800/50 rounded-xl border border-gray-700/50">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                            <div>
+                                <p class="text-xs text-white font-medium">Status da Loja</p>
+                                <p class="text-[10px] text-gray-500">
+                                    <template v-if="wcStatusEditLoading">Buscando...</template>
+                                    <template v-else-if="wcStatusEditAvailable.length > 0">{{ wcStatusEditAvailable.length }} status encontrados</template>
+                                    <template v-else>Clique para buscar os status</template>
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            @click="refreshWcEditStatuses"
+                            :disabled="wcStatusEditLoading"
+                            class="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30 disabled:opacity-50 rounded-lg text-xs transition border border-indigo-500/20"
+                        >
+                            <svg :class="['w-3.5 h-3.5', { 'animate-spin': wcStatusEditLoading }]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                            {{ wcStatusEditLoading ? 'Sincronizando...' : 'Sincronizar Status' }}
+                        </button>
+                    </div>
+
+                    <!-- Loading state -->
+                    <div v-if="wcStatusEditLoading && wcStatusEditAvailable.length === 0" class="flex items-center justify-center gap-2 py-6">
                         <svg class="w-5 h-5 animate-spin text-purple-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                         <span class="text-sm text-gray-400">Buscando status da loja...</span>
                     </div>
 
-                    <div v-else class="space-y-1.5 max-h-64 overflow-y-auto pr-1 mb-4">
+                    <!-- Lista de status -->
+                    <div v-else-if="wcStatusEditAvailable.length > 0" class="space-y-1.5 max-h-52 overflow-y-auto pr-1 mb-3">
                         <label
                             v-for="st in wcStatusEditAvailable"
                             :key="st.slug"
-                            class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition"
+                            class="flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition"
                             :class="wcStatusEditStatuses.includes(st.slug) ? 'bg-purple-500/10 border border-purple-500/30' : 'bg-gray-800/50 border border-gray-700/50 hover:border-gray-600'"
                         >
                             <input
                                 type="checkbox"
                                 :checked="wcStatusEditStatuses.includes(st.slug)"
                                 @change="toggleWcStatusEdit(st.slug)"
-                                class="rounded border-gray-600 bg-gray-700 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 w-4 h-4"
+                                class="rounded border-gray-600 bg-gray-700 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 w-3.5 h-3.5"
                             />
                             <div class="flex-1 min-w-0 flex items-center gap-2">
-                                <span class="text-sm text-white">{{ st.name }}</span>
+                                <span class="text-xs text-white">{{ st.name }}</span>
                                 <span class="text-[10px] text-gray-500 font-mono bg-gray-800 px-1.5 py-0.5 rounded">{{ st.slug }}</span>
                             </div>
-                            <span v-if="st.total !== undefined" class="text-xs text-gray-500">{{ st.total }}</span>
+                            <span v-if="st.total !== undefined && st.total > 0" class="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{{ st.total }}</span>
                         </label>
+                    </div>
 
-                        <!-- Campo para adicionar status manual (caso o plugin não exponha via API) -->
-                        <div class="mt-3 pt-3 border-t border-gray-800">
-                            <label class="block text-[11px] text-gray-500 mb-1.5">Adicionar status personalizado manualmente</label>
-                            <div class="flex gap-2">
-                                <input
-                                    ref="customStatusInput"
-                                    type="text"
-                                    placeholder="ex: pagamento-aprovado"
-                                    class="flex-1 bg-gray-800 border border-gray-700 text-white text-xs rounded-lg px-3 py-1.5 focus:ring-purple-500 focus:border-purple-500 font-mono"
-                                    @keydown.enter.prevent="addCustomStatus"
-                                />
-                                <button type="button" @click="addCustomStatus" class="px-3 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 rounded-lg text-xs transition border border-purple-500/20">
-                                    Adicionar
-                                </button>
-                            </div>
+                    <!-- Empty state -->
+                    <div v-else class="text-center py-6 mb-3">
+                        <svg class="w-8 h-8 mx-auto text-gray-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        <p class="text-xs text-gray-500">Clique em <strong class="text-indigo-400">Sincronizar Status</strong> para buscar os status disponíveis na loja</p>
+                    </div>
+
+                    <!-- Campo para adicionar status manual -->
+                    <div class="mb-3 p-2.5 bg-gray-800/30 rounded-xl border border-gray-700/30">
+                        <label class="block text-[11px] text-gray-500 mb-1.5">Adicionar status personalizado manualmente</label>
+                        <div class="flex gap-2">
+                            <input
+                                type="text"
+                                placeholder="ex: pagamento-aprovado"
+                                class="flex-1 bg-gray-800 border border-gray-700 text-white text-xs rounded-lg px-3 py-1.5 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                                @keydown.enter.prevent="addCustomStatus"
+                            />
+                            <button type="button" @click="addCustomStatus" class="px-3 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 rounded-lg text-xs transition border border-purple-500/20 whitespace-nowrap">
+                                + Adicionar
+                            </button>
                         </div>
                     </div>
 
