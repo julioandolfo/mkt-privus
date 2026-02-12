@@ -41,6 +41,8 @@ class ContentCalendarService
         $aiModel = $options['ai_model'] ?? 'gemini-2.0-flash';
         $extraInstructions = $options['instructions'] ?? '';
         $batchStatus = $options['batch_status'] ?? null; // 'draft' para geracao automatica, null para manual
+        $formatMode = $options['format_mode'] ?? 'auto'; // 'auto' ou 'manual'
+        $postTypes = $options['post_types'] ?? []; // formatos selecionados no modo manual
 
         $start = Carbon::parse($startDate);
         $end = Carbon::parse($endDate);
@@ -70,10 +72,20 @@ class ContentCalendarService
         $platformsStr = implode(', ', $platforms);
         $categoriesStr = !empty($categories) ? implode(', ', $categories) : 'dica, novidade, bastidores, promocao, educativo, inspiracional, engajamento, produto, institucional, depoimento, lancamento, tendencia';
 
+        // Preparar instrucao de formato de conteudo
+        $formatInstruction = '';
+        if ($formatMode === 'manual' && !empty($postTypes)) {
+            $typesStr = implode(', ', $postTypes);
+            $formatInstruction = "IMPORTANTE: Use SOMENTE os seguintes formatos de conteudo: {$typesStr}. Distribua os posts de forma equilibrada entre esses formatos.";
+        } else {
+            $formatInstruction = "Escolha automaticamente o melhor formato de conteudo (feed, carousel, reel, story, video, pin) para cada post, baseado nos dados de performance e na estrategia. Priorize formatos com melhor engajamento historico.";
+        }
+
         $prompt = $this->buildCalendarPrompt(
             $brandContext, $start->format('Y-m-d'), $end->format('Y-m-d'),
             $totalPosts, $platformsStr, $categoriesStr, $tone,
-            $recentPosts, $existingItems, $extraInstructions, $intelligenceReport
+            $recentPosts, $existingItems, $extraInstructions, $intelligenceReport,
+            $formatInstruction
         );
 
         $batchId = uniqid('cal_');
@@ -291,7 +303,8 @@ class ContentCalendarService
         string $brandContext, string $startDate, string $endDate,
         int $totalPosts, string $platforms, string $categories,
         string $tone, string $recentPosts, array $existingDates,
-        string $extraInstructions, string $intelligenceReport = ''
+        string $extraInstructions, string $intelligenceReport = '',
+        string $formatInstruction = ''
     ): string {
         $existingStr = !empty($existingDates)
             ? "DATAS JA OCUPADAS (nao agende nestas): " . implode(', ', $existingDates)
@@ -337,12 +350,14 @@ Sua tarefa e criar um calendario de conteudo completo e estrategico, baseado em 
 ## Instrucoes adicionais:
 {$extraInstructions}
 
+## Formato de conteudo:
+{$formatInstruction}
+
 ## Regras do calendario:
 - Distribua os posts de forma equilibrada ao longo do periodo (nao acumule tudo em poucos dias)
 - Varie as categorias para manter o feed diversificado
 - Considere datas comemorativas e sazonalidade
 - Cada item deve ter um titulo claro e descricao da pauta
-- Alterne entre tipos de post (feed, carousel, reel, story)
 - Priorize dias uteis, mas inclua finais de semana quando fizer sentido
 - Nao agende mais de 2 posts no mesmo dia
 - Use os dados de performance fornecidos para tomar decisoes mais inteligentes

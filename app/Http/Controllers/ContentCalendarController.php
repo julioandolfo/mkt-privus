@@ -92,6 +92,9 @@ class ContentCalendarController extends Controller
             'tone' => 'nullable|string|max:100',
             'ai_model' => 'nullable|string',
             'instructions' => 'nullable|string|max:2000',
+            'format_mode' => 'nullable|string|in:auto,manual',
+            'post_types' => 'nullable|array',
+            'post_types.*' => 'string|in:feed,carousel,story,reel,video,pin',
         ]);
 
         $result = $this->calendarService->generateCalendar(

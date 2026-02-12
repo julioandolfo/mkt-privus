@@ -468,6 +468,41 @@ class PostController extends Controller
             ->with('success', 'Post duplicado! Edite a cópia.');
     }
 
+    /**
+     * Reagenda (move) um post para outra data via drag-and-drop no calendario.
+     */
+    public function reschedule(Request $request, Post $post): JsonResponse
+    {
+        $this->authorizePost($request, $post);
+
+        // Nao permitir mover posts ja publicados
+        if ($post->status === PostStatus::Published) {
+            return response()->json(['error' => 'Posts ja publicados nao podem ser movidos.'], 422);
+        }
+
+        $validated = $request->validate([
+            'date' => 'required|date',
+        ]);
+
+        // Manter o horario original, so alterar a data
+        $oldDate = $post->scheduled_at ?? $post->created_at;
+        $newDate = \Carbon\Carbon::parse($validated['date'])->setTime(
+            $oldDate->hour,
+            $oldDate->minute,
+            $oldDate->second
+        );
+
+        $post->update([
+            'scheduled_at' => $newDate,
+            'status' => $post->status === PostStatus::Draft ? PostStatus::Scheduled->value : $post->status->value,
+        ]);
+
+        return response()->json([
+            'message' => 'Post reagendado para ' . $newDate->format('d/m/Y') . '.',
+            'new_date' => $newDate->format('Y-m-d'),
+        ]);
+    }
+
     // ===== PRIVATE METHODS =====
 
     private function authorizePost(Request $request, Post $post): void

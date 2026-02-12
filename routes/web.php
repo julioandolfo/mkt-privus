@@ -114,6 +114,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::put('/{post}', [PostController::class, 'update'])->name('update');
             Route::delete('/{post}', [PostController::class, 'destroy'])->name('destroy');
             Route::post('/{post}/duplicate', [PostController::class, 'duplicate'])->name('duplicate');
+            Route::post('/{post}/reschedule', [PostController::class, 'reschedule'])->name('reschedule');
         });
 
         // Geracao de conteudo com IA

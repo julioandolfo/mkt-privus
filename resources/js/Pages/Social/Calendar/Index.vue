@@ -74,6 +74,8 @@ const generateForm = ref({
     tone: '',
     ai_model: 'gemini-2.0-flash',
     instructions: '',
+    format_mode: 'auto' as 'auto' | 'manual',
+    post_types: [] as string[],
 });
 
 // Selected item for edit
@@ -242,6 +244,8 @@ function openGenerateModal() {
     generateForm.value.tone = '';
     generateForm.value.instructions = '';
     generateForm.value.categories = [];
+    generateForm.value.format_mode = 'auto';
+    generateForm.value.post_types = [];
     generateResult.value = null;
     showGenerateModal.value = true;
 }
@@ -340,6 +344,12 @@ function toggleCategory(cat: string) {
     else generateForm.value.categories.push(cat);
 }
 
+function togglePostType(pt: string) {
+    const idx = generateForm.value.post_types.indexOf(pt);
+    if (idx >= 0) generateForm.value.post_types.splice(idx, 1);
+    else generateForm.value.post_types.push(pt);
+}
+
 function getPlatformDots(platforms: string[]): Array<{ color: string }> {
     return (platforms || []).slice(0, 3).map(p => ({ color: platformColors[p] || '#6B7280' }));
 }
@@ -394,10 +404,83 @@ async function approveItem(itemId: number) {
     }
 }
 
+// ===== DRAG AND DROP =====
+const dragData = ref<{ type: 'post' | 'item'; id: number; status: string; dateStr: string } | null>(null);
+const dropTargetDate = ref<string | null>(null);
+const dragging = ref(false);
+
+function canDragPost(post: CalendarPost): boolean {
+    return post.status !== 'published';
+}
+
+function canDragItem(item: CalendarItem): boolean {
+    return item.status === 'pending';
+}
+
+function onDragStartPost(event: DragEvent, post: CalendarPost) {
+    if (!canDragPost(post)) { event.preventDefault(); return; }
+    dragData.value = { type: 'post', id: post.id, status: post.status, dateStr: post.date };
+    dragging.value = true;
+    if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', JSON.stringify(dragData.value));
+    }
+}
+
+function onDragStartItem(event: DragEvent, item: CalendarItem) {
+    if (!canDragItem(item)) { event.preventDefault(); return; }
+    dragData.value = { type: 'item', id: item.id, status: item.status, dateStr: item.date };
+    dragging.value = true;
+    if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', JSON.stringify(dragData.value));
+    }
+}
+
+function onDragEnd() {
+    dragData.value = null;
+    dropTargetDate.value = null;
+    dragging.value = false;
+}
+
+function onDragOverDay(event: DragEvent, dateStr: string) {
+    if (!dragData.value) return;
+    if (dragData.value.dateStr === dateStr) return; // mesma data
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    dropTargetDate.value = dateStr;
+}
+
+function onDragLeaveDay() {
+    dropTargetDate.value = null;
+}
+
+async function onDropDay(event: DragEvent, dateStr: string) {
+    event.preventDefault();
+    dropTargetDate.value = null;
+    if (!dragData.value) return;
+    if (dragData.value.dateStr === dateStr) { onDragEnd(); return; } // mesma data
+
+    const { type, id } = dragData.value;
+    onDragEnd();
+
+    try {
+        if (type === 'post') {
+            await axios.post(route('social.posts.reschedule', id), { date: dateStr });
+        } else {
+            await axios.put(route('social.calendar.content.update', id), { scheduled_date: dateStr });
+        }
+        await fetchCalendarData();
+    } catch (e: any) {
+        alert(e.response?.data?.error || 'Erro ao mover item.');
+    }
+}
+
 const calendarGuideSteps = [
     { title: 'Calendario inteligente', description: 'A IA gera um calendario editorial completo analisando suas redes sociais, analytics, e-commerce e historico de conteudo.' },
     { title: 'Geracao automatica', description: 'No dia 25 de cada mes, o sistema gera automaticamente um calendario para o mes seguinte. Pautas aparecem como "Proposta IA" para sua aprovacao.' },
     { title: 'Gere manualmente', description: 'Voce tambem pode clicar em "Gerar Calendario com IA" para criar pautas sob demanda para qualquer periodo.' },
+    { title: 'Arraste para reorganizar', description: 'Arraste posts e pautas entre datas para reorganizar o calendario. Posts publicados nao podem ser movidos.' },
     { title: 'Aprove e publique', description: 'Revise as pautas, edite se necessario, e aprove. Pautas aprovadas viram posts automaticamente com legendas e hashtags.' },
 ];
 
@@ -511,10 +594,14 @@ onMounted(fetchCalendarData);
 
                 <div class="grid grid-cols-7" :class="loading ? 'opacity-50' : ''">
                     <div v-for="(day, index) in calendarDays" :key="index"
+                        @dragover="onDragOverDay($event, day.dateStr)"
+                        @dragleave="onDragLeaveDay"
+                        @drop="onDropDay($event, day.dateStr)"
                         :class="['min-h-[110px] border-b border-r border-gray-800 p-1.5 transition-colors',
                             day.isCurrentMonth ? 'bg-gray-900' : 'bg-gray-950',
                             day.isToday ? 'bg-indigo-950/30' : '',
-                            (index + 1) % 7 === 0 ? 'border-r-0' : '']">
+                            (index + 1) % 7 === 0 ? 'border-r-0' : '',
+                            dropTargetDate === day.dateStr ? 'bg-indigo-900/40 ring-2 ring-inset ring-indigo-500/50' : '']">
 
                         <div class="flex items-center justify-between mb-1">
                             <span :class="['text-sm font-medium', day.isToday ? 'flex items-center justify-center w-6 h-6 rounded-full bg-indigo-600 text-white text-xs' : '', day.isCurrentMonth ? (day.isToday ? '' : 'text-gray-300') : 'text-gray-600']">
@@ -525,15 +612,19 @@ onMounted(fetchCalendarData);
                         <!-- Posts (tab posts) -->
                         <template v-if="activeTab === 'posts'">
                             <div class="space-y-0.5">
-                                <Link v-for="post in getPostsForDate(day.dateStr).slice(0, 3)" :key="'post-' + post.id"
-                                    :href="route('social.posts.edit', post.id)"
-                                    class="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] truncate hover:bg-gray-800 transition group">
+                                <div v-for="post in getPostsForDate(day.dateStr).slice(0, 3)" :key="'post-' + post.id"
+                                    :draggable="canDragPost(post)"
+                                    @dragstart="onDragStartPost($event, post)"
+                                    @dragend="onDragEnd"
+                                    :class="['flex items-center gap-1 rounded px-1 py-0.5 text-[10px] truncate hover:bg-gray-800 transition group',
+                                        canDragPost(post) ? 'cursor-grab active:cursor-grabbing' : '',
+                                        dragging && dragData?.id === post.id && dragData?.type === 'post' ? 'opacity-40' : '']">
                                     <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="{ backgroundColor: statusDotColors[post.status_color] || '#6B7280' }" />
-                                    <span class="truncate text-gray-400 group-hover:text-gray-200">{{ post.time }} {{ post.title }}</span>
+                                    <Link :href="route('social.posts.edit', post.id)" class="truncate text-gray-400 group-hover:text-gray-200" @click.stop>{{ post.time }} {{ post.title }}</Link>
                                     <span class="flex items-center gap-0.5 ml-auto shrink-0">
                                         <span v-for="(dot, di) in getPlatformDots(post.platforms)" :key="di" class="w-1 h-1 rounded-full" :style="{ backgroundColor: dot.color }" />
                                     </span>
-                                </Link>
+                                </div>
                                 <span v-if="getPostsForDate(day.dateStr).length > 3" class="text-[9px] text-gray-600 px-1">+{{ getPostsForDate(day.dateStr).length - 3 }}</span>
                             </div>
                         </template>
@@ -542,9 +633,14 @@ onMounted(fetchCalendarData);
                         <template v-if="activeTab === 'content'">
                             <div class="space-y-0.5">
                                 <button v-for="item in getItemsForDate(day.dateStr).slice(0, 3)" :key="'item-' + item.id"
+                                    :draggable="canDragItem(item)"
+                                    @dragstart="onDragStartItem($event, item)"
+                                    @dragend="onDragEnd"
                                     @click="openEditItem(item)"
                                     :class="['flex items-center gap-1 rounded px-1 py-0.5 text-[10px] truncate transition group w-full text-left',
-                                        item.batch_status === 'draft' ? 'border border-dashed border-amber-700/50 bg-amber-950/20 hover:bg-amber-950/40' : 'hover:bg-gray-800']">
+                                        item.batch_status === 'draft' ? 'border border-dashed border-amber-700/50 bg-amber-950/20 hover:bg-amber-950/40' : 'hover:bg-gray-800',
+                                        canDragItem(item) ? 'cursor-grab active:cursor-grabbing' : '',
+                                        dragging && dragData?.id === item.id && dragData?.type === 'item' ? 'opacity-40' : '']">
                                     <span v-if="item.batch_status === 'draft'" class="w-1.5 h-1.5 rounded shrink-0 bg-amber-500 animate-pulse" />
                                     <span v-else class="w-1.5 h-1.5 rounded-full shrink-0" :style="{ backgroundColor: statusDotColors[item.status_color] || '#F59E0B' }" />
                                     <span :class="['truncate group-hover:text-gray-200', item.batch_status === 'draft' ? 'text-amber-400/80' : 'text-gray-400']">{{ item.title }}</span>
@@ -561,6 +657,11 @@ onMounted(fetchCalendarData);
 
             <!-- Legend -->
             <div class="mt-4 flex flex-wrap items-center gap-4 text-xs text-gray-500">
+                <span class="flex items-center gap-1.5 text-gray-400">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11" /></svg>
+                    Arraste para mover
+                </span>
+                <span class="text-gray-700">|</span>
                 <template v-if="activeTab === 'posts'">
                     <span class="font-medium text-gray-400">Status:</span>
                     <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-gray-500" /> Rascunho</span>
@@ -664,6 +765,38 @@ onMounted(fetchCalendarData);
                             </div>
                         </div>
 
+                        <!-- Formato de conteudo -->
+                        <div>
+                            <label class="text-xs text-gray-400 mb-2 block">Formato de conteudo</label>
+                            <div class="flex items-center gap-2 mb-3">
+                                <button @click="generateForm.format_mode = 'auto'; generateForm.post_types = [];"
+                                    :class="['rounded-xl px-4 py-2 text-sm font-medium border transition flex items-center gap-2',
+                                        generateForm.format_mode === 'auto' ? 'border-violet-500 bg-violet-500/20 text-violet-300' : 'border-gray-700 text-gray-500 hover:text-white']">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
+                                    Automatico
+                                </button>
+                                <button @click="generateForm.format_mode = 'manual'"
+                                    :class="['rounded-xl px-4 py-2 text-sm font-medium border transition flex items-center gap-2',
+                                        generateForm.format_mode === 'manual' ? 'border-indigo-500 bg-indigo-500/20 text-indigo-300' : 'border-gray-700 text-gray-500 hover:text-white']">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" /></svg>
+                                    Manual
+                                </button>
+                            </div>
+                            <p v-if="generateForm.format_mode === 'auto'" class="text-[11px] text-gray-500 mb-2">A IA escolhera o melhor formato (Feed, Carousel, Reel, Story...) para cada post com base na estrategia e dados de performance.</p>
+                            <div v-if="generateForm.format_mode === 'manual'" class="space-y-2">
+                                <p class="text-[11px] text-gray-500">Selecione os formatos desejados. A IA distribuira os posts entre eles.</p>
+                                <div class="flex flex-wrap gap-2">
+                                    <button v-for="(label, value) in postTypeLabels" :key="value"
+                                        @click="togglePostType(value)"
+                                        :class="['rounded-lg px-3 py-1.5 text-xs font-medium border transition',
+                                            generateForm.post_types.includes(value) ? 'border-indigo-500 bg-indigo-500/20 text-indigo-300' : 'border-gray-700 text-gray-500 hover:text-white']">
+                                        {{ label }}
+                                    </button>
+                                </div>
+                                <p v-if="generateForm.format_mode === 'manual' && generateForm.post_types.length === 0" class="text-[11px] text-amber-400">Selecione pelo menos um formato ou use o modo automatico.</p>
+                            </div>
+                        </div>
+
                         <!-- Tom e modelo IA -->
                         <div class="grid grid-cols-2 gap-3">
                             <div>
@@ -723,7 +856,7 @@ onMounted(fetchCalendarData);
                         </div>
                         <div>
                             <label class="text-xs text-gray-400 mb-1 block">Descricao / Briefing</label>
-                            <textarea v-model="editForm.description" rows="3" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white resize-none" :disabled="selectedItem.status !== 'pending'" />
+                            <textarea v-model="editForm.description" rows="6" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white resize-y" :disabled="selectedItem.status !== 'pending'" />
                         </div>
                         <div class="grid grid-cols-2 gap-3">
                             <div>
@@ -749,7 +882,7 @@ onMounted(fetchCalendarData);
                         </div>
                         <div>
                             <label class="text-xs text-gray-400 mb-1 block">Instrucoes extras</label>
-                            <textarea v-model="editForm.instructions" rows="2" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white resize-none" :disabled="selectedItem.status !== 'pending'" />
+                            <textarea v-model="editForm.instructions" rows="4" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white resize-y" :disabled="selectedItem.status !== 'pending'" />
                         </div>
                     </div>
 
