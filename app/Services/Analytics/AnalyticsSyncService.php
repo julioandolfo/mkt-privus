@@ -32,11 +32,11 @@ class AnalyticsSyncService
     }
 
     /**
-     * Sincroniza todas as conexões ativas de uma marca
+     * Sincroniza todas as conexões ativas de uma marca (ou todas se brandId = null)
      */
-    public function syncBrand(int $brandId, ?string $startDate = null, ?string $endDate = null): array
+    public function syncBrand(?int $brandId, ?string $startDate = null, ?string $endDate = null): array
     {
-        $connections = AnalyticsConnection::where('brand_id', $brandId)
+        $connections = AnalyticsConnection::when($brandId, fn($q) => $q->where('brand_id', $brandId))
             ->where('is_active', true)
             ->get();
 
@@ -68,34 +68,39 @@ class AnalyticsSyncService
     }
 
     /**
-     * Reconstrói os sumários diários para uma marca num período
+     * Reconstrói os sumários diários para uma marca num período (ou globais se brandId = null)
      */
-    public function rebuildDailySummaries(int $brandId, string $startDate, string $endDate): void
+    public function rebuildDailySummaries(?int $brandId, string $startDate, string $endDate): void
     {
         $start = Carbon::parse($startDate);
         $end = Carbon::parse($endDate);
 
         // Pre-carregar manual entries do periodo para performance
-        $manualEntries = ManualAdEntry::forBrandPeriod($brandId, $startDate, $endDate)->get();
+        $manualEntries = ManualAdEntry::when($brandId, fn($q) => $q->where('brand_id', $brandId))
+            ->where(function ($q) use ($startDate, $endDate) {
+                $q->where('date_start', '<=', $endDate)
+                  ->where('date_end', '>=', $startDate);
+            })
+            ->get();
 
         for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
             $dateStr = $date->format('Y-m-d');
 
-            $gaData = AnalyticsDataPoint::where('brand_id', $brandId)
+            $gaData = AnalyticsDataPoint::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('platform', 'google_analytics')
                 ->where('date', $dateStr)
                 ->whereNull('dimension_key')
                 ->get()
                 ->keyBy('metric_key');
 
-            $adData = AnalyticsDataPoint::where('brand_id', $brandId)
+            $adData = AnalyticsDataPoint::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->whereIn('platform', ['meta_ads', 'google_ads'])
                 ->where('date', $dateStr)
                 ->whereNull('dimension_key')
                 ->get();
 
             // Dados de custo do Google Ads via GA4 (quando Ads está vinculado ao GA4)
-            $ga4AdData = AnalyticsDataPoint::where('brand_id', $brandId)
+            $ga4AdData = AnalyticsDataPoint::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('platform', 'google_analytics')
                 ->where('date', $dateStr)
                 ->whereNull('dimension_key')
@@ -103,14 +108,14 @@ class AnalyticsSyncService
                 ->get()
                 ->keyBy('metric_key');
 
-            $scData = AnalyticsDataPoint::where('brand_id', $brandId)
+            $scData = AnalyticsDataPoint::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('platform', 'google_search_console')
                 ->where('date', $dateStr)
                 ->whereNull('dimension_key')
                 ->get()
                 ->keyBy('metric_key');
 
-            $wcData = AnalyticsDataPoint::where('brand_id', $brandId)
+            $wcData = AnalyticsDataPoint::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('platform', 'woocommerce')
                 ->where('date', $dateStr)
                 ->whereNull('dimension_key')
@@ -220,12 +225,12 @@ class AnalyticsSyncService
     }
 
     /**
-     * Retorna dados do dashboard para uma marca
+     * Retorna dados do dashboard para uma marca (ou global se brandId = null)
      */
-    public function getDashboardData(int $brandId, string $startDate, string $endDate, ?string $compareStartDate = null, ?string $compareEndDate = null): array
+    public function getDashboardData(?int $brandId, string $startDate, string $endDate, ?string $compareStartDate = null, ?string $compareEndDate = null): array
     {
         // Período principal
-        $summaries = AnalyticsDailySummary::where('brand_id', $brandId)
+        $summaries = AnalyticsDailySummary::when($brandId, fn($q) => $q->where('brand_id', $brandId))
             ->whereBetween('date', [$startDate, $endDate])
             ->orderBy('date')
             ->get();
@@ -233,7 +238,7 @@ class AnalyticsSyncService
         // Período de comparação
         $compareSummaries = null;
         if ($compareStartDate && $compareEndDate) {
-            $compareSummaries = AnalyticsDailySummary::where('brand_id', $brandId)
+            $compareSummaries = AnalyticsDailySummary::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->whereBetween('date', [$compareStartDate, $compareEndDate])
                 ->orderBy('date')
                 ->get();
@@ -249,7 +254,7 @@ class AnalyticsSyncService
         $topDimensions = $this->getTopDimensions($brandId, $startDate, $endDate);
 
         // Conexões ativas
-        $connections = AnalyticsConnection::where('brand_id', $brandId)
+        $connections = AnalyticsConnection::when($brandId, fn($q) => $q->where('brand_id', $brandId))
             ->where('is_active', true)
             ->get(['id', 'platform', 'name', 'last_synced_at', 'sync_status', 'sync_error']);
 
@@ -357,12 +362,14 @@ class AnalyticsSyncService
     /**
      * Busca top dimensões (sources, pages, queries, devices)
      */
-    protected function getTopDimensions(int $brandId, string $startDate, string $endDate): array
+    protected function getTopDimensions(?int $brandId, string $startDate, string $endDate): array
     {
         $endDate = Carbon::parse($endDate)->format('Y-m-d');
 
+        $scope = fn($query) => $brandId ? $query->where('brand_id', $brandId) : $query;
+
         return [
-            'sources' => AnalyticsDataPoint::where('brand_id', $brandId)
+            'sources' => $scope(AnalyticsDataPoint::query())
                 ->where('platform', 'google_analytics')
                 ->where('dimension_key', 'source')
                 ->where('date', $endDate)
@@ -370,7 +377,7 @@ class AnalyticsSyncService
                 ->limit(10)
                 ->get(['dimension_value as name', 'value', 'extra'])
                 ->toArray(),
-            'mediums' => AnalyticsDataPoint::where('brand_id', $brandId)
+            'mediums' => $scope(AnalyticsDataPoint::query())
                 ->where('platform', 'google_analytics')
                 ->where('dimension_key', 'medium')
                 ->where('date', $endDate)
@@ -378,7 +385,7 @@ class AnalyticsSyncService
                 ->limit(10)
                 ->get(['dimension_value as name', 'value', 'extra'])
                 ->toArray(),
-            'pages' => AnalyticsDataPoint::where('brand_id', $brandId)
+            'pages' => $scope(AnalyticsDataPoint::query())
                 ->where('platform', 'google_analytics')
                 ->where('dimension_key', 'page')
                 ->where('date', $endDate)
@@ -386,7 +393,7 @@ class AnalyticsSyncService
                 ->limit(10)
                 ->get(['dimension_value as name', 'value', 'extra'])
                 ->toArray(),
-            'devices' => AnalyticsDataPoint::where('brand_id', $brandId)
+            'devices' => $scope(AnalyticsDataPoint::query())
                 ->where('platform', 'google_analytics')
                 ->where('dimension_key', 'device')
                 ->where('date', $endDate)
@@ -394,7 +401,7 @@ class AnalyticsSyncService
                 ->limit(10)
                 ->get(['dimension_value as name', 'value', 'extra'])
                 ->toArray(),
-            'queries' => AnalyticsDataPoint::where('brand_id', $brandId)
+            'queries' => $scope(AnalyticsDataPoint::query())
                 ->where('platform', 'google_search_console')
                 ->where('dimension_key', 'query')
                 ->where('date', $endDate)
@@ -402,7 +409,7 @@ class AnalyticsSyncService
                 ->limit(15)
                 ->get(['dimension_value as name', 'value', 'extra'])
                 ->toArray(),
-            'campaigns' => AnalyticsDataPoint::where('brand_id', $brandId)
+            'campaigns' => $scope(AnalyticsDataPoint::query())
                 ->whereIn('platform', ['google_ads', 'meta_ads', 'google_analytics'])
                 ->where('dimension_key', 'campaign')
                 ->whereIn('metric_key', ['spend', 'ga4_ad_cost'])
@@ -411,7 +418,7 @@ class AnalyticsSyncService
                 ->limit(10)
                 ->get(['dimension_value as name', 'value', 'platform', 'extra'])
                 ->toArray(),
-            'products' => AnalyticsDataPoint::where('brand_id', $brandId)
+            'products' => $scope(AnalyticsDataPoint::query())
                 ->where('platform', 'woocommerce')
                 ->where('dimension_key', 'product')
                 ->where('metric_key', 'wc_product_revenue')

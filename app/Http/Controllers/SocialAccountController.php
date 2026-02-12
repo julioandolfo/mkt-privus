@@ -22,8 +22,8 @@ class SocialAccountController extends Controller
         $brand = $request->user()->getActiveBrand();
         $accounts = [];
 
-        if ($brand) {
-            $accounts = $brand->socialAccounts()
+        {
+            $accounts = SocialAccount::when($brand, fn($q) => $q->where('brand_id', $brand->id))
                 ->orderBy('platform')
                 ->get()
                 ->map(function ($acc) {
@@ -85,6 +85,7 @@ class SocialAccountController extends Controller
                         'metadata' => $acc->metadata,
                         'created_at' => $acc->created_at->format('d/m/Y'),
                         'insights' => $insightData,
+                        'brand_id' => $acc->brand_id,
                     ];
                 });
         }
@@ -149,10 +150,6 @@ class SocialAccountController extends Controller
     {
         $brand = $request->user()->getActiveBrand();
 
-        if (!$brand) {
-            return redirect()->back()->withErrors(['brand' => 'Selecione uma marca ativa.']);
-        }
-
         $validated = $request->validate([
             'platform' => 'required|string',
             'username' => 'required|string|max:255',
@@ -163,9 +160,8 @@ class SocialAccountController extends Controller
             'token_expires_at' => 'nullable|date',
         ]);
 
-        // Verificar se a conta ja existe para esta marca/plataforma/username
-        $exists = SocialAccount::where('brand_id', $brand->id)
-            ->where('platform', $validated['platform'])
+        // Verificar se a conta ja existe para esta plataforma/username
+        $exists = SocialAccount::where('platform', $validated['platform'])
             ->where('username', $validated['username'])
             ->exists();
 
@@ -176,7 +172,7 @@ class SocialAccountController extends Controller
         }
 
         SocialAccount::create([
-            'brand_id' => $brand->id,
+            'brand_id' => $brand?->id,
             'platform' => $validated['platform'],
             'username' => $validated['username'],
             'display_name' => $validated['display_name'] ?? $validated['username'],

@@ -33,6 +33,7 @@ const props = defineProps<{
     hasBrand: boolean;
     brand?: any;
     brands?: any[];
+    brandFilter?: string;
     dashboardData?: {
         kpis: KPI[];
         charts: {
@@ -55,6 +56,7 @@ const props = defineProps<{
 }>();
 
 const activeTab = ref('overview');
+const activeBrandFilter = ref(props.brandFilter || 'all');
 const datePreset = ref(props.filters?.preset || 'this_month');
 const startDate = ref(props.filters?.start_date || '');
 const endDate = ref(props.filters?.end_date || '');
@@ -114,6 +116,7 @@ function applyPreset(preset: string) {
         end_date: endDate.value,
         preset: preset,
         compare: showCompare.value ? 'true' : 'false',
+        brand_id: activeBrandFilter.value,
     }, { preserveState: true, preserveScroll: true });
 }
 
@@ -124,6 +127,18 @@ function applyCustomDates() {
         end_date: endDate.value,
         preset: 'custom',
         compare: showCompare.value ? 'true' : 'false',
+        brand_id: activeBrandFilter.value,
+    }, { preserveState: true, preserveScroll: true });
+}
+
+function changeBrandFilter(brandId: string) {
+    activeBrandFilter.value = brandId;
+    router.get(route('analytics.index'), {
+        start_date: startDate.value,
+        end_date: endDate.value,
+        preset: datePreset.value,
+        compare: showCompare.value ? 'true' : 'false',
+        brand_id: brandId,
     }, { preserveState: true, preserveScroll: true });
 }
 
@@ -303,6 +318,17 @@ const chartData = computed(() => {
                 <!-- Filters -->
                 <div class="bg-gray-900/50 rounded-2xl border border-gray-800 p-4">
                     <div class="flex flex-wrap items-center gap-3">
+                        <!-- Brand filter -->
+                        <select v-if="brands && brands.length > 0"
+                            :value="activeBrandFilter"
+                            @change="changeBrandFilter(($event.target as HTMLSelectElement).value)"
+                            class="rounded-xl bg-gray-800 border border-gray-700 text-sm text-white px-3 py-1.5 focus:border-indigo-500 focus:ring-indigo-500 min-w-[150px]">
+                            <option value="all">Todas as Empresas</option>
+                            <option v-for="b in brands" :key="b.id" :value="String(b.id)">{{ b.name }}</option>
+                        </select>
+
+                        <div class="w-px h-6 bg-gray-700" />
+
                         <!-- Presets -->
                         <div class="flex items-center gap-1 bg-gray-800/50 rounded-xl p-1">
                             <button

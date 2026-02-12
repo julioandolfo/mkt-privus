@@ -37,15 +37,15 @@ class AnalyticsController extends Controller
      */
     public function index(Request $request)
     {
-        $brandId = $request->get('brand_id') ?? session('active_brand_id');
-        $brand = $brandId ? Brand::find($brandId) : Brand::first();
+        $brandFilter = $request->get('brand_id', 'all');
+        $brands = Brand::orderBy('name')->get(['id', 'name']);
 
-        if (!$brand) {
-            return Inertia::render('Analytics/Index', [
-                'hasBrand' => false,
-                'dashboardData' => null,
-                'connections' => [],
-            ]);
+        if ($brandFilter === 'all' || $brandFilter === null) {
+            $brandId = null;
+            $brand = null;
+        } else {
+            $brand = Brand::find($brandFilter);
+            $brandId = $brand?->id;
         }
 
         // Período de datas
@@ -72,10 +72,10 @@ class AnalyticsController extends Controller
         }
 
         $dashboardData = $this->syncService->getDashboardData(
-            $brand->id, $startDate, $endDate, $compareStartDate, $compareEndDate
+            $brandId, $startDate, $endDate, $compareStartDate, $compareEndDate
         );
 
-        $connections = AnalyticsConnection::where('brand_id', $brand->id)
+        $connections = AnalyticsConnection::when($brandId, fn($q) => $q->where('brand_id', $brandId))
             ->get()
             ->map(fn($c) => [
                 'id' => $c->id,
@@ -91,14 +91,15 @@ class AnalyticsController extends Controller
                 'last_synced_at' => $c->last_synced_at?->diffForHumans(),
                 'last_synced_at_raw' => $c->last_synced_at?->toDateTimeString(),
                 'created_at' => $c->created_at->format('d/m/Y'),
+                'brand_id' => $c->brand_id,
+                'brand_name' => $c->brand?->name,
             ]);
-
-        $brands = Brand::orderBy('name')->get(['id', 'name']);
 
         return Inertia::render('Analytics/Index', [
             'hasBrand' => true,
             'brand' => $brand,
             'brands' => $brands,
+            'brandFilter' => $brandFilter,
             'dashboardData' => $dashboardData,
             'connections' => $connections,
             'filters' => [
@@ -115,11 +116,17 @@ class AnalyticsController extends Controller
      */
     public function connections(Request $request)
     {
-        $brandId = $request->get('brand_id') ?? session('active_brand_id');
-        $brand = $brandId ? Brand::find($brandId) : Brand::first();
+        $brandFilter = $request->get('brand_id', 'all');
 
-        $connections = $brand ? AnalyticsConnection::where('brand_id', $brand->id)
-            ->with('user:id,name')
+        if ($brandFilter === 'all' || $brandFilter === null) {
+            $brand = null;
+        } else {
+            $brand = Brand::find($brandFilter);
+        }
+
+        // Carregar TODAS as conexões (global) ou filtrar por marca
+        $connections = AnalyticsConnection::when($brand, fn($q) => $q->where('brand_id', $brand->id))
+            ->with(['user:id,name', 'brand:id,name'])
             ->get()
             ->map(fn($c) => [
                 'id' => $c->id,
@@ -136,7 +143,9 @@ class AnalyticsController extends Controller
                 'created_at' => $c->created_at->format('d/m/Y H:i'),
                 'user_name' => $c->user?->name ?? 'Sistema',
                 'config' => $c->config,
-            ]) : collect();
+                'brand_id' => $c->brand_id,
+                'brand_name' => $c->brand?->name,
+            ]);
 
         // Verificar quais plataformas já têm OAuth configurado
         $oauthConfigured = $this->checkOAuthConfig();
@@ -173,8 +182,8 @@ class AnalyticsController extends Controller
 
         $brands = Brand::orderBy('name')->get(['id', 'name']);
 
-        // Investimentos manuais
-        $manualEntries = $brand ? ManualAdEntry::where('brand_id', $brand->id)
+        // Investimentos manuais (global ou por marca)
+        $manualEntries = ManualAdEntry::when($brand, fn($q) => $q->where('brand_id', $brand->id))
             ->with('user:id,name')
             ->orderByDesc('date_start')
             ->get()
@@ -193,7 +202,7 @@ class AnalyticsController extends Controller
                 'description' => $e->description,
                 'user_name' => $e->user?->name ?? 'Sistema',
                 'created_at' => $e->created_at->format('d/m/Y H:i'),
-            ]) : collect();
+            ]);
 
         return Inertia::render('Analytics/Connections', [
             'brand' => $brand,
@@ -216,7 +225,7 @@ class AnalyticsController extends Controller
      */
     public function oauthRedirect(Request $request, string $platform)
     {
-        $request->validate(['brand_id' => 'required|exists:brands,id']);
+        $request->validate(['brand_id' => 'nullable|exists:brands,id']);
 
         $state = Str::random(40);
 
@@ -224,7 +233,7 @@ class AnalyticsController extends Controller
         $cacheKey = 'analytics_oauth_' . $state;
         Cache::put($cacheKey, [
             'platform' => $platform,
-            'brand_id' => $request->brand_id,
+            'brand_id' => $request->brand_id ?: null,
             'user_id' => auth()->id(),
             'popup' => $request->boolean('popup', false),
         ], now()->addMinutes(15));
@@ -665,7 +674,7 @@ class AnalyticsController extends Controller
         // Validacao especifica por plataforma
         if ($platform === 'woocommerce') {
             $request->validate([
-                'brand_id' => 'required|exists:brands,id',
+                'brand_id' => 'nullable|exists:brands,id',
                 'platform' => 'required|string|in:woocommerce',
                 'name' => 'required|string|max:255',
                 'store_url' => 'required|url|max:500',
@@ -694,7 +703,7 @@ class AnalyticsController extends Controller
                 ->toArray();
 
             AnalyticsConnection::create([
-                'brand_id' => $request->brand_id,
+                'brand_id' => $request->brand_id ?: null,
                 'user_id' => auth()->id(),
                 'platform' => 'woocommerce',
                 'name' => $request->name,
@@ -717,7 +726,7 @@ class AnalyticsController extends Controller
 
         // Validacao padrao para outras plataformas
         $request->validate([
-            'brand_id' => 'required|exists:brands,id',
+            'brand_id' => 'nullable|exists:brands,id',
             'platform' => 'required|string|in:google_analytics,google_ads,google_search_console,meta_ads',
             'name' => 'required|string|max:255',
             'external_id' => 'required|string|max:255',
@@ -726,7 +735,7 @@ class AnalyticsController extends Controller
         ]);
 
         AnalyticsConnection::create([
-            'brand_id' => $request->brand_id,
+            'brand_id' => $request->brand_id ?: null,
             'user_id' => auth()->id(),
             'platform' => $request->platform,
             'name' => $request->name,
@@ -870,7 +879,7 @@ class AnalyticsController extends Controller
     public function storeManualEntry(Request $request)
     {
         $request->validate([
-            'brand_id' => 'required|exists:brands,id',
+            'brand_id' => 'nullable|exists:brands,id',
             'platform' => 'required|string|in:' . implode(',', array_keys(ManualAdEntry::platformOptions())),
             'platform_label' => 'nullable|string|max:255',
             'date_start' => 'required|date',
@@ -880,7 +889,7 @@ class AnalyticsController extends Controller
         ]);
 
         ManualAdEntry::create([
-            'brand_id' => $request->brand_id,
+            'brand_id' => $request->brand_id ?: null,
             'user_id' => auth()->id(),
             'platform' => $request->platform,
             'platform_label' => $request->platform === 'other' ? $request->platform_label : null,
@@ -950,6 +959,42 @@ class AnalyticsController extends Controller
         $this->syncService->rebuildDailySummaries($brandId, $start, $end);
 
         return back()->with('success', 'Investimento manual removido!');
+    }
+
+    /**
+     * Vincular/desvincular conexão a uma marca
+     */
+    public function linkBrand(Request $request, AnalyticsConnection $connection): JsonResponse
+    {
+        $brandId = $request->input('brand_id'); // null para desvincular
+
+        if ($brandId) {
+            $brand = Brand::findOrFail($brandId);
+            $connection->update(['brand_id' => $brand->id]);
+
+            // Atualizar data_points e summaries vinculados a esta conexao
+            \App\Models\AnalyticsDataPoint::where('analytics_connection_id', $connection->id)
+                ->update(['brand_id' => $brand->id]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Conexão vinculada a \"{$brand->name}\".",
+                'brand_id' => $brand->id,
+                'brand_name' => $brand->name,
+            ]);
+        }
+
+        // Desvincular
+        $connection->update(['brand_id' => null]);
+        \App\Models\AnalyticsDataPoint::where('analytics_connection_id', $connection->id)
+            ->update(['brand_id' => null]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Conexão desvinculada (global).',
+            'brand_id' => null,
+            'brand_name' => null,
+        ]);
     }
 
     /**

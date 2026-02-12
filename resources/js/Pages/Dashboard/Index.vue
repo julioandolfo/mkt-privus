@@ -128,9 +128,27 @@ const props = defineProps<{
     periodLabel?: string;
     periodStart?: string;
     periodEnd?: string;
+    brandFilter?: string;
+    allBrands?: { id: number; name: string }[];
 }>();
 
 const chartMetric = ref<'followers' | 'engagement' | 'reach' | 'impressions'>('followers');
+
+// Brand filter
+const activeBrandFilter = ref(props.brandFilter || 'all');
+
+function changeBrand(brandId: string) {
+    activeBrandFilter.value = brandId;
+    const params: Record<string, string> = { brand: brandId, period: activePeriod.value };
+    if (activePeriod.value === 'custom' && customStart.value && customEnd.value) {
+        params.start = customStart.value;
+        params.end = customEnd.value;
+    }
+    router.get(route('dashboard'), params, {
+        preserveState: true,
+        preserveScroll: true,
+    });
+}
 
 // Period filter
 const activePeriod = ref(props.period || 'this_month');
@@ -158,7 +176,7 @@ function changePeriod(period: string) {
     showCustomPicker.value = false;
     activePeriod.value = period;
     loadingPeriod.value = true;
-    router.get(route('dashboard'), { period }, {
+    router.get(route('dashboard'), { period, brand: activeBrandFilter.value }, {
         preserveState: true,
         preserveScroll: true,
         onFinish: () => { loadingPeriod.value = false; },
@@ -170,7 +188,7 @@ function applyCustomPeriod() {
     activePeriod.value = 'custom';
     showCustomPicker.value = false;
     loadingPeriod.value = true;
-    router.get(route('dashboard'), { period: 'custom', start: customStart.value, end: customEnd.value }, {
+    router.get(route('dashboard'), { period: 'custom', start: customStart.value, end: customEnd.value, brand: activeBrandFilter.value }, {
         preserveState: true,
         preserveScroll: true,
         onFinish: () => { loadingPeriod.value = false; },
@@ -290,8 +308,18 @@ const periodOptions = [
             </div>
         </template>
 
-        <!-- Period Filter Bar -->
-        <div class="mb-6 flex items-center gap-2 flex-wrap">
+        <!-- Brand + Period Filter Bar -->
+        <div class="mb-6 flex items-center gap-3 flex-wrap">
+            <!-- Brand filter -->
+            <select v-if="allBrands && allBrands.length > 0"
+                :value="activeBrandFilter"
+                @change="changeBrand(($event.target as HTMLSelectElement).value)"
+                class="rounded-xl bg-gray-900 border border-gray-800 text-sm text-white px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500 min-w-[160px]">
+                <option value="all">Todas as Empresas</option>
+                <option v-for="b in allBrands" :key="b.id" :value="String(b.id)">{{ b.name }}</option>
+            </select>
+
+            <div class="w-px h-6 bg-gray-800" />
             <div class="flex items-center gap-1 bg-gray-900 rounded-xl p-1 border border-gray-800 flex-wrap">
                 <button v-for="pf in periodFilters" :key="pf.value"
                     @click="changePeriod(pf.value)"

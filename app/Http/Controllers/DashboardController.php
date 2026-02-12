@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\AnalyticsConnection;
 use App\Models\AnalyticsDailySummary;
+use App\Models\Brand;
 use App\Models\CustomMetric;
 use App\Models\ManualAdEntry;
 use App\Models\MetricGoal;
+use App\Models\Post;
 use App\Models\SocialAccount;
 use App\Models\SocialInsight;
 use Carbon\Carbon;
@@ -19,8 +21,20 @@ class DashboardController extends Controller
     public function index(Request $request): Response
     {
         $user = $request->user();
-        $brand = $user->getActiveBrand();
-        $brandId = $brand?->id;
+
+        // ===== FILTRO DE MARCA (global ou especifica) =====
+        $brandFilter = $request->get('brand', 'all'); // 'all' ou id numerico
+        $allBrands = Brand::orderBy('name')->get(['id', 'name']);
+
+        if ($brandFilter === 'all' || $brandFilter === null) {
+            $brandId = null;
+            $brand = null;
+            $brandIds = null; // null = sem filtro, pegar tudo
+        } else {
+            $brand = Brand::find($brandFilter);
+            $brandId = $brand?->id;
+            $brandIds = $brandId ? [$brandId] : null;
+        }
 
         // ===== PERIODO DO DASHBOARD =====
         $period = $request->get('period', 'this_month');
@@ -29,21 +43,32 @@ class DashboardController extends Controller
 
         [$periodStart, $periodEnd, $prevStart, $prevEnd, $periodLabel] = $this->resolvePeriod($period, $customStart, $customEnd);
 
+        // Helper: aplica filtro de marca (null = global/todas)
+        $scopeBrand = function ($query) use ($brandId) {
+            if ($brandId) {
+                $query->where('brand_id', $brandId);
+            }
+            return $query;
+        };
+
         // ===== STATS BASICOS =====
+        $postsQuery = Post::query();
+        if ($brandId) $postsQuery->where('brand_id', $brandId);
+
         $stats = [
-            'posts_this_month' => $brand ? $brand->posts()
+            'posts_this_month' => (clone $postsQuery)
                 ->whereMonth('created_at', now()->month)
                 ->whereYear('created_at', now()->year)
-                ->count() : 0,
-            'scheduled_posts' => $brand ? $brand->posts()
+                ->count(),
+            'scheduled_posts' => (clone $postsQuery)
                 ->where('status', 'scheduled')
-                ->count() : 0,
-            'published_posts' => $brand ? $brand->posts()
+                ->count(),
+            'published_posts' => (clone $postsQuery)
                 ->where('status', 'published')
-                ->count() : 0,
-            'connected_platforms' => $brand ? $brand->socialAccounts()
+                ->count(),
+            'connected_platforms' => SocialAccount::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('is_active', true)
-                ->count() : 0,
+                ->count(),
         ];
 
         // ===== CONTAS SOCIAIS COM INSIGHTS =====
@@ -51,8 +76,8 @@ class DashboardController extends Controller
         $totalFollowers = 0;
         $totalFollowersYesterday = 0;
 
-        if ($brandId) {
-            $accounts = SocialAccount::where('brand_id', $brandId)
+        {
+            $accounts = SocialAccount::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('is_active', true)
                 ->get();
 
@@ -115,8 +140,8 @@ class DashboardController extends Controller
 
         // ===== METRICAS COM DADOS RECENTES =====
         $metrics = [];
-        if ($brandId) {
-            $metrics = CustomMetric::where('brand_id', $brandId)
+        {
+            $metrics = CustomMetric::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('is_active', true)
                 ->with('metricCategory')
                 ->orderBy('sort_order')
@@ -173,9 +198,9 @@ class DashboardController extends Controller
 
         // ===== METAS ATIVAS =====
         $activeGoals = [];
-        if ($brandId) {
+        {
             $activeGoals = MetricGoal::whereHas('metric', function ($q) use ($brandId) {
-                    $q->where('brand_id', $brandId)->where('is_active', true);
+                    $q->when($brandId, fn($q2) => $q2->where('brand_id', $brandId))->where('is_active', true);
                 })
                 ->where('is_active', true)
                 ->where('end_date', '>=', now())
@@ -211,8 +236,8 @@ class DashboardController extends Controller
 
         // ===== GRAFICO DE SEGUIDORES (periodo selecionado) =====
         $followersChart = [];
-        if ($brandId) {
-            $accountIds = SocialAccount::where('brand_id', $brandId)
+        {
+            $accountIds = SocialAccount::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('is_active', true)
                 ->pluck('id');
 
@@ -242,9 +267,8 @@ class DashboardController extends Controller
 
         // ===== ATIVIDADE RECENTE =====
         $recentActivity = [];
-        if ($brandId) {
-            // Posts recentes
-            $recentPosts = $brand->posts()
+        {
+            $recentPosts = Post::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->orderByDesc('created_at')
                 ->limit(5)
                 ->get()
@@ -261,13 +285,13 @@ class DashboardController extends Controller
 
         // ===== ANALYTICS RESUMO (periodo selecionado) =====
         $analyticsSummary = null;
-        if ($brandId) {
-            $last30 = AnalyticsDailySummary::where('brand_id', $brandId)
+        {
+            $last30 = AnalyticsDailySummary::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->whereBetween('date', [$periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d')])
                 ->get();
 
             // Periodo anterior para comparacao
-            $prev30 = AnalyticsDailySummary::where('brand_id', $brandId)
+            $prev30 = AnalyticsDailySummary::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->whereBetween('date', [$prevStart->format('Y-m-d'), $prevEnd->format('Y-m-d')])
                 ->get();
 
@@ -313,7 +337,7 @@ class DashboardController extends Controller
                 $prevWcRevenue = $prev30->sum('wc_revenue');
 
                 // Conexoes analytics
-                $analyticsConnections = AnalyticsConnection::where('brand_id', $brandId)
+                $analyticsConnections = AnalyticsConnection::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                     ->where('is_active', true)
                     ->get(['platform', 'name', 'sync_status', 'last_synced_at'])
                     ->map(fn($c) => [
@@ -385,6 +409,8 @@ class DashboardController extends Controller
             'periodLabel' => $periodLabel,
             'periodStart' => $periodStart->format('Y-m-d'),
             'periodEnd' => $periodEnd->format('Y-m-d'),
+            'brandFilter' => $brandFilter,
+            'allBrands' => $allBrands,
         ]);
     }
 

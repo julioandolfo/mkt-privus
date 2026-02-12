@@ -20,6 +20,8 @@ interface Connection {
     created_at: string;
     user_name: string;
     config: any;
+    brand_id: number | null;
+    brand_name: string | null;
 }
 
 interface DiscoveredAccount {
@@ -61,6 +63,20 @@ const props = defineProps<{
     manualEntries: ManualEntry[];
     manualPlatforms: Record<string, string>;
 }>();
+
+// Vincular marca a conexao
+async function linkBrandToConnection(connId: number, brandId: string | null) {
+    try {
+        const response = await axios.post(route('analytics.connections.link-brand', connId), {
+            brand_id: brandId === 'global' || brandId === '' ? null : brandId,
+        });
+        if (response.data.success) {
+            router.reload({ only: ['connections'], preserveScroll: true });
+        }
+    } catch (e: any) {
+        console.error('Erro ao vincular marca', e);
+    }
+}
 
 const showManualForm = ref(false);
 const showDiscoveredModal = ref(props.discoveredAccounts?.length > 0);
@@ -700,6 +716,18 @@ function isConnected(platform: string): boolean {
                                     class="px-1.5 py-0.5 bg-purple-500/10 text-purple-300 rounded text-[9px] font-mono border border-purple-500/20"
                                 >{{ st }}</span>
                             </div>
+                        </div>
+
+                        <!-- Brand link -->
+                        <div class="shrink-0">
+                            <select
+                                :value="conn.brand_id ? String(conn.brand_id) : 'global'"
+                                @change="linkBrandToConnection(conn.id, ($event.target as HTMLSelectElement).value)"
+                                class="rounded-lg bg-gray-800 border-gray-700 text-[11px] text-gray-300 py-1 pl-2 pr-6 focus:border-indigo-500 focus:ring-indigo-500"
+                                title="Vincular a marca">
+                                <option value="global">Global</option>
+                                <option v-for="b in brands" :key="b.id" :value="String(b.id)">{{ b.name }}</option>
+                            </select>
                         </div>
 
                         <!-- Status -->

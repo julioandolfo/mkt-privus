@@ -219,6 +219,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/connections', [AnalyticsController::class, 'connections'])->name('connections');
         Route::post('/connections', [AnalyticsController::class, 'storeConnection'])->name('connections.store');
         Route::post('/connections/{connection}/toggle', [AnalyticsController::class, 'toggleConnection'])->name('connections.toggle');
+        Route::post('/connections/{connection}/link-brand', [AnalyticsController::class, 'linkBrand'])->name('connections.link-brand');
         Route::delete('/connections/{connection}', [AnalyticsController::class, 'destroyConnection'])->name('connections.destroy');
         Route::post('/connections/{connection}/sync', [AnalyticsController::class, 'syncConnection'])->name('connections.sync');
         Route::post('/connections/test-woocommerce', [AnalyticsController::class, 'testWooCommerce'])->name('connections.test-woocommerce');
