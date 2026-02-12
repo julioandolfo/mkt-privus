@@ -132,6 +132,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::put('/{item}', [ContentCalendarController::class, 'update'])->name('update');
             Route::delete('/{item}', [ContentCalendarController::class, 'destroy'])->name('destroy');
             Route::post('/clear-period', [ContentCalendarController::class, 'clearPeriod'])->name('clear-period');
+            Route::post('/approve-batch', [ContentCalendarController::class, 'approveBatch'])->name('approve-batch');
+            Route::post('/reject-batch', [ContentCalendarController::class, 'rejectBatch'])->name('reject-batch');
+            Route::post('/{item}/approve', [ContentCalendarController::class, 'approveItem'])->name('approve-item');
         });
 
         // Content Engine

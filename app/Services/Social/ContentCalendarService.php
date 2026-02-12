@@ -20,6 +20,7 @@ class ContentCalendarService
 {
     public function __construct(
         private readonly AIGateway $aiGateway,
+        private readonly BrandIntelligenceService $intelligenceService,
     ) {}
 
     /**
@@ -39,12 +40,16 @@ class ContentCalendarService
         $tone = $options['tone'] ?? $brand->tone_of_voice ?? 'profissional e acessivel';
         $aiModel = $options['ai_model'] ?? 'gemini-2.0-flash';
         $extraInstructions = $options['instructions'] ?? '';
+        $batchStatus = $options['batch_status'] ?? null; // 'draft' para geracao automatica, null para manual
 
         $start = Carbon::parse($startDate);
         $end = Carbon::parse($endDate);
         $totalDays = $start->diffInDays($end) + 1;
         $totalWeeks = ceil($totalDays / 7);
         $totalPosts = intval($totalWeeks * $postsPerWeek);
+
+        // Gerar relatorio de inteligencia (redes sociais, analytics, e-commerce, historico)
+        $intelligenceReport = $this->intelligenceService->buildIntelligenceReport($brand);
 
         // Buscar posts recentes para evitar repetição
         $recentPosts = $brand->posts()
@@ -68,8 +73,10 @@ class ContentCalendarService
         $prompt = $this->buildCalendarPrompt(
             $brandContext, $start->format('Y-m-d'), $end->format('Y-m-d'),
             $totalPosts, $platformsStr, $categoriesStr, $tone,
-            $recentPosts, $existingItems, $extraInstructions
+            $recentPosts, $existingItems, $extraInstructions, $intelligenceReport
         );
+
+        $batchId = uniqid('cal_');
 
         try {
             $model = AIModel::from($aiModel);
@@ -88,7 +95,7 @@ class ContentCalendarService
 
             if (empty($items)) {
                 SystemLog::warning('content', 'calendar.parse_failed', 'IA retornou formato invalido para calendario');
-                return ['success' => false, 'error' => 'A IA retornou um formato invalido. Tente novamente.', 'items' => []];
+                return ['success' => false, 'error' => 'A IA retornou um formato invalido. Tente novamente.', 'items' => [], 'batch_id' => $batchId];
             }
 
             $totalTokens = ($response['input_tokens'] ?? 0) + ($response['output_tokens'] ?? 0);
@@ -119,21 +126,26 @@ class ContentCalendarService
                     'instructions' => $item['instructions'] ?? null,
                     'status' => 'pending',
                     'ai_model_used' => $aiModel,
+                    'batch_id' => $batchId,
+                    'batch_status' => $batchStatus,
                     'metadata' => [
                         'generated_at' => now()->toIso8601String(),
                         'tokens_used' => intval($totalTokens / max(count($items), 1)),
-                        'batch_id' => uniqid('cal_'),
+                        'has_intelligence' => !empty($intelligenceReport),
                     ],
                 ]);
 
                 $created[] = $calendarItem;
             }
 
-            SystemLog::info('content', 'calendar.generated', "Calendario gerado: " . count($created) . " itens para marca #{$brand->id}", [
+            SystemLog::info('content', 'calendar.generated', "Calendario gerado: " . count($created) . " itens para marca #{$brand->id}" . ($batchStatus ? " (status: {$batchStatus})" : ''), [
                 'brand_id' => $brand->id,
                 'period' => "{$startDate} a {$endDate}",
                 'total_items' => count($created),
                 'total_tokens' => $totalTokens,
+                'batch_id' => $batchId,
+                'batch_status' => $batchStatus,
+                'has_intelligence' => !empty($intelligenceReport),
             ]);
 
             return [
@@ -141,6 +153,7 @@ class ContentCalendarService
                 'items' => $created,
                 'total' => count($created),
                 'tokens_used' => $totalTokens,
+                'batch_id' => $batchId,
             ];
 
         } catch (\Throwable $e) {
@@ -149,7 +162,7 @@ class ContentCalendarService
                 'exception' => get_class($e),
             ]);
 
-            return ['success' => false, 'error' => $e->getMessage(), 'items' => []];
+            return ['success' => false, 'error' => $e->getMessage(), 'items' => [], 'batch_id' => $batchId];
         }
     }
 
@@ -249,6 +262,7 @@ class ContentCalendarService
     {
         $query = ContentCalendarItem::where('brand_id', $brandId)
             ->where('status', 'pending')
+            ->where(fn($q) => $q->whereNull('batch_status')->orWhere('batch_status', 'approved'))
             ->where('scheduled_date', '>=', now()->subDay()->toDateString());
 
         if ($startDate) $query->where('scheduled_date', '>=', $startDate);
@@ -276,17 +290,38 @@ class ContentCalendarService
     private function buildCalendarPrompt(
         string $brandContext, string $startDate, string $endDate,
         int $totalPosts, string $platforms, string $categories,
-        string $tone, string $recentPosts, array $existingDates, string $extraInstructions
+        string $tone, string $recentPosts, array $existingDates,
+        string $extraInstructions, string $intelligenceReport = ''
     ): string {
         $existingStr = !empty($existingDates)
             ? "DATAS JA OCUPADAS (nao agende nestas): " . implode(', ', $existingDates)
             : "Nenhuma data ocupada no periodo.";
 
+        $intelligenceSection = '';
+        if (!empty($intelligenceReport)) {
+            $intelligenceSection = <<<INTEL
+
+{$intelligenceReport}
+
+## Como usar os dados de performance acima:
+- Priorize os TIPOS de conteudo com melhor engajamento (ex: se Reels performam melhor, inclua mais Reels)
+- Agende mais posts nos DIAS DA SEMANA com melhor engajamento
+- Use os TERMOS DE BUSCA organica populares como inspiracao para temas de conteudo
+- Se houver PRODUTOS mais vendidos, crie conteudo que os destaque naturalmente
+- Considere a DEMOGRAFIA do publico (idade, genero, cidades) ao definir tom e temas
+- Priorize as CATEGORIAS que historicamente sao mais aprovadas pelo usuario
+- Evite categorias que costumam ser rejeitadas (a menos que sejam estrategicamente importantes)
+- Se a tendencia de receita esta CAINDO, inclua mais conteudo de venda/promocao
+- Se o trafego esta CRESCENDO, mantenha a estrategia e amplifique o que funciona
+INTEL;
+        }
+
         return <<<PROMPT
 Voce e um estrategista de conteudo digital especialista em planejamento editorial.
-Sua tarefa e criar um calendario de conteudo completo e estrategico.
+Sua tarefa e criar um calendario de conteudo completo e estrategico, baseado em dados reais de performance.
 
 {$brandContext}
+{$intelligenceSection}
 
 ## Periodo: {$startDate} a {$endDate}
 ## Total de posts a gerar: {$totalPosts}
@@ -310,6 +345,7 @@ Sua tarefa e criar um calendario de conteudo completo e estrategico.
 - Alterne entre tipos de post (feed, carousel, reel, story)
 - Priorize dias uteis, mas inclua finais de semana quando fizer sentido
 - Nao agende mais de 2 posts no mesmo dia
+- Use os dados de performance fornecidos para tomar decisoes mais inteligentes
 
 ## Formato de resposta (JSON):
 Responda APENAS com um array JSON valido, sem markdown, sem explicacoes:

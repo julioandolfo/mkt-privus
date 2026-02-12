@@ -38,13 +38,25 @@ interface CalendarItem {
     status_color: string;
     post_id: number | null;
     suggestion_id: number | null;
+    batch_id: string | null;
+    batch_status: string | null;
+}
+
+interface DraftBatch {
+    batch_id: string;
+    total: number;
+    start_date: string;
+    end_date: string;
 }
 
 const currentDate = ref(new Date());
 const posts = ref<CalendarPost[]>([]);
 const calendarItems = ref<CalendarItem[]>([]);
+const draftBatches = ref<DraftBatch[]>([]);
 const loading = ref(false);
 const activeTab = ref<'posts' | 'content'>('posts');
+const approvingBatch = ref<string | null>(null);
+const rejectingBatch = ref<string | null>(null);
 
 // AI Generation state
 const showGenerateModal = ref(false);
@@ -213,6 +225,7 @@ async function fetchCalendarData() {
 
         posts.value = postsRes.data.posts || [];
         calendarItems.value = itemsRes.data.items || [];
+        draftBatches.value = itemsRes.data.draft_batches || [];
     } catch (e) {
         console.error('Erro ao carregar calendario:', e);
     } finally {
@@ -341,11 +354,51 @@ function switchBrandFromModal(event: Event) {
     }
 }
 
+// Drafts count
+const totalDraftItems = computed(() => draftBatches.value.reduce((sum, b) => sum + b.total, 0));
+const draftItemsInView = computed(() => calendarItems.value.filter(i => i.batch_status === 'draft'));
+
+async function approveBatch(batchId: string) {
+    approvingBatch.value = batchId;
+    try {
+        const res = await axios.post(route('social.calendar.content.approve-batch'), { batch_id: batchId });
+        generateResult.value = res.data.message;
+        await fetchCalendarData();
+    } catch (e: any) {
+        alert(e.response?.data?.error || 'Erro ao aprovar batch.');
+    } finally {
+        approvingBatch.value = null;
+    }
+}
+
+async function rejectBatch(batchId: string) {
+    if (!confirm('Rejeitar e remover TODAS as pautas deste lote? Esta acao nao pode ser desfeita.')) return;
+    rejectingBatch.value = batchId;
+    try {
+        const res = await axios.post(route('social.calendar.content.reject-batch'), { batch_id: batchId });
+        generateResult.value = res.data.message;
+        await fetchCalendarData();
+    } catch (e: any) {
+        alert(e.response?.data?.error || 'Erro ao rejeitar batch.');
+    } finally {
+        rejectingBatch.value = null;
+    }
+}
+
+async function approveItem(itemId: number) {
+    try {
+        await axios.post(route('social.calendar.content.approve-item', itemId));
+        await fetchCalendarData();
+    } catch (e: any) {
+        alert(e.response?.data?.error || 'Erro ao aprovar pauta.');
+    }
+}
+
 const calendarGuideSteps = [
-    { title: 'Calendario inteligente', description: 'Alem de posts agendados, agora voce pode gerar um calendario editorial com IA que cria pautas automaticamente.' },
-    { title: 'Gere com IA', description: 'Clique em "Gerar Calendario com IA" para criar pautas para o mes inteiro. A IA considera sua marca, segmento e tom de voz.' },
-    { title: 'Pautas viram posts', description: 'Cada pauta pode ser convertida em um post real com um clique. A IA gera a legenda e hashtags automaticamente.' },
-    { title: 'Aprove e publique', description: 'Posts gerados ficam como sugestao para aprovacao. Edite se necessario e publique quando estiver pronto.' },
+    { title: 'Calendario inteligente', description: 'A IA gera um calendario editorial completo analisando suas redes sociais, analytics, e-commerce e historico de conteudo.' },
+    { title: 'Geracao automatica', description: 'No dia 25 de cada mes, o sistema gera automaticamente um calendario para o mes seguinte. Pautas aparecem como "Proposta IA" para sua aprovacao.' },
+    { title: 'Gere manualmente', description: 'Voce tambem pode clicar em "Gerar Calendario com IA" para criar pautas sob demanda para qualquer periodo.' },
+    { title: 'Aprove e publique', description: 'Revise as pautas, edite se necessario, e aprove. Pautas aprovadas viram posts automaticamente com legendas e hashtags.' },
 ];
 
 watch(currentDate, fetchCalendarData);
@@ -408,6 +461,35 @@ onMounted(fetchCalendarData);
                 <button @click="generateResult = null" class="text-indigo-400 hover:text-white">&times;</button>
             </div>
 
+            <!-- Draft Batch Approval Banners -->
+            <div v-for="batch in draftBatches" :key="batch.batch_id" class="mb-4 rounded-xl bg-amber-900/20 border border-amber-700/40 px-5 py-4">
+                <div class="flex items-center justify-between flex-wrap gap-3">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                            <svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
+                        </div>
+                        <div>
+                            <p class="text-amber-200 font-semibold text-sm">Proposta de Calendario Gerada pela IA</p>
+                            <p class="text-amber-400/70 text-xs mt-0.5">{{ batch.total }} pautas de {{ batch.start_date }} a {{ batch.end_date }} aguardando sua aprovacao</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="rejectBatch(batch.batch_id)" :disabled="rejectingBatch === batch.batch_id"
+                            class="rounded-xl px-4 py-2 text-xs font-medium text-red-400 hover:text-red-300 border border-red-800/50 hover:border-red-700 transition disabled:opacity-50">
+                            {{ rejectingBatch === batch.batch_id ? 'Rejeitando...' : 'Rejeitar Todas' }}
+                        </button>
+                        <button @click="activeTab = 'content'" class="rounded-xl px-4 py-2 text-xs font-medium text-amber-300 hover:text-amber-200 border border-amber-700/50 transition">
+                            Revisar
+                        </button>
+                        <button @click="approveBatch(batch.batch_id)" :disabled="approvingBatch === batch.batch_id"
+                            class="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-50 flex items-center gap-1.5">
+                            <svg v-if="approvingBatch === batch.batch_id" class="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            {{ approvingBatch === batch.batch_id ? 'Aprovando...' : 'Aprovar Todas' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Calendar -->
             <div class="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
                 <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
@@ -461,9 +543,11 @@ onMounted(fetchCalendarData);
                             <div class="space-y-0.5">
                                 <button v-for="item in getItemsForDate(day.dateStr).slice(0, 3)" :key="'item-' + item.id"
                                     @click="openEditItem(item)"
-                                    class="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] truncate hover:bg-gray-800 transition group w-full text-left">
-                                    <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="{ backgroundColor: statusDotColors[item.status_color] || '#F59E0B' }" />
-                                    <span class="truncate text-gray-400 group-hover:text-gray-200">{{ item.title }}</span>
+                                    :class="['flex items-center gap-1 rounded px-1 py-0.5 text-[10px] truncate transition group w-full text-left',
+                                        item.batch_status === 'draft' ? 'border border-dashed border-amber-700/50 bg-amber-950/20 hover:bg-amber-950/40' : 'hover:bg-gray-800']">
+                                    <span v-if="item.batch_status === 'draft'" class="w-1.5 h-1.5 rounded shrink-0 bg-amber-500 animate-pulse" />
+                                    <span v-else class="w-1.5 h-1.5 rounded-full shrink-0" :style="{ backgroundColor: statusDotColors[item.status_color] || '#F59E0B' }" />
+                                    <span :class="['truncate group-hover:text-gray-200', item.batch_status === 'draft' ? 'text-amber-400/80' : 'text-gray-400']">{{ item.title }}</span>
                                     <span class="flex items-center gap-0.5 ml-auto shrink-0">
                                         <span v-for="(dot, di) in getPlatformDots(item.platforms)" :key="di" class="w-1 h-1 rounded-full" :style="{ backgroundColor: dot.color }" />
                                     </span>
@@ -485,6 +569,7 @@ onMounted(fetchCalendarData);
                 </template>
                 <template v-else>
                     <span class="font-medium text-gray-400">Status Pauta:</span>
+                    <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded bg-amber-500 animate-pulse" /> Proposta IA</span>
                     <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-yellow-500" /> Pendente</span>
                     <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-blue-500" /> Post Gerado</span>
                     <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-green-500" /> Publicado</span>
@@ -622,8 +707,11 @@ onMounted(fetchCalendarData);
                 <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 mx-4">
                     <div class="flex items-center justify-between mb-4">
                         <div>
-                            <h3 class="text-lg font-semibold text-white">{{ selectedItem.status === 'pending' ? 'Editar Pauta' : 'Detalhes da Pauta' }}</h3>
-                            <span :class="['text-xs font-medium px-2 py-0.5 rounded', categoryColors[selectedItem.category] || 'bg-gray-500/20 text-gray-400']">{{ selectedItem.category_label }}</span>
+                            <div class="flex items-center gap-2">
+                                <h3 class="text-lg font-semibold text-white">{{ selectedItem.status === 'pending' ? 'Editar Pauta' : 'Detalhes da Pauta' }}</h3>
+                                <span v-if="selectedItem.batch_status === 'draft'" class="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-700/30">PROPOSTA IA</span>
+                            </div>
+                            <span :class="['text-xs font-medium px-2 py-0.5 rounded mt-1 inline-block', categoryColors[selectedItem.category] || 'bg-gray-500/20 text-gray-400']">{{ selectedItem.category_label }}</span>
                         </div>
                         <button @click="showEditModal = false" class="text-gray-500 hover:text-white text-xl">&times;</button>
                     </div>
@@ -665,6 +753,11 @@ onMounted(fetchCalendarData);
                         </div>
                     </div>
 
+                    <!-- Draft approval notice -->
+                    <div v-if="selectedItem.batch_status === 'draft'" class="mt-4 rounded-xl bg-amber-900/20 border border-amber-700/30 px-4 py-3">
+                        <p class="text-xs text-amber-300">Esta pauta foi gerada automaticamente pela IA e aguarda sua aprovacao. Edite se necessario e aprove para ativa-la.</p>
+                    </div>
+
                     <div class="flex items-center justify-between mt-5 pt-4 border-t border-gray-800">
                         <div class="flex items-center gap-2">
                             <button v-if="selectedItem.status === 'pending'" @click="deleteItem(selectedItem.id)" class="rounded-xl px-3 py-2 text-xs text-red-400 hover:text-red-300 border border-red-800/50 hover:border-red-700 transition">
@@ -675,7 +768,11 @@ onMounted(fetchCalendarData);
                             </Link>
                         </div>
                         <div class="flex items-center gap-2">
-                            <button v-if="selectedItem.status === 'pending'" @click="generatePostFromItem(selectedItem.id)" :disabled="generatingPost === selectedItem.id"
+                            <button v-if="selectedItem.batch_status === 'draft'" @click="approveItem(selectedItem.id); showEditModal = false;"
+                                class="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-700 transition">
+                                Aprovar Pauta
+                            </button>
+                            <button v-if="selectedItem.status === 'pending' && selectedItem.batch_status !== 'draft'" @click="generatePostFromItem(selectedItem.id)" :disabled="generatingPost === selectedItem.id"
                                 class="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-700 transition disabled:opacity-50 flex items-center gap-1.5">
                                 <svg v-if="generatingPost === selectedItem.id" class="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                                 {{ generatingPost === selectedItem.id ? 'Gerando...' : 'Gerar Post com IA' }}

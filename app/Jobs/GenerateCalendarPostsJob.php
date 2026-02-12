@@ -26,7 +26,9 @@ class GenerateCalendarPostsJob implements ShouldQueue
     public function handle(ContentCalendarService $calendarService): void
     {
         // Buscar pautas pendentes dos próximos 2 dias (para dar tempo de aprovar)
+        // Ignora pautas com batch_status = 'draft' (ainda nao aprovadas)
         $items = ContentCalendarItem::where('status', 'pending')
+            ->where(fn($q) => $q->whereNull('batch_status')->orWhere('batch_status', 'approved'))
             ->where('scheduled_date', '>=', now()->toDateString())
             ->where('scheduled_date', '<=', now()->addDays(2)->toDateString())
             ->orderBy('scheduled_date')

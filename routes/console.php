@@ -1,6 +1,7 @@
 <?php
 
 use App\Jobs\GenerateCalendarPostsJob;
+use App\Jobs\GenerateMonthlyCalendarJob;
 use App\Jobs\GenerateScheduledContentJob;
 use App\Jobs\GenerateSmartSuggestionsJob;
 use App\Jobs\ProcessScheduledPostsJob;
@@ -51,6 +52,10 @@ Schedule::job(new GenerateSmartSuggestionsJob)->dailyAt('07:00')->withoutOverlap
 
 // Gerar posts automaticos das pautas do calendario editorial - 1x por dia às 6h
 Schedule::job(new GenerateCalendarPostsJob)->dailyAt('06:00')->withoutOverlapping(15);
+
+// Gerar calendario mensal automatico com IA - dia 25 de cada mes às 8h
+// Cria pautas com status 'draft' para aprovacao do usuario
+Schedule::job(new GenerateMonthlyCalendarJob)->monthlyOn(25, '08:00')->withoutOverlapping(30);
 
 /*
 |--------------------------------------------------------------------------

@@ -25,6 +25,8 @@ class ContentCalendarItem extends Model
         'post_id',
         'suggestion_id',
         'ai_model_used',
+        'batch_id',
+        'batch_status',
         'metadata',
     ];
 
@@ -76,12 +78,33 @@ class ContentCalendarItem extends Model
     public function scopeReadyToGenerate($query)
     {
         return $query->where('status', 'pending')
+            ->where(fn($q) => $q->whereNull('batch_status')->orWhere('batch_status', 'approved'))
             ->where('scheduled_date', '>=', now()->toDateString());
     }
 
     public function scopeForDateRange($query, string $start, string $end)
     {
         return $query->whereBetween('scheduled_date', [$start, $end]);
+    }
+
+    public function scopeDraft($query)
+    {
+        return $query->where('batch_status', 'draft');
+    }
+
+    public function scopeApprovedBatch($query)
+    {
+        return $query->where('batch_status', 'approved');
+    }
+
+    public function scopeNotDraft($query)
+    {
+        return $query->where(fn($q) => $q->whereNull('batch_status')->orWhere('batch_status', '!=', 'draft'));
+    }
+
+    public function scopeForBatch($query, string $batchId)
+    {
+        return $query->where('batch_id', $batchId);
     }
 
     // ===== METHODS =====
@@ -94,6 +117,16 @@ class ContentCalendarItem extends Model
     public function isGenerated(): bool
     {
         return $this->status === 'generated';
+    }
+
+    public function isDraft(): bool
+    {
+        return $this->batch_status === 'draft';
+    }
+
+    public function isBatchApproved(): bool
+    {
+        return $this->batch_status === 'approved';
     }
 
     public function statusLabel(): string

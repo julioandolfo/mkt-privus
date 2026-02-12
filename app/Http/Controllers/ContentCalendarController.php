@@ -48,9 +48,27 @@ class ContentCalendarController extends Controller
                 'status_color' => $item->statusColor(),
                 'post_id' => $item->post_id,
                 'suggestion_id' => $item->suggestion_id,
+                'batch_id' => $item->batch_id,
+                'batch_status' => $item->batch_status,
             ]);
 
-        return response()->json(['items' => $items]);
+        // Contar drafts pendentes para banner de aprovacao
+        $draftBatches = ContentCalendarItem::where('brand_id', $brand->id)
+            ->where('batch_status', 'draft')
+            ->selectRaw('batch_id, COUNT(*) as total, MIN(scheduled_date) as start_date, MAX(scheduled_date) as end_date')
+            ->groupBy('batch_id')
+            ->get()
+            ->map(fn($b) => [
+                'batch_id' => $b->batch_id,
+                'total' => $b->total,
+                'start_date' => $b->start_date,
+                'end_date' => $b->end_date,
+            ]);
+
+        return response()->json([
+            'items' => $items,
+            'draft_batches' => $draftBatches,
+        ]);
     }
 
     /**
@@ -210,5 +228,88 @@ class ContentCalendarController extends Controller
             ->delete();
 
         return response()->json(['message' => "{$deleted} pautas pendentes removidas.", 'deleted' => $deleted]);
+    }
+
+    /**
+     * Aprova todas as pautas de um batch (draft -> approved).
+     */
+    public function approveBatch(Request $request): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+        if (!$brand) {
+            return response()->json(['error' => 'Nenhuma marca ativa.'], 400);
+        }
+
+        $batchId = $request->get('batch_id');
+        if (!$batchId) {
+            return response()->json(['error' => 'batch_id obrigatorio.'], 422);
+        }
+
+        $updated = ContentCalendarItem::where('brand_id', $brand->id)
+            ->where('batch_id', $batchId)
+            ->where('batch_status', 'draft')
+            ->update(['batch_status' => 'approved']);
+
+        SystemLog::info('content', 'calendar.batch_approved', "Batch {$batchId} aprovado: {$updated} pautas", [
+            'brand_id' => $brand->id,
+            'batch_id' => $batchId,
+            'approved_count' => $updated,
+        ]);
+
+        return response()->json([
+            'message' => "{$updated} pautas aprovadas com sucesso!",
+            'approved' => $updated,
+        ]);
+    }
+
+    /**
+     * Rejeita (remove) todas as pautas de um batch.
+     */
+    public function rejectBatch(Request $request): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+        if (!$brand) {
+            return response()->json(['error' => 'Nenhuma marca ativa.'], 400);
+        }
+
+        $batchId = $request->get('batch_id');
+        if (!$batchId) {
+            return response()->json(['error' => 'batch_id obrigatorio.'], 422);
+        }
+
+        $deleted = ContentCalendarItem::where('brand_id', $brand->id)
+            ->where('batch_id', $batchId)
+            ->where('batch_status', 'draft')
+            ->delete();
+
+        SystemLog::info('content', 'calendar.batch_rejected', "Batch {$batchId} rejeitado: {$deleted} pautas removidas", [
+            'brand_id' => $brand->id,
+            'batch_id' => $batchId,
+            'deleted_count' => $deleted,
+        ]);
+
+        return response()->json([
+            'message' => "{$deleted} pautas rejeitadas e removidas.",
+            'deleted' => $deleted,
+        ]);
+    }
+
+    /**
+     * Aprova uma pauta individual (draft -> approved).
+     */
+    public function approveItem(Request $request, ContentCalendarItem $item): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+        if (!$brand || $item->brand_id !== $brand->id) {
+            return response()->json(['error' => 'Acesso negado.'], 403);
+        }
+
+        if ($item->batch_status !== 'draft') {
+            return response()->json(['error' => 'Esta pauta nao esta em rascunho.'], 422);
+        }
+
+        $item->update(['batch_status' => 'approved']);
+
+        return response()->json(['message' => 'Pauta aprovada.']);
     }
 }
