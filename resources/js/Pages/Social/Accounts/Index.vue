@@ -4,6 +4,7 @@ import GuideBox from '@/Components/GuideBox.vue';
 import InputError from '@/Components/InputError.vue';
 import { Head, Link, useForm, router, usePage } from '@inertiajs/vue3';
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import axios from 'axios';
 
 interface SocialAccountInsight {
     date: string;
@@ -42,6 +43,8 @@ interface SocialAccount {
     metadata: Record<string, any> | null;
     created_at: string;
     insights: SocialAccountInsight | null;
+    brand_id: number | null;
+    brand_name?: string | null;
 }
 
 interface Platform {
@@ -67,6 +70,7 @@ const props = defineProps<{
     discoveredAccounts: DiscoveredAccount[];
     oauthPlatform: string | null;
     discoveryToken: string | null;
+    brands?: { id: number; name: string }[];
 }>();
 
 const page = usePage();
@@ -80,6 +84,30 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'succes
     if (toastTimeout.value) clearTimeout(toastTimeout.value);
     toast.value = { message, type };
     toastTimeout.value = setTimeout(() => { toast.value = null; }, 5000);
+}
+
+// Vincular conta social a marca
+const linkingBrandAccount = ref<number | null>(null);
+async function linkBrandToAccount(accountId: number, brandId: string | null) {
+    linkingBrandAccount.value = accountId;
+    try {
+        const response = await axios.post(route('social.accounts.link-brand', accountId), {
+            brand_id: brandId === 'global' || brandId === '' ? null : brandId,
+        });
+        if (response.data.success) {
+            const acc = props.accounts.find(a => a.id === accountId);
+            if (acc) {
+                acc.brand_id = response.data.brand_id;
+                acc.brand_name = response.data.brand_name;
+            }
+            showToast(response.data.message, 'success');
+        }
+    } catch (e: any) {
+        console.error('Erro ao vincular marca', e);
+        showToast('Erro ao vincular marca', 'error');
+    } finally {
+        linkingBrandAccount.value = null;
+    }
 }
 
 // Mostrar flash messages
@@ -433,12 +461,7 @@ function formatNumber(num: number | null | undefined): string {
             </Transition>
         </Teleport>
 
-        <div v-if="!currentBrand" class="rounded-2xl bg-gray-900 border border-gray-800 p-12 text-center">
-            <h3 class="text-lg font-medium text-gray-300">Nenhuma marca selecionada</h3>
-            <p class="mt-2 text-sm text-gray-500">Selecione uma marca para gerenciar as contas.</p>
-        </div>
-
-        <template v-else>
+        <template>
             <!-- Contas conectadas agrupadas por plataforma -->
             <div v-if="accounts.length > 0" class="mb-8 space-y-4">
                 <div class="flex items-center justify-between">
@@ -502,6 +525,22 @@ function formatNumber(num: number | null | undefined): string {
                                         <span v-if="account.metadata?.type" class="text-[10px] text-gray-600 bg-gray-800 rounded px-1.5 py-0.5">{{ account.metadata.type }}</span>
                                         <span class="text-[10px] text-gray-700">{{ account.created_at }}</span>
                                     </div>
+                                </div>
+
+                                <!-- Brand link -->
+                                <div class="shrink-0 flex items-center gap-1" v-if="brands && brands.length > 0">
+                                    <select
+                                        :value="account.brand_id ? String(account.brand_id) : 'global'"
+                                        @change="linkBrandToAccount(account.id, ($event.target as HTMLSelectElement).value)"
+                                        :disabled="linkingBrandAccount === account.id"
+                                        class="rounded-lg bg-gray-800 border-gray-700 text-[11px] text-gray-300 py-1 pl-2 pr-6 focus:border-indigo-500 focus:ring-indigo-500 disabled:opacity-50"
+                                        title="Vincular a marca">
+                                        <option value="global">Global</option>
+                                        <option v-for="b in brands" :key="b.id" :value="String(b.id)">{{ b.name }}</option>
+                                    </select>
+                                    <svg v-if="linkingBrandAccount === account.id" class="w-3 h-3 text-indigo-400 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                    </svg>
                                 </div>
 
                                 <!-- Actions -->

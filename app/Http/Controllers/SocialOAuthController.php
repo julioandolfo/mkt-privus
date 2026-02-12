@@ -45,14 +45,6 @@ class SocialOAuthController extends Controller
         }
 
         $brand = $request->user()->getActiveBrand();
-        if (!$brand) {
-            SystemLog::warning('oauth', 'oauth.redirect.no_brand', 'Nenhuma marca ativa selecionada');
-            if ($isPopup) {
-                return response()->json(['error' => 'Selecione uma marca ativa antes de conectar.'], 400);
-            }
-            return redirect()->route('social.accounts.index')
-                ->with('error', 'Selecione uma marca ativa antes de conectar.');
-        }
 
         // Para Meta: Instagram e Facebook usam a mesma autenticação
         $oauthPlatform = in_array($platform, ['facebook', 'instagram']) ? 'facebook' : $platform;
@@ -63,7 +55,7 @@ class SocialOAuthController extends Controller
         // Salvar no Cache (mais confiavel que sessao em Docker)
         Cache::put('social_oauth_' . $state, [
             'platform' => $platform,
-            'brand_id' => $brand->id,
+            'brand_id' => $brand?->id,
             'user_id' => auth()->id(),
             'popup' => $isPopup,
         ], now()->addMinutes(15));
@@ -72,7 +64,7 @@ class SocialOAuthController extends Controller
         session([
             'oauth_state' => $state,
             'oauth_platform' => $platform,
-            'oauth_brand_id' => $brand->id,
+            'oauth_brand_id' => $brand?->id,
             'oauth_popup' => $isPopup,
         ]);
 

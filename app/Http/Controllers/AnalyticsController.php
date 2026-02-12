@@ -551,7 +551,7 @@ class AnalyticsController extends Controller
     public function saveOAuthAccounts(Request $request)
     {
         $request->validate([
-            'brand_id' => 'required|exists:brands,id',
+            'brand_id' => 'nullable|exists:brands,id',
             'accounts' => 'required|array|min:1',
             'accounts.*.id' => 'required',
             'accounts.*.name' => 'required|string',
@@ -586,11 +586,11 @@ class AnalyticsController extends Controller
             try {
                 AnalyticsConnection::updateOrCreate(
                     [
-                        'brand_id' => $request->brand_id,
                         'platform' => $platform,
                         'external_id' => $account['id'],
                     ],
                     [
+                        'brand_id' => $request->brand_id ?: null,
                         'user_id' => $userId,
                         'name' => $account['name'],
                         'external_name' => $account['name'],

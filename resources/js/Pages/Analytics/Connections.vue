@@ -65,16 +65,27 @@ const props = defineProps<{
 }>();
 
 // Vincular marca a conexao
+const linkingBrand = ref<number | null>(null);
 async function linkBrandToConnection(connId: number, brandId: string | null) {
+    linkingBrand.value = connId;
     try {
         const response = await axios.post(route('analytics.connections.link-brand', connId), {
             brand_id: brandId === 'global' || brandId === '' ? null : brandId,
         });
         if (response.data.success) {
-            router.reload({ only: ['connections'], preserveScroll: true });
+            // Atualizar localmente a conexao para feedback imediato
+            const conn = props.connections.find(c => c.id === connId);
+            if (conn) {
+                conn.brand_id = response.data.brand_id;
+                conn.brand_name = response.data.brand_name;
+            }
         }
     } catch (e: any) {
         console.error('Erro ao vincular marca', e);
+        // Reverter o select - recarregar pagina
+        router.reload({ preserveScroll: true });
+    } finally {
+        linkingBrand.value = null;
     }
 }
 
@@ -410,9 +421,9 @@ function connectOAuth(platform: string) {
 
     // Buscar URL OAuth via API e abrir popup
     const params = new URLSearchParams({
-        brand_id: String(props.brand?.id || ''),
         popup: '1',
     });
+    if (props.brand?.id) params.set('brand_id', String(props.brand.id));
 
     fetch(route('analytics.oauth.redirect', platform) + '?' + params.toString(), {
         headers: {
@@ -510,7 +521,7 @@ function saveSelectedAccounts() {
         .map(a => ({ id: a.id, name: a.name, account_name: a.account_name }));
 
     router.post(route('analytics.oauth.save'), {
-        brand_id: props.brand?.id,
+        brand_id: props.brand?.id || null,
         accounts,
         discovery_token: currentDiscoveryToken.value || props.discoveryToken,
     }, {
@@ -719,15 +730,19 @@ function isConnected(platform: string): boolean {
                         </div>
 
                         <!-- Brand link -->
-                        <div class="shrink-0">
+                        <div class="shrink-0 flex items-center gap-1">
                             <select
                                 :value="conn.brand_id ? String(conn.brand_id) : 'global'"
                                 @change="linkBrandToConnection(conn.id, ($event.target as HTMLSelectElement).value)"
-                                class="rounded-lg bg-gray-800 border-gray-700 text-[11px] text-gray-300 py-1 pl-2 pr-6 focus:border-indigo-500 focus:ring-indigo-500"
+                                :disabled="linkingBrand === conn.id"
+                                class="rounded-lg bg-gray-800 border-gray-700 text-[11px] text-gray-300 py-1 pl-2 pr-6 focus:border-indigo-500 focus:ring-indigo-500 disabled:opacity-50"
                                 title="Vincular a marca">
                                 <option value="global">Global</option>
                                 <option v-for="b in brands" :key="b.id" :value="String(b.id)">{{ b.name }}</option>
                             </select>
+                            <svg v-if="linkingBrand === conn.id" class="w-3 h-3 text-indigo-400 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
                         </div>
 
                         <!-- Status -->

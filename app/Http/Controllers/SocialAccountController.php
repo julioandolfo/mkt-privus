@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Enums\SocialPlatform;
+use App\Models\Brand;
 use App\Models\OAuthDiscoveredAccount;
 use App\Models\SocialAccount;
 use App\Models\SocialInsight;
 use App\Models\Setting;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -23,7 +25,7 @@ class SocialAccountController extends Controller
         $accounts = [];
 
         {
-            $accounts = SocialAccount::when($brand, fn($q) => $q->where('brand_id', $brand->id))
+            $accounts = SocialAccount::with('brand:id,name')
                 ->orderBy('platform')
                 ->get()
                 ->map(function ($acc) {
@@ -86,6 +88,7 @@ class SocialAccountController extends Controller
                         'created_at' => $acc->created_at->format('d/m/Y'),
                         'insights' => $insightData,
                         'brand_id' => $acc->brand_id,
+                        'brand_name' => $acc->brand?->name,
                     ];
                 });
         }
@@ -133,6 +136,8 @@ class SocialAccountController extends Controller
             $discoveryToken = $discovery->session_token;
         }
 
+        $brands = Brand::orderBy('name')->get(['id', 'name']);
+
         return Inertia::render('Social/Accounts/Index', [
             'accounts' => $accounts,
             'platforms' => $platforms,
@@ -140,6 +145,7 @@ class SocialAccountController extends Controller
             'discoveredAccounts' => $discoveredAccounts,
             'oauthPlatform' => $oauthPlatform,
             'discoveryToken' => $discoveryToken,
+            'brands' => $brands,
         ]);
     }
 
@@ -234,12 +240,45 @@ class SocialAccountController extends Controller
         return redirect()->back()->with('success', "Conta {$status} com sucesso!");
     }
 
+    /**
+     * Vincular/desvincular conta social a uma marca
+     */
+    public function linkBrand(Request $request, SocialAccount $account): JsonResponse
+    {
+        $brandId = $request->input('brand_id');
+
+        if ($brandId) {
+            $brand = Brand::findOrFail($brandId);
+            $account->update(['brand_id' => $brand->id]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Conta vinculada a \"{$brand->name}\".",
+                'brand_id' => $brand->id,
+                'brand_name' => $brand->name,
+            ]);
+        }
+
+        $account->update(['brand_id' => null]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Conta desvinculada (global).',
+            'brand_id' => null,
+            'brand_name' => null,
+        ]);
+    }
+
     // ===== PRIVATE =====
 
     private function authorizeAccount(Request $request, SocialAccount $account): void
     {
-        $brand = $request->user()->getActiveBrand();
+        // Contas globais (brand_id = null) sao acessiveis por qualquer usuario autenticado
+        if ($account->brand_id === null) {
+            return;
+        }
 
+        $brand = $request->user()->getActiveBrand();
         if (!$brand || $account->brand_id !== $brand->id) {
             abort(403, 'Acesso negado.');
         }
