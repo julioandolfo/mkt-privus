@@ -3,9 +3,21 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import TextInput from '@/Components/TextInput.vue';
-import { Head, Link, useForm, router } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { Head, Link, useForm, router, usePage } from '@inertiajs/vue3';
+import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
+
+// Flash messages
+const page = usePage();
+const flashMessage = ref<string | null>(null);
+
+onMounted(() => {
+    const flash = (page.props as any).flash;
+    if (flash?.success) {
+        flashMessage.value = flash.success;
+        setTimeout(() => { flashMessage.value = null; }, 6000);
+    }
+});
 
 interface BrandAsset {
     id: number;
@@ -229,6 +241,17 @@ const urlTypeOptions = [
         </template>
 
         <div class="max-w-3xl">
+            <!-- Flash message (ex: apos criar marca) -->
+            <Transition enter-active-class="transition ease-out duration-300" enter-from-class="opacity-0 -translate-y-2" enter-to-class="opacity-100 translate-y-0" leave-active-class="transition ease-in duration-200" leave-from-class="opacity-100" leave-to-class="opacity-0">
+                <div v-if="flashMessage" class="mb-6 rounded-xl bg-emerald-600/20 border border-emerald-500/30 p-4 flex items-center gap-3">
+                    <span class="text-emerald-400 text-lg">✓</span>
+                    <p class="text-sm text-emerald-300 flex-1">{{ flashMessage }}</p>
+                    <button @click="flashMessage = null" class="text-emerald-400/60 hover:text-emerald-300 transition">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                    </button>
+                </div>
+            </Transition>
+
             <form @submit.prevent="submit" class="space-y-6">
                 <!-- Informacoes Basicas -->
                 <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">

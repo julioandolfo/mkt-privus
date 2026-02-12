@@ -67,8 +67,8 @@ class BrandsController extends Controller
         // Definir como marca ativa para quem criou
         $request->user()->switchBrand($brand);
 
-        return redirect()->route('brands.index')
-            ->with('success', 'Marca criada com sucesso!');
+        return redirect()->route('brands.edit', $brand)
+            ->with('success', 'Marca criada com sucesso! Agora adicione logotipos e imagens de referência.');
     }
 
     public function edit(Brand $brand): Response
