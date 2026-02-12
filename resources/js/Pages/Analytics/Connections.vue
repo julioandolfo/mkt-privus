@@ -225,23 +225,45 @@ function openWcStatusEditor(conn: Connection) {
     refreshWcEditStatuses();
 }
 
+const wcStatusFetchError = ref<string | null>(null);
+
 function refreshWcEditStatuses() {
     const conn = wcStatusEditConnection.value;
     if (!conn) return;
 
     wcStatusEditLoading.value = true;
+    wcStatusFetchError.value = null;
     const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
+
+    const storeUrl = conn.config?.store_url || '';
+    const consumerKey = conn.config?.consumer_key || '';
+    const consumerSecret = conn.config?.consumer_secret || '';
+
+    if (!storeUrl || !consumerKey || !consumerSecret) {
+        wcStatusFetchError.value = 'Credenciais WooCommerce ausentes na conexão. Recrie a conexão.';
+        wcStatusEditLoading.value = false;
+        console.error('WC credentials missing:', { storeUrl: !!storeUrl, consumerKey: !!consumerKey, consumerSecret: !!consumerSecret });
+        return;
+    }
 
     fetch(route('analytics.connections.woocommerce-statuses'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
         body: JSON.stringify({
-            store_url: conn.config?.store_url || '',
-            consumer_key: conn.config?.consumer_key || '',
-            consumer_secret: conn.config?.consumer_secret || '',
+            store_url: storeUrl,
+            consumer_key: consumerKey,
+            consumer_secret: consumerSecret,
         }),
     })
-    .then(r => r.json())
+    .then(r => {
+        if (!r.ok) {
+            return r.text().then(text => {
+                console.error('WC Status fetch error:', r.status, text);
+                throw new Error(`HTTP ${r.status}`);
+            });
+        }
+        return r.json();
+    })
     .then(data => {
         if (data.success && data.statuses) {
             // Mesclar status já selecionados que possam não vir na API (status customizados adicionados manualmente)
@@ -250,9 +272,15 @@ function refreshWcEditStatuses() {
                 .filter(slug => !apiSlugs.includes(slug))
                 .map(slug => ({ slug, name: slug, total: undefined }));
             wcStatusEditAvailable.value = [...data.statuses, ...missingCustom];
+            wcStatusFetchError.value = null;
+        } else {
+            wcStatusFetchError.value = data.error || 'Nenhum status retornado';
         }
     })
-    .catch(() => {})
+    .catch((err) => {
+        console.error('WC Status fetch catch:', err);
+        wcStatusFetchError.value = err.message || 'Erro de rede ao buscar status';
+    })
     .finally(() => wcStatusEditLoading.value = false);
 }
 
@@ -291,9 +319,12 @@ function addCustomStatus() {
     input.value = '';
 }
 
+const wcStatusSaveError = ref<string | null>(null);
+
 function saveWcStatuses() {
     if (!wcStatusEditConnection.value || wcStatusEditStatuses.value.length === 0) return;
     wcStatusEditSaving.value = true;
+    wcStatusSaveError.value = null;
     const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
 
     fetch(route('analytics.connections.update-woocommerce-statuses', { connection: wcStatusEditConnection.value.id }), {
@@ -301,14 +332,27 @@ function saveWcStatuses() {
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
         body: JSON.stringify({ order_statuses: wcStatusEditStatuses.value }),
     })
-    .then(r => r.json())
+    .then(r => {
+        if (!r.ok) {
+            return r.text().then(text => {
+                console.error('WC Status save error:', r.status, text);
+                throw new Error(`HTTP ${r.status}: ${text.substring(0, 200)}`);
+            });
+        }
+        return r.json();
+    })
     .then(data => {
         if (data.success) {
             showWcStatusModal.value = false;
             router.reload();
+        } else {
+            wcStatusSaveError.value = data.error || 'Erro desconhecido ao salvar';
         }
     })
-    .catch(() => {})
+    .catch((err) => {
+        console.error('WC Status save catch:', err);
+        wcStatusSaveError.value = err.message || 'Erro de rede ao salvar status';
+    })
     .finally(() => wcStatusEditSaving.value = false);
 }
 
@@ -1042,6 +1086,11 @@ function isConnected(platform: string): boolean {
                         </button>
                     </div>
 
+                    <!-- Erro ao buscar status -->
+                    <div v-if="wcStatusFetchError" class="p-3 rounded-xl text-xs bg-red-500/10 text-red-400 border border-red-500/20 mb-3">
+                        {{ wcStatusFetchError }}
+                    </div>
+
                     <!-- Loading state -->
                     <div v-if="wcStatusEditLoading && wcStatusEditAvailable.length === 0" class="flex items-center justify-center gap-2 py-6">
                         <svg class="w-5 h-5 animate-spin text-purple-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -1108,6 +1157,11 @@ function isConnected(platform: string): boolean {
                         </div>
                     </div>
                     <p v-else class="text-xs text-amber-400 mb-4">Selecione ao menos um status.</p>
+
+                    <!-- Erro ao salvar -->
+                    <div v-if="wcStatusSaveError" class="p-3 rounded-xl text-xs bg-red-500/10 text-red-400 border border-red-500/20 mb-3">
+                        {{ wcStatusSaveError }}
+                    </div>
 
                     <div class="flex gap-3">
                         <button @click="showWcStatusModal = false" class="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm transition border border-gray-700">

@@ -762,14 +762,27 @@ class AnalyticsController extends Controller
             'consumer_secret' => 'required|string',
         ]);
 
-        $wcService = app(WooCommerceService::class);
-        $statuses = $wcService->fetchOrderStatuses($request->store_url, $request->consumer_key, $request->consumer_secret);
+        try {
+            $wcService = app(WooCommerceService::class);
+            $statuses = $wcService->fetchOrderStatuses($request->store_url, $request->consumer_key, $request->consumer_secret);
 
-        return response()->json([
-            'success' => true,
-            'statuses' => $statuses,
-            'default_statuses' => WooCommerceService::DEFAULT_ORDER_STATUSES,
-        ]);
+            return response()->json([
+                'success' => true,
+                'statuses' => $statuses,
+                'default_statuses' => WooCommerceService::DEFAULT_ORDER_STATUSES,
+            ]);
+        } catch (\Throwable $e) {
+            SystemLog::error('analytics', 'woocommerce.statuses.controller_error', "Erro ao buscar status WooCommerce: {$e->getMessage()}", [
+                'store_url' => $request->store_url,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'statuses' => [],
+            ], 500);
+        }
     }
 
     /**
@@ -777,6 +790,12 @@ class AnalyticsController extends Controller
      */
     public function updateWooCommerceStatuses(Request $request, AnalyticsConnection $connection): JsonResponse
     {
+        SystemLog::debug('analytics', 'woocommerce.statuses.update_request', "Recebida requisição para atualizar status da conexão #{$connection->id}", [
+            'connection_id' => $connection->id,
+            'platform' => $connection->platform,
+            'received_statuses' => $request->order_statuses,
+        ]);
+
         if ($connection->platform !== 'woocommerce') {
             return response()->json(['success' => false, 'error' => 'Conexão não é WooCommerce'], 400);
         }
@@ -793,20 +812,48 @@ class AnalyticsController extends Controller
             ->values()
             ->toArray();
 
-        $config = $connection->config;
-        $config['order_statuses'] = $orderStatuses;
-        $connection->update(['config' => $config]);
+        try {
+            $config = $connection->config ?? [];
 
-        SystemLog::info('analytics', 'woocommerce.statuses.updated', "Status WooCommerce atualizados para: {$connection->name}", [
-            'connection_id' => $connection->id,
-            'order_statuses' => $orderStatuses,
-        ]);
+            SystemLog::debug('analytics', 'woocommerce.statuses.config_before', "Config antes da atualização", [
+                'connection_id' => $connection->id,
+                'config_keys' => array_keys($config),
+                'old_statuses' => $config['order_statuses'] ?? 'não definido',
+            ]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Status de pedido atualizados com sucesso',
-            'order_statuses' => $orderStatuses,
-        ]);
+            $config['order_statuses'] = $orderStatuses;
+
+            $connection->config = $config;
+            $connection->save();
+
+            // Recarregar para confirmar que salvou
+            $connection->refresh();
+            $savedStatuses = $connection->config['order_statuses'] ?? [];
+
+            SystemLog::info('analytics', 'woocommerce.statuses.updated', "Status WooCommerce atualizados para: {$connection->name}", [
+                'connection_id' => $connection->id,
+                'order_statuses' => $orderStatuses,
+                'saved_statuses' => $savedStatuses,
+                'match' => $savedStatuses === $orderStatuses,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Status de pedido atualizados com sucesso',
+                'order_statuses' => $savedStatuses,
+            ]);
+        } catch (\Throwable $e) {
+            SystemLog::error('analytics', 'woocommerce.statuses.update_error', "Erro ao salvar status: {$e->getMessage()}", [
+                'connection_id' => $connection->id,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**

@@ -291,10 +291,8 @@ class GoogleAnalyticsService
             $this->syncTopPages($connection, $token, $propertyId, $start, $end);
 
             // Buscar dados de custo do Google Ads via GA4 (quando Ads está vinculado ao GA4)
+            // Inclui dados diários agregados + dados por campanha
             $this->syncGoogleAdsCostViaGA4($connection, $token, $propertyId, $start, $end);
-
-            // Buscar dados por campanha do Google Ads via GA4
-            $this->syncGoogleAdsCampaignsViaGA4($connection, $token, $propertyId, $start, $end);
 
             $connection->update([
                 'sync_status' => 'success',
@@ -454,23 +452,29 @@ class GoogleAnalyticsService
         ]);
 
         try {
-            $requestPayload = [
-                'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
-                'dimensions' => [['name' => 'date']],
-                'metrics' => [
-                    ['name' => 'advertiserAdCost'],
-                    ['name' => 'advertiserAdClicks'],
-                    ['name' => 'advertiserAdImpressions'],
-                    ['name' => 'advertiserAdCostPerClick'],
-                    ['name' => 'returnOnAdSpend'],
-                    ['name' => 'advertiserAdCostPerConversion'],
-                    ['name' => 'conversions'],
-                ],
-            ];
-
+            // A API do GA4 exige dimensão de campanha junto com métricas de custo Ads.
+            // Buscamos com date + sessionCampaignName e agregamos por dia no PHP.
             $response = Http::withToken($token)->post(
                 "{$this->reportingUrl}/properties/{$propertyId}:runReport",
-                $requestPayload
+                [
+                    'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
+                    'dimensions' => [
+                        ['name' => 'date'],
+                        ['name' => 'sessionCampaignName'],
+                    ],
+                    'metrics' => [
+                        ['name' => 'advertiserAdCost'],
+                        ['name' => 'advertiserAdClicks'],
+                        ['name' => 'advertiserAdImpressions'],
+                        ['name' => 'advertiserAdCostPerClick'],
+                        ['name' => 'returnOnAdSpend'],
+                        ['name' => 'conversions'],
+                    ],
+                    'limit' => 10000,
+                    'orderBys' => [
+                        ['dimension' => ['dimensionName' => 'date', 'orderType' => 'ALPHANUMERIC'], 'desc' => false],
+                    ],
+                ]
             );
 
             if (!$response->successful()) {
@@ -493,12 +497,6 @@ class GoogleAnalyticsService
 
             $rows = $response->json('rows', []);
             $metricHeaders = $response->json('metricHeaders', []);
-            $synced = 0;
-            $hasData = false;
-            $totalCost = 0;
-            $totalClicks = 0;
-            $totalImpressions = 0;
-            $skippedZeroRows = 0;
 
             SystemLog::debug('analytics', 'ga.ads_cost.response', "Resposta GA4 Ads: {$response->json('rowCount', 0)} linhas, " . count($metricHeaders) . " métricas", [
                 'connection_id' => $connection->id,
@@ -507,41 +505,76 @@ class GoogleAnalyticsService
                 'metric_headers' => array_map(fn($h) => $h['name'] ?? '?', $metricHeaders),
             ]);
 
+            // Agregar dados por dia (somando todas as campanhas)
+            $dailyData = [];
+
             foreach ($rows as $row) {
                 $dateStr = $row['dimensionValues'][0]['value'] ?? null;
+                $campaignName = $row['dimensionValues'][1]['value'] ?? '(not set)';
                 if (!$dateStr) continue;
 
                 $date = Carbon::createFromFormat('Ymd', $dateStr)->format('Y-m-d');
 
                 $metrics = [];
                 foreach ($metricHeaders as $i => $header) {
-                    $value = floatval($row['metricValues'][$i]['value'] ?? 0);
-                    $metrics[$header['name']] = $value;
+                    $metrics[$header['name']] = floatval($row['metricValues'][$i]['value'] ?? 0);
                 }
 
-                // Só salvar se houver dados reais de custo
-                $adCost = $metrics['advertiserAdCost'] ?? 0;
-                $adClicks = $metrics['advertiserAdClicks'] ?? 0;
-                $adImpressions = $metrics['advertiserAdImpressions'] ?? 0;
+                if (!isset($dailyData[$date])) {
+                    $dailyData[$date] = [
+                        'cost' => 0, 'clicks' => 0, 'impressions' => 0,
+                        'conversions' => 0, 'campaigns' => [],
+                    ];
+                }
 
-                if ($adCost <= 0 && $adClicks <= 0 && $adImpressions <= 0) {
-                    $skippedZeroRows++;
+                $cost = $metrics['advertiserAdCost'] ?? 0;
+                $clicks = $metrics['advertiserAdClicks'] ?? 0;
+                $impressions = $metrics['advertiserAdImpressions'] ?? 0;
+                $conversions = $metrics['conversions'] ?? 0;
+
+                $dailyData[$date]['cost'] += $cost;
+                $dailyData[$date]['clicks'] += $clicks;
+                $dailyData[$date]['impressions'] += $impressions;
+                $dailyData[$date]['conversions'] += $conversions;
+
+                // Salvar também por campanha
+                if ($campaignName !== '(not set)' && ($cost > 0 || $clicks > 0 || $impressions > 0)) {
+                    $dailyData[$date]['campaigns'][$campaignName] = [
+                        'cost' => ($dailyData[$date]['campaigns'][$campaignName]['cost'] ?? 0) + $cost,
+                        'clicks' => ($dailyData[$date]['campaigns'][$campaignName]['clicks'] ?? 0) + $clicks,
+                        'impressions' => ($dailyData[$date]['campaigns'][$campaignName]['impressions'] ?? 0) + $impressions,
+                        'conversions' => ($dailyData[$date]['campaigns'][$campaignName]['conversions'] ?? 0) + $conversions,
+                        'roas' => $metrics['returnOnAdSpend'] ?? 0,
+                    ];
+                }
+            }
+
+            // Salvar dados diários agregados
+            $synced = 0;
+            $totalCost = 0;
+            $totalClicks = 0;
+            $totalImpressions = 0;
+            $daysWithData = 0;
+
+            foreach ($dailyData as $date => $data) {
+                if ($data['cost'] <= 0 && $data['clicks'] <= 0 && $data['impressions'] <= 0) {
                     continue;
                 }
 
-                $hasData = true;
-                $totalCost += $adCost;
-                $totalClicks += $adClicks;
-                $totalImpressions += $adImpressions;
+                $daysWithData++;
+                $totalCost += $data['cost'];
+                $totalClicks += $data['clicks'];
+                $totalImpressions += $data['impressions'];
+
+                $cpc = $data['clicks'] > 0 ? $data['cost'] / $data['clicks'] : 0;
+                $roas = $data['cost'] > 0 ? 0 : 0; // Será calculado no rebuild com receita WC
 
                 $dataPoints = [
-                    'ga4_ad_cost' => $adCost,
-                    'ga4_ad_clicks' => $adClicks,
-                    'ga4_ad_impressions' => $adImpressions,
-                    'ga4_ad_cpc' => $metrics['advertiserAdCostPerClick'] ?? 0,
-                    'ga4_ad_roas' => $metrics['returnOnAdSpend'] ?? 0,
-                    'ga4_ad_cost_per_conversion' => $metrics['advertiserAdCostPerConversion'] ?? 0,
-                    'ga4_ad_conversions' => $metrics['conversions'] ?? 0,
+                    'ga4_ad_cost' => $data['cost'],
+                    'ga4_ad_clicks' => $data['clicks'],
+                    'ga4_ad_impressions' => $data['impressions'],
+                    'ga4_ad_cpc' => $cpc,
+                    'ga4_ad_conversions' => $data['conversions'],
                 ];
 
                 foreach ($dataPoints as $key => $value) {
@@ -561,142 +594,59 @@ class GoogleAnalyticsService
                     );
                     $synced++;
                 }
+
+                // Salvar campanhas individuais
+                foreach ($data['campaigns'] as $campaignName => $campaignData) {
+                    $campaignMetrics = [
+                        'ga4_ad_cost' => $campaignData['cost'],
+                        'ga4_ad_clicks' => $campaignData['clicks'],
+                        'ga4_ad_impressions' => $campaignData['impressions'],
+                        'ga4_ad_conversions' => $campaignData['conversions'],
+                        'ga4_ad_roas' => $campaignData['roas'],
+                    ];
+
+                    foreach ($campaignMetrics as $key => $value) {
+                        AnalyticsDataPoint::updateOrCreate(
+                            [
+                                'analytics_connection_id' => $connection->id,
+                                'metric_key' => $key,
+                                'date' => $date,
+                                'dimension_key' => 'campaign',
+                                'dimension_value' => $campaignName,
+                            ],
+                            [
+                                'brand_id' => $connection->brand_id,
+                                'platform' => 'google_analytics',
+                                'value' => $value,
+                                'extra' => ['source' => 'ga4_linked_ads'],
+                            ]
+                        );
+                    }
+                }
             }
 
-            if ($hasData) {
-                SystemLog::info('analytics', 'ga.ads_cost.synced', "Google Ads via GA4: R$ " . number_format($totalCost, 2, ',', '.') . " | {$totalClicks} cliques | {$totalImpressions} impressões | {$synced} pontos salvos", [
+            if ($daysWithData > 0) {
+                SystemLog::info('analytics', 'ga.ads_cost.synced', "Google Ads via GA4: R$ " . number_format($totalCost, 2, ',', '.') . " | {$totalClicks} cliques | {$totalImpressions} impressões | {$daysWithData} dias | {$synced} pontos salvos", [
                     'connection_id' => $connection->id,
                     'synced' => $synced,
                     'total_cost' => round($totalCost, 2),
                     'total_clicks' => $totalClicks,
                     'total_impressions' => $totalImpressions,
-                    'days_with_data' => count($rows) - $skippedZeroRows,
-                    'days_skipped_zero' => $skippedZeroRows,
+                    'days_with_data' => $daysWithData,
+                    'total_days' => count($dailyData),
                 ]);
             } else {
-                SystemLog::warning('analytics', 'ga.ads_cost.no_data', "Nenhum dado de custo Google Ads via GA4. A API respondeu OK com {$response->json('rowCount', 0)} linhas, mas todas com custo/cliques/impressões = 0. Verifique se o Google Ads está vinculado ao GA4.", [
+                SystemLog::warning('analytics', 'ga.ads_cost.no_data', "Nenhum dado de custo Google Ads via GA4. A API retornou " . count($rows) . " linhas, mas todas com custo/cliques/impressões = 0. Verifique se há gastos ativos no Google Ads.", [
                     'connection_id' => $connection->id,
                     'property_id' => $propertyId,
                     'rows_returned' => count($rows),
-                    'skipped_zero_rows' => $skippedZeroRows,
-                    'hint' => 'No GA4: Admin > Product Links > Google Ads linking. Verifique se há um link ativo.',
+                    'hint' => 'O Google Ads está vinculado, mas pode não ter gastos no período consultado.',
                 ]);
             }
         } catch (\Throwable $e) {
             SystemLog::error('analytics', 'ga.ads_cost.error', "Erro ao buscar custo Ads via GA4: {$e->getMessage()}", [
                 'connection_id' => $connection->id,
                 'property_id' => $propertyId,
-                'error' => $e->getMessage(),
-                'file' => $e->getFile() . ':' . $e->getLine(),
-            ]);
-        }
-    }
-
-    /**
-     * Busca dados por campanha do Google Ads via GA4.
-     * Usa dimensão sessionCampaignName para separar por campanha.
-     */
-    protected function syncGoogleAdsCampaignsViaGA4(
-        AnalyticsConnection $connection,
-        string $token,
-        string $propertyId,
-        string $start,
-        string $end
-    ): void {
-        try {
-            $response = Http::withToken($token)->post(
-                "{$this->reportingUrl}/properties/{$propertyId}:runReport",
-                [
-                    'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
-                    'dimensions' => [
-                        ['name' => 'sessionGoogleAdsAdGroupName'],
-                        ['name' => 'sessionCampaignName'],
-                    ],
-                    'metrics' => [
-                        ['name' => 'advertiserAdCost'],
-                        ['name' => 'advertiserAdClicks'],
-                        ['name' => 'advertiserAdImpressions'],
-                        ['name' => 'conversions'],
-                        ['name' => 'returnOnAdSpend'],
-                    ],
-                    'limit' => 25,
-                    'orderBys' => [
-                        ['metric' => ['metricName' => 'advertiserAdCost'], 'desc' => true],
-                    ],
-                ]
-            );
-
-            if (!$response->successful()) {
-                $body = $response->json();
-                SystemLog::warning('analytics', 'ga.ads_campaigns.api_error', "API GA4 retornou erro ao buscar campanhas Ads: HTTP {$response->status()}", [
-                    'connection_id' => $connection->id,
-                    'http_status' => $response->status(),
-                    'error_message' => $body['error']['message'] ?? 'N/A',
-                    'body_preview' => substr($response->body(), 0, 300),
-                ]);
-                return;
-            }
-
-            $rows = $response->json('rows', []);
-            $endDate = $end;
-
-            foreach ($rows as $row) {
-                $adGroupName = $row['dimensionValues'][0]['value'] ?? '(not set)';
-                $campaignName = $row['dimensionValues'][1]['value'] ?? '(not set)';
-
-                if ($campaignName === '(not set)' && $adGroupName === '(not set)') continue;
-
-                $cost = floatval($row['metricValues'][0]['value'] ?? 0);
-                $clicks = floatval($row['metricValues'][1]['value'] ?? 0);
-                $impressions = floatval($row['metricValues'][2]['value'] ?? 0);
-                $conversions = floatval($row['metricValues'][3]['value'] ?? 0);
-                $roas = floatval($row['metricValues'][4]['value'] ?? 0);
-
-                // Só salvar campanhas com dados reais
-                if ($cost <= 0 && $clicks <= 0 && $impressions <= 0) continue;
-
-                $label = $campaignName !== '(not set)' ? $campaignName : $adGroupName;
-
-                $campaignMetrics = [
-                    'ga4_ad_cost' => $cost,
-                    'ga4_ad_clicks' => $clicks,
-                    'ga4_ad_impressions' => $impressions,
-                    'ga4_ad_conversions' => $conversions,
-                    'ga4_ad_roas' => $roas,
-                ];
-
-                foreach ($campaignMetrics as $key => $value) {
-                    AnalyticsDataPoint::updateOrCreate(
-                        [
-                            'analytics_connection_id' => $connection->id,
-                            'metric_key' => $key,
-                            'date' => $endDate,
-                            'dimension_key' => 'campaign',
-                            'dimension_value' => $label,
-                        ],
-                        [
-                            'brand_id' => $connection->brand_id,
-                            'platform' => 'google_analytics',
-                            'value' => $value,
-                            'extra' => [
-                                'campaign' => $campaignName,
-                                'ad_group' => $adGroupName,
-                                'source' => 'ga4_linked_ads',
-                            ],
-                        ]
-                    );
-                }
-            }
-
-            $savedCampaigns = collect($rows)->filter(fn($r) => ($r['dimensionValues'][1]['value'] ?? '(not set)') !== '(not set)' || ($r['dimensionValues'][0]['value'] ?? '(not set)') !== '(not set)')->count();
-            SystemLog::info('analytics', 'ga.ads_campaigns.synced', "Campanhas Google Ads via GA4: {$savedCampaigns} campanhas encontradas", [
-                'connection_id' => $connection->id,
-                'total_rows' => count($rows),
-                'campaigns_saved' => $savedCampaigns,
-            ]);
-        } catch (\Throwable $e) {
-            SystemLog::error('analytics', 'ga.ads_campaigns.error', "Erro ao buscar campanhas Ads via GA4: {$e->getMessage()}", [
-                'connection_id' => $connection->id,
                 'error' => $e->getMessage(),
                 'file' => $e->getFile() . ':' . $e->getLine(),
             ]);

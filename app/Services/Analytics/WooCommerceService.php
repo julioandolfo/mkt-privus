@@ -285,56 +285,142 @@ class WooCommerceService
      */
     public function fetchOrderStatuses(string $storeUrl, string $consumerKey, string $consumerSecret): array
     {
-        $url = rtrim($storeUrl, '/') . '/wp-json/wc/v3/orders/statuses';
+        $baseUrl = rtrim($storeUrl, '/');
 
-        try {
-            // Tentar endpoint oficial de status (WC 3.5+)
-            $response = Http::withBasicAuth($consumerKey, $consumerSecret)
-                ->timeout(15)
-                ->get($url);
+        SystemLog::info('analytics', 'woocommerce.statuses.fetch_start', "Buscando status de pedido de: {$baseUrl}", [
+            'store_url' => $baseUrl,
+            'has_key' => !empty($consumerKey),
+        ]);
 
-            if ($response->successful()) {
-                $data = $response->json();
-                if (is_array($data)) {
-                    return $data;
-                }
-            }
-        } catch (\Throwable) {
-            // Silenciar - tentar método alternativo
-        }
-
-        // Método alternativo: buscar do reports/orders/totals que lista status
-        $reportsUrl = rtrim($storeUrl, '/') . '/wp-json/wc/v3/reports/orders/totals';
+        // Método 1: reports/orders/totals — lista todos os status com contagem de pedidos
+        // Este é o endpoint mais confiável para obter status (incluindo personalizados)
+        $reportsUrl = $baseUrl . '/wp-json/wc/v3/reports/orders/totals';
 
         try {
             $response = Http::withBasicAuth($consumerKey, $consumerSecret)
                 ->timeout(15)
                 ->get($reportsUrl);
 
+            SystemLog::debug('analytics', 'woocommerce.statuses.reports_response', "reports/orders/totals: HTTP {$response->status()}", [
+                'url' => $reportsUrl,
+                'status' => $response->status(),
+                'body_preview' => substr($response->body(), 0, 500),
+            ]);
+
             if ($response->successful()) {
                 $data = $response->json();
-                if (is_array($data)) {
-                    return collect($data)->map(fn($item) => [
+                if (is_array($data) && !empty($data)) {
+                    $statuses = collect($data)->map(fn($item) => [
                         'slug' => $item['slug'] ?? '',
                         'name' => $item['name'] ?? $item['slug'] ?? '',
-                        'total' => $item['total'] ?? 0,
+                        'total' => intval($item['total'] ?? 0),
                     ])->filter(fn($item) => !empty($item['slug']))->values()->toArray();
+
+                    if (!empty($statuses)) {
+                        SystemLog::info('analytics', 'woocommerce.statuses.fetched', count($statuses) . " status encontrados via reports/orders/totals", [
+                            'statuses' => array_map(fn($s) => $s['slug'] . ' (' . $s['total'] . ')', $statuses),
+                        ]);
+                        return $statuses;
+                    }
                 }
             }
-        } catch (\Throwable) {
-            // Silenciar
+        } catch (\Throwable $e) {
+            SystemLog::warning('analytics', 'woocommerce.statuses.reports_error', "Erro ao buscar reports/orders/totals: {$e->getMessage()}", [
+                'url' => $reportsUrl,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        // Método 2: Buscar um pedido recente e extrair status disponíveis do schema
+        // via OPTIONS ou buscar pedidos com status diferentes
+        $ordersUrl = $baseUrl . '/wp-json/wc/v3/orders';
+
+        try {
+            // Buscar pedidos recentes para ver quais status existem
+            $response = Http::withBasicAuth($consumerKey, $consumerSecret)
+                ->timeout(15)
+                ->get($ordersUrl, [
+                    'per_page' => 100,
+                    'orderby' => 'date',
+                    'order' => 'desc',
+                ]);
+
+            SystemLog::debug('analytics', 'woocommerce.statuses.orders_response', "orders scan: HTTP {$response->status()}", [
+                'url' => $ordersUrl,
+                'status' => $response->status(),
+            ]);
+
+            if ($response->successful()) {
+                $orders = $response->json();
+                if (is_array($orders) && !empty($orders)) {
+                    // Extrair status únicos dos pedidos reais
+                    $foundStatuses = collect($orders)
+                        ->pluck('status')
+                        ->filter()
+                        ->unique()
+                        ->values();
+
+                    // Combinar com status padrão
+                    $defaultSlugs = ['pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed'];
+                    $allSlugs = $foundStatuses->merge($defaultSlugs)->unique()->values();
+
+                    $statuses = $allSlugs->map(fn($slug) => [
+                        'slug' => $slug,
+                        'name' => $this->statusSlugToName($slug),
+                        'total' => $foundStatuses->filter(fn($s) => $s === $slug)->count() > 0
+                            ? collect($orders)->where('status', $slug)->count()
+                            : 0,
+                    ])->toArray();
+
+                    SystemLog::info('analytics', 'woocommerce.statuses.fetched_from_orders', count($statuses) . " status encontrados via scan de pedidos", [
+                        'statuses' => array_map(fn($s) => $s['slug'] . ' (' . $s['total'] . ')', $statuses),
+                        'custom_statuses' => $foundStatuses->diff($defaultSlugs)->values()->toArray(),
+                    ]);
+
+                    return $statuses;
+                }
+            }
+        } catch (\Throwable $e) {
+            SystemLog::warning('analytics', 'woocommerce.statuses.orders_error', "Erro ao buscar pedidos para scan de status: {$e->getMessage()}", [
+                'url' => $ordersUrl,
+                'error' => $e->getMessage(),
+            ]);
         }
 
         // Fallback: retornar status padrão do WooCommerce
+        SystemLog::warning('analytics', 'woocommerce.statuses.fallback', 'Usando status padrão (nenhum método de API funcionou)', [
+            'store_url' => $baseUrl,
+        ]);
+
         return [
-            ['slug' => 'pending', 'name' => 'Pendente'],
-            ['slug' => 'processing', 'name' => 'Processando'],
-            ['slug' => 'on-hold', 'name' => 'Aguardando'],
-            ['slug' => 'completed', 'name' => 'Concluido'],
-            ['slug' => 'cancelled', 'name' => 'Cancelado'],
-            ['slug' => 'refunded', 'name' => 'Reembolsado'],
-            ['slug' => 'failed', 'name' => 'Falhou'],
+            ['slug' => 'pending', 'name' => 'Pendente', 'total' => 0],
+            ['slug' => 'processing', 'name' => 'Processando', 'total' => 0],
+            ['slug' => 'on-hold', 'name' => 'Aguardando', 'total' => 0],
+            ['slug' => 'completed', 'name' => 'Concluído', 'total' => 0],
+            ['slug' => 'cancelled', 'name' => 'Cancelado', 'total' => 0],
+            ['slug' => 'refunded', 'name' => 'Reembolsado', 'total' => 0],
+            ['slug' => 'failed', 'name' => 'Falhou', 'total' => 0],
         ];
+    }
+
+    /**
+     * Converte slug de status para nome legível
+     */
+    protected function statusSlugToName(string $slug): string
+    {
+        $map = [
+            'pending' => 'Pendente',
+            'processing' => 'Processando',
+            'on-hold' => 'Aguardando',
+            'completed' => 'Concluído',
+            'cancelled' => 'Cancelado',
+            'refunded' => 'Reembolsado',
+            'failed' => 'Falhou',
+            'checkout-draft' => 'Rascunho',
+            'trash' => 'Lixeira',
+        ];
+
+        return $map[$slug] ?? ucfirst(str_replace(['-', '_'], ' ', $slug));
     }
 
     /**
