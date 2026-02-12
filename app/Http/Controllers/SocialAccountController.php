@@ -24,15 +24,14 @@ class SocialAccountController extends Controller
     public function index(Request $request): Response
     {
         try {
-        $brand = $request->user()->getActiveBrand();
-        $accounts = [];
+            $brand = $request->user()->getActiveBrand();
+            $accounts = [];
 
-        SystemLog::info('social', 'accounts.index', 'Carregando contas sociais', [
-            'user_id' => $request->user()->id,
-            'brand_id' => $brand?->id,
-        ]);
+            SystemLog::info('social', 'accounts.index', 'Carregando contas sociais', [
+                'user_id' => $request->user()->id,
+                'brand_id' => $brand?->id,
+            ]);
 
-        {
             $allAccounts = SocialAccount::with('brand:id,name')
                 ->orderBy('platform')
                 ->get();
@@ -104,9 +103,8 @@ class SocialAccountController extends Controller
                         'brand_name' => $acc->brand?->name,
                     ];
                 });
-        }
 
-        $platforms = collect(SocialPlatform::cases())->map(fn($p) => [
+            $platforms = collect(SocialPlatform::cases())->map(fn($p) => [
             'value' => $p->value,
             'label' => $p->label(),
             'color' => $p->color(),

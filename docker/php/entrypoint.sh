@@ -1,11 +1,13 @@
 #!/bin/sh
-set -e
 
 # =====================================================
 # Entrypoint roda como ROOT para ter permissao no volume
 # PHP-FPM inicia como root e faz o drop para www nos workers
 # Outros processos (worker, scheduler) usam su-exec
 # =====================================================
+
+# NAO usar set -e aqui! Queremos que o PHP-FPM inicie
+# mesmo que algum passo de setup falhe.
 
 # Copiar assets compilados para o volume compartilhado
 if [ -d "/var/www/html/build-assets" ]; then
@@ -45,19 +47,19 @@ if [ "$1" = "php-fpm" ]; then
         sleep 2
     done
 
-    echo "==> [app] Rodando migrations..."
-    su-exec www:www php artisan migrate --force 2>&1 || echo "AVISO: Migrations falharam"
+    echo "==> [app] Rodando migrations (timeout: 120s)..."
+    timeout 120 su-exec www:www php artisan migrate --force 2>&1 || echo "==> AVISO: Migrations falharam ou timeout (continuando de qualquer forma)"
 
     echo "==> [app] Cacheando configuracoes..."
-    su-exec www:www php artisan config:cache 2>&1 || echo "AVISO: config:cache falhou"
-    su-exec www:www php artisan route:cache 2>&1 || echo "AVISO: route:cache falhou"
-    su-exec www:www php artisan view:cache 2>&1 || echo "AVISO: view:cache falhou"
+    su-exec www:www php artisan config:cache 2>&1 || echo "==> AVISO: config:cache falhou"
+    su-exec www:www php artisan route:cache 2>&1 || echo "==> AVISO: route:cache falhou"
+    su-exec www:www php artisan view:cache 2>&1 || echo "==> AVISO: view:cache falhou"
 
     echo "==> [app] Storage link..."
     su-exec www:www php artisan storage:link 2>/dev/null || true
 
     echo "==> [app] Seed templates de metricas sociais..."
-    su-exec www:www php artisan social:sync-insights --seed-templates 2>&1 || echo "AVISO: seed-templates falhou"
+    timeout 60 su-exec www:www php artisan social:sync-insights --seed-templates 2>&1 || echo "==> AVISO: seed-templates falhou ou timeout"
 
     echo "==> [app] Iniciando PHP-FPM..."
     # PHP-FPM DEVE iniciar como root - ele faz o drop para www nos workers via pool config
