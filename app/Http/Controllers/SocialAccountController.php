@@ -8,9 +8,11 @@ use App\Models\OAuthDiscoveredAccount;
 use App\Models\SocialAccount;
 use App\Models\SocialInsight;
 use App\Models\Setting;
+use App\Models\SystemLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -21,14 +23,25 @@ class SocialAccountController extends Controller
      */
     public function index(Request $request): Response
     {
+        try {
         $brand = $request->user()->getActiveBrand();
         $accounts = [];
 
+        SystemLog::info('social', 'accounts.index', 'Carregando contas sociais', [
+            'user_id' => $request->user()->id,
+            'brand_id' => $brand?->id,
+        ]);
+
         {
-            $accounts = SocialAccount::with('brand:id,name')
+            $allAccounts = SocialAccount::with('brand:id,name')
                 ->orderBy('platform')
-                ->get()
-                ->map(function ($acc) {
+                ->get();
+
+            SystemLog::info('social', 'accounts.index.count', "Encontradas {$allAccounts->count()} contas", [
+                'count' => $allAccounts->count(),
+            ]);
+
+            $accounts = $allAccounts->map(function ($acc) {
                     // Ultimo insight disponivel
                     $latestInsight = SocialInsight::where('social_account_id', $acc->id)
                         ->where('sync_status', 'success')
@@ -138,6 +151,11 @@ class SocialAccountController extends Controller
 
         $brands = Brand::orderBy('name')->get(['id', 'name']);
 
+        SystemLog::info('social', 'accounts.index.render', 'Renderizando pagina', [
+            'accounts_count' => count($accounts),
+            'brands_count' => $brands->count(),
+        ]);
+
         return Inertia::render('Social/Accounts/Index', [
             'accounts' => $accounts,
             'platforms' => $platforms,
@@ -147,6 +165,17 @@ class SocialAccountController extends Controller
             'discoveryToken' => $discoveryToken,
             'brands' => $brands,
         ]);
+
+        } catch (\Throwable $e) {
+            SystemLog::error('social', 'accounts.index.error', "Erro ao carregar contas: {$e->getMessage()}", [
+                'file' => $e->getFile() . ':' . $e->getLine(),
+                'trace' => substr($e->getTraceAsString(), 0, 1500),
+            ]);
+            Log::error('Social accounts index error: ' . $e->getMessage(), [
+                'exception' => $e,
+            ]);
+            throw $e;
+        }
     }
 
     /**
@@ -245,28 +274,59 @@ class SocialAccountController extends Controller
      */
     public function linkBrand(Request $request, SocialAccount $account): JsonResponse
     {
-        $brandId = $request->input('brand_id');
+        try {
+            $brandId = $request->input('brand_id');
 
-        if ($brandId) {
-            $brand = Brand::findOrFail($brandId);
-            $account->update(['brand_id' => $brand->id]);
+            SystemLog::info('social', 'account.link_brand.start', "Vinculando conta #{$account->id} a marca", [
+                'account_id' => $account->id,
+                'account_username' => $account->username,
+                'brand_id_received' => $brandId,
+                'brand_id_type' => gettype($brandId),
+                'current_brand_id' => $account->brand_id,
+            ]);
+
+            if ($brandId) {
+                $brand = Brand::findOrFail($brandId);
+                $account->update(['brand_id' => $brand->id]);
+
+                SystemLog::info('social', 'account.link_brand.linked', "Conta vinculada a \"{$brand->name}\"", [
+                    'account_id' => $account->id,
+                    'brand_id' => $brand->id,
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => "Conta vinculada a \"{$brand->name}\".",
+                    'brand_id' => $brand->id,
+                    'brand_name' => $brand->name,
+                ]);
+            }
+
+            $account->update(['brand_id' => null]);
+
+            SystemLog::info('social', 'account.link_brand.unlinked', "Conta desvinculada (global)", [
+                'account_id' => $account->id,
+            ]);
 
             return response()->json([
                 'success' => true,
-                'message' => "Conta vinculada a \"{$brand->name}\".",
-                'brand_id' => $brand->id,
-                'brand_name' => $brand->name,
+                'message' => 'Conta desvinculada (global).',
+                'brand_id' => null,
+                'brand_name' => null,
             ]);
+        } catch (\Throwable $e) {
+            SystemLog::error('social', 'account.link_brand.error', "Erro ao vincular marca: {$e->getMessage()}", [
+                'account_id' => $account->id,
+                'brand_id' => $request->input('brand_id'),
+                'error' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao vincular: ' . $e->getMessage(),
+            ], 500);
         }
-
-        $account->update(['brand_id' => null]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Conta desvinculada (global).',
-            'brand_id' => null,
-            'brand_name' => null,
-        ]);
     }
 
     // ===== PRIVATE =====

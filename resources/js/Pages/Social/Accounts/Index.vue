@@ -461,7 +461,6 @@ function formatNumber(num: number | null | undefined): string {
             </Transition>
         </Teleport>
 
-        <template>
             <!-- Contas conectadas agrupadas por plataforma -->
             <div v-if="accounts.length > 0" class="mb-8 space-y-4">
                 <div class="flex items-center justify-between">
@@ -736,7 +735,6 @@ function formatNumber(num: number | null | undefined): string {
                     </div>
                 </div>
             </div>
-        </template>
 
         <!-- Modal: Contas descobertas via OAuth -->
         <Teleport to="body">

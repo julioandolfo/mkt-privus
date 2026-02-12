@@ -966,35 +966,68 @@ class AnalyticsController extends Controller
      */
     public function linkBrand(Request $request, AnalyticsConnection $connection): JsonResponse
     {
-        $brandId = $request->input('brand_id'); // null para desvincular
+        try {
+            $brandId = $request->input('brand_id'); // null para desvincular
 
-        if ($brandId) {
-            $brand = Brand::findOrFail($brandId);
-            $connection->update(['brand_id' => $brand->id]);
+            SystemLog::info('analytics', 'connection.link_brand.start', "Vinculando conexao #{$connection->id} a marca", [
+                'connection_id' => $connection->id,
+                'connection_name' => $connection->name,
+                'brand_id_received' => $brandId,
+                'brand_id_type' => gettype($brandId),
+                'current_brand_id' => $connection->brand_id,
+            ]);
 
-            // Atualizar data_points e summaries vinculados a esta conexao
-            \App\Models\AnalyticsDataPoint::where('analytics_connection_id', $connection->id)
-                ->update(['brand_id' => $brand->id]);
+            if ($brandId) {
+                $brand = Brand::findOrFail($brandId);
+                $connection->update(['brand_id' => $brand->id]);
+
+                // Atualizar data_points vinculados a esta conexao
+                $updatedPoints = \App\Models\AnalyticsDataPoint::where('analytics_connection_id', $connection->id)
+                    ->update(['brand_id' => $brand->id]);
+
+                SystemLog::info('analytics', 'connection.link_brand.linked', "Conexao vinculada a \"{$brand->name}\"", [
+                    'connection_id' => $connection->id,
+                    'brand_id' => $brand->id,
+                    'data_points_updated' => $updatedPoints,
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => "Conexão vinculada a \"{$brand->name}\".",
+                    'brand_id' => $brand->id,
+                    'brand_name' => $brand->name,
+                ]);
+            }
+
+            // Desvincular
+            $connection->update(['brand_id' => null]);
+            $updatedPoints = \App\Models\AnalyticsDataPoint::where('analytics_connection_id', $connection->id)
+                ->update(['brand_id' => null]);
+
+            SystemLog::info('analytics', 'connection.link_brand.unlinked', "Conexao desvinculada (global)", [
+                'connection_id' => $connection->id,
+                'data_points_updated' => $updatedPoints,
+            ]);
 
             return response()->json([
                 'success' => true,
-                'message' => "Conexão vinculada a \"{$brand->name}\".",
-                'brand_id' => $brand->id,
-                'brand_name' => $brand->name,
+                'message' => 'Conexão desvinculada (global).',
+                'brand_id' => null,
+                'brand_name' => null,
             ]);
+        } catch (\Throwable $e) {
+            SystemLog::error('analytics', 'connection.link_brand.error', "Erro ao vincular marca: {$e->getMessage()}", [
+                'connection_id' => $connection->id,
+                'brand_id' => $request->input('brand_id'),
+                'error' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao vincular marca: ' . $e->getMessage(),
+            ], 500);
         }
-
-        // Desvincular
-        $connection->update(['brand_id' => null]);
-        \App\Models\AnalyticsDataPoint::where('analytics_connection_id', $connection->id)
-            ->update(['brand_id' => null]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Conexão desvinculada (global).',
-            'brand_id' => null,
-            'brand_name' => null,
-        ]);
     }
 
     /**

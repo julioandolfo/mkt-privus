@@ -66,12 +66,18 @@ const props = defineProps<{
 
 // Vincular marca a conexao
 const linkingBrand = ref<number | null>(null);
+const linkBrandError = ref<string | null>(null);
 async function linkBrandToConnection(connId: number, brandId: string | null) {
     linkingBrand.value = connId;
+    linkBrandError.value = null;
+    console.log('[linkBrand] Iniciando', { connId, brandId });
     try {
-        const response = await axios.post(route('analytics.connections.link-brand', connId), {
-            brand_id: brandId === 'global' || brandId === '' ? null : brandId,
-        });
+        const payload = {
+            brand_id: brandId === 'global' || brandId === '' ? null : Number(brandId),
+        };
+        console.log('[linkBrand] POST', route('analytics.connections.link-brand', connId), payload);
+        const response = await axios.post(route('analytics.connections.link-brand', connId), payload);
+        console.log('[linkBrand] Resposta', response.data);
         if (response.data.success) {
             // Atualizar localmente a conexao para feedback imediato
             const conn = props.connections.find(c => c.id === connId);
@@ -79,9 +85,14 @@ async function linkBrandToConnection(connId: number, brandId: string | null) {
                 conn.brand_id = response.data.brand_id;
                 conn.brand_name = response.data.brand_name;
             }
+        } else {
+            linkBrandError.value = response.data.message || 'Erro desconhecido';
+            console.error('[linkBrand] Erro no response', response.data);
         }
     } catch (e: any) {
-        console.error('Erro ao vincular marca', e);
+        const msg = e.response?.data?.message || e.message || 'Erro desconhecido';
+        linkBrandError.value = msg;
+        console.error('[linkBrand] Exception', msg, e.response?.status, e.response?.data);
         // Reverter o select - recarregar pagina
         router.reload({ preserveScroll: true });
     } finally {
@@ -735,7 +746,10 @@ function isConnected(platform: string): boolean {
                                 :value="conn.brand_id ? String(conn.brand_id) : 'global'"
                                 @change="linkBrandToConnection(conn.id, ($event.target as HTMLSelectElement).value)"
                                 :disabled="linkingBrand === conn.id"
-                                class="rounded-lg bg-gray-800 border-gray-700 text-[11px] text-gray-300 py-1 pl-2 pr-6 focus:border-indigo-500 focus:ring-indigo-500 disabled:opacity-50"
+                                :class="[
+                                    'rounded-lg bg-gray-800 border-gray-700 text-[11px] text-gray-300 py-1 pl-2 pr-6 focus:border-indigo-500 focus:ring-indigo-500 disabled:opacity-50',
+                                    conn.brand_id ? 'border-indigo-500/40' : ''
+                                ]"
                                 title="Vincular a marca">
                                 <option value="global">Global</option>
                                 <option v-for="b in brands" :key="b.id" :value="String(b.id)">{{ b.name }}</option>
@@ -743,6 +757,7 @@ function isConnected(platform: string): boolean {
                             <svg v-if="linkingBrand === conn.id" class="w-3 h-3 text-indigo-400 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                 <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                             </svg>
+                            <span v-if="linkBrandError && linkingBrand === null" class="text-[9px] text-red-400">{{ linkBrandError }}</span>
                         </div>
 
                         <!-- Status -->

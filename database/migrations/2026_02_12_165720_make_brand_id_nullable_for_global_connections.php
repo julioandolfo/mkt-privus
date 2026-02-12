@@ -1,7 +1,6 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 
@@ -14,7 +13,6 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Tabelas que precisam de brand_id nullable com SET NULL
         $tables = [
             'analytics_connections',
             'analytics_data_points',
@@ -24,65 +22,62 @@ return new class extends Migration
             'custom_metrics',
             'content_calendar_items',
             'posts',
+            'metric_categories',
+            'brand_assets',
+            'content_rules',
+            'content_suggestions',
         ];
 
         foreach ($tables as $table) {
             if (!Schema::hasTable($table)) continue;
             if (!Schema::hasColumn($table, 'brand_id')) continue;
 
-            // Dropar FK existente e recriar como nullable SET NULL
-            Schema::table($table, function (Blueprint $blueprint) use ($table) {
-                // Tentar dropar a FK (nome padrão do Laravel)
+            // 1. Descobrir o nome da FK
+            $fkName = $this->findForeignKey($table, 'brand_id');
+
+            // 2. Dropar FK se existir
+            if ($fkName) {
                 try {
-                    $blueprint->dropForeign([$table . '_brand_id_foreign']);
+                    DB::statement("ALTER TABLE `{$table}` DROP FOREIGN KEY `{$fkName}`");
                 } catch (\Throwable $e) {
-                    // Pode ter outro nome, tentar pelo padrão
-                    try {
-                        $blueprint->dropForeign(['brand_id']);
-                    } catch (\Throwable $e2) {
-                        // Ignorar se não existir
-                    }
+                    // Ignorar
                 }
-            });
+            }
 
-            Schema::table($table, function (Blueprint $blueprint) {
-                $blueprint->unsignedBigInteger('brand_id')->nullable()->change();
-            });
+            // 3. Tornar coluna nullable via SQL direto
+            try {
+                DB::statement("ALTER TABLE `{$table}` MODIFY `brand_id` BIGINT UNSIGNED NULL");
+            } catch (\Throwable $e) {
+                // Ignorar se já é nullable
+            }
 
-            Schema::table($table, function (Blueprint $blueprint) {
-                $blueprint->foreign('brand_id')
-                    ->references('id')
-                    ->on('brands')
-                    ->nullOnDelete();
-            });
+            // 4. Recriar FK com SET NULL
+            try {
+                DB::statement("ALTER TABLE `{$table}` ADD CONSTRAINT `{$table}_brand_id_foreign` FOREIGN KEY (`brand_id`) REFERENCES `brands`(`id`) ON DELETE SET NULL");
+            } catch (\Throwable $e) {
+                // Ignorar se já existe
+            }
         }
+    }
 
-        // Tabelas adicionais com brand_id cascade que devem mudar para SET NULL
-        $extraTables = ['metric_categories', 'brand_assets', 'content_rules', 'content_suggestions'];
+    /**
+     * Encontra o nome da FK para uma coluna específica
+     */
+    private function findForeignKey(string $table, string $column): ?string
+    {
+        $dbName = config('database.connections.mysql.database');
 
-        foreach ($extraTables as $table) {
-            if (!Schema::hasTable($table)) continue;
-            if (!Schema::hasColumn($table, 'brand_id')) continue;
+        $results = DB::select("
+            SELECT CONSTRAINT_NAME
+            FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = ?
+              AND TABLE_NAME = ?
+              AND COLUMN_NAME = ?
+              AND REFERENCED_TABLE_NAME IS NOT NULL
+            LIMIT 1
+        ", [$dbName, $table, $column]);
 
-            Schema::table($table, function (Blueprint $blueprint) use ($table) {
-                try {
-                    $blueprint->dropForeign([$table . '_brand_id_foreign']);
-                } catch (\Throwable $e) {
-                    try { $blueprint->dropForeign(['brand_id']); } catch (\Throwable $e2) {}
-                }
-            });
-
-            Schema::table($table, function (Blueprint $blueprint) {
-                $blueprint->unsignedBigInteger('brand_id')->nullable()->change();
-            });
-
-            Schema::table($table, function (Blueprint $blueprint) {
-                $blueprint->foreign('brand_id')
-                    ->references('id')
-                    ->on('brands')
-                    ->nullOnDelete();
-            });
-        }
+        return $results[0]->CONSTRAINT_NAME ?? null;
     }
 
     /**
