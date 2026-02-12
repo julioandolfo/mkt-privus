@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import GuideBox from '@/Components/GuideBox.vue';
-import { Head, Link, usePage } from '@inertiajs/vue3';
+import { Head, Link, usePage, router } from '@inertiajs/vue3';
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import axios from 'axios';
 
 const page = usePage();
-const currentBrand = computed(() => page.props.currentBrand);
+const currentBrand = computed(() => page.props.currentBrand as any);
+const brands = computed(() => (page.props.brands || []) as any[]);
 
 interface CalendarPost {
     id: number;
@@ -330,6 +331,16 @@ function getPlatformDots(platforms: string[]): Array<{ color: string }> {
     return (platforms || []).slice(0, 3).map(p => ({ color: platformColors[p] || '#6B7280' }));
 }
 
+function switchBrandFromModal(event: Event) {
+    const brandId = parseInt((event.target as HTMLSelectElement).value);
+    if (brandId && brandId !== currentBrand.value?.id) {
+        showGenerateModal.value = false;
+        router.post(route('brands.switch', brandId), {}, {
+            preserveState: false,
+        });
+    }
+}
+
 const calendarGuideSteps = [
     { title: 'Calendario inteligente', description: 'Alem de posts agendados, agora voce pode gerar um calendario editorial com IA que cria pautas automaticamente.' },
     { title: 'Gere com IA', description: 'Clique em "Gerar Calendario com IA" para criar pautas para o mes inteiro. A IA considera sua marca, segmento e tom de voz.' },
@@ -495,10 +506,37 @@ onMounted(fetchCalendarData);
                             <svg class="w-5 h-5 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
                             Gerar Calendario com IA
                         </h3>
-                        <button @click="showGenerateModal = false" class="text-gray-500 hover:text-white">&times;</button>
+                        <button @click="showGenerateModal = false" class="text-gray-500 hover:text-white text-xl">&times;</button>
                     </div>
 
                     <div class="space-y-4">
+                        <!-- Marca selecionada -->
+                        <div class="rounded-xl border border-gray-700 bg-gray-800/50 p-4">
+                            <label class="text-xs text-gray-400 mb-2 block font-medium">Gerando calendario para:</label>
+                            <div v-if="currentBrand" class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0"
+                                    :style="{ backgroundColor: currentBrand.primary_color || '#6366F1' }">
+                                    <img v-if="currentBrand.logo_path" :src="'/storage/' + currentBrand.logo_path" class="w-full h-full object-cover rounded-xl" />
+                                    <span v-else>{{ currentBrand.name?.charAt(0)?.toUpperCase() }}</span>
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-white font-semibold text-sm truncate">{{ currentBrand.name }}</p>
+                                    <p class="text-gray-400 text-xs truncate">{{ currentBrand.segment || 'Segmento nao definido' }}</p>
+                                </div>
+                                <div v-if="brands.length > 1" class="shrink-0">
+                                    <select @change="switchBrandFromModal($event)" :value="currentBrand.id"
+                                        class="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-xs text-gray-300 cursor-pointer">
+                                        <option v-for="b in brands" :key="b.id" :value="b.id">{{ b.name }}</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div v-else class="text-amber-400 text-sm flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" /></svg>
+                                Nenhuma marca selecionada. Selecione uma marca no menu superior.
+                            </div>
+                            <p class="mt-2 text-[11px] text-gray-500">A IA usara o nome, segmento, publico-alvo, tom de voz e palavras-chave da marca para criar pautas contextualizadas.</p>
+                        </div>
+
                         <!-- Periodo -->
                         <div class="grid grid-cols-2 gap-3">
                             <div>
@@ -568,7 +606,7 @@ onMounted(fetchCalendarData);
 
                         <div class="flex justify-end gap-3 pt-2">
                             <button @click="showGenerateModal = false" class="rounded-xl px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 transition">Cancelar</button>
-                            <button @click="submitGenerate" :disabled="generating" class="rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-6 py-2 text-sm font-semibold text-white hover:from-violet-700 hover:to-indigo-700 transition disabled:opacity-50 flex items-center gap-2">
+                            <button @click="submitGenerate" :disabled="generating || !currentBrand" class="rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-6 py-2 text-sm font-semibold text-white hover:from-violet-700 hover:to-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                                 <svg v-if="generating" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                                 {{ generating ? 'Gerando...' : 'Gerar Calendario' }}
                             </button>
