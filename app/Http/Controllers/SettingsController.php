@@ -234,12 +234,17 @@ class SettingsController extends Controller
         $validated = $request->validate([
             'openai_api_key' => 'nullable|string|max:200',
             'anthropic_api_key' => 'nullable|string|max:200',
-            'gemini_api_key' => 'nullable|string|max:200',
+            'google_api_key' => 'nullable|string|max:200',
         ]);
+
+        // Mapear google_api_key para gemini_api_key no armazenamento (compatibilidade)
+        if (array_key_exists('google_api_key', $validated)) {
+            $validated['gemini_api_key'] = $validated['google_api_key'];
+            unset($validated['google_api_key']);
+        }
 
         SystemLog::info('settings', 'api_keys.save.start', 'Iniciando salvamento de chaves de API', [
             'keys_received' => array_map(fn($v) => $v !== null && $v !== '' ? 'PREENCHIDO (' . strlen($v) . ' chars)' : 'VAZIO', $validated),
-            'raw_request_keys' => array_map(fn($v) => $v !== null && $v !== '' ? 'PREENCHIDO (' . strlen($v) . ' chars)' : ($v === null ? 'NULL' : 'EMPTY_STRING'), $request->only(['openai_api_key', 'anthropic_api_key', 'gemini_api_key'])),
         ]);
 
         $saved = [];
@@ -617,15 +622,23 @@ class SettingsController extends Controller
     {
         $provider = $request->input('provider');
 
+        // Mapear provider enum value para setting key
+        $settingKey = match ($provider) {
+            'openai' => 'openai_api_key',
+            'anthropic' => 'anthropic_api_key',
+            'google' => 'gemini_api_key',
+            default => "{$provider}_api_key",
+        };
+
         try {
-            $apiKey = Setting::get('api_keys', "{$provider}_api_key");
+            $apiKey = Setting::get('api_keys', $settingKey);
 
             // Fallback para .env
             if (!$apiKey) {
                 $envKey = match ($provider) {
                     'openai' => 'OPENAI_API_KEY',
                     'anthropic' => 'ANTHROPIC_API_KEY',
-                    'gemini' => 'GEMINI_API_KEY',
+                    'google' => 'GEMINI_API_KEY',
                     default => null,
                 };
                 $apiKey = $envKey ? env($envKey) : null;
@@ -638,7 +651,7 @@ class SettingsController extends Controller
             $testResult = match ($provider) {
                 'openai' => $this->testOpenAI($apiKey),
                 'anthropic' => $this->testAnthropic($apiKey),
-                'gemini' => $this->testGemini($apiKey),
+                'google' => $this->testGemini($apiKey),
                 default => ['success' => false, 'message' => 'Provedor desconhecido.'],
             };
 
@@ -663,37 +676,34 @@ class SettingsController extends Controller
 
     private function getApiKeysStatus(): array
     {
-        $providers = ['openai', 'anthropic', 'gemini'];
+        // Mapeamento: provider enum value => setting key no banco
+        $providerMap = [
+            'openai' => 'openai_api_key',
+            'anthropic' => 'anthropic_api_key',
+            'google' => 'gemini_api_key',
+        ];
+
         $result = [];
 
-        foreach ($providers as $provider) {
+        foreach ($providerMap as $provider => $settingKey) {
             // Ler via Setting::get (usa cache)
-            $dbKey = Setting::get('api_keys', "{$provider}_api_key");
+            $dbKey = Setting::get('api_keys', $settingKey);
 
             // Verificar direto no banco se o cache falhou
             if (!$dbKey) {
                 $directCheck = Setting::where('group', 'api_keys')
-                    ->where('key', "{$provider}_api_key")
+                    ->where('key', $settingKey)
                     ->first();
 
                 if ($directCheck && $directCheck->value) {
-                    // Existe no DB mas cache retornou vazio - possivel problema de cache/decrypt
                     try {
                         $dbKey = \Illuminate\Support\Facades\Crypt::decryptString($directCheck->value);
-                        // Limpar cache corrompido para forcar re-cache
-                        \Illuminate\Support\Facades\Cache::forget("settings.api_keys.{$provider}_api_key");
+                        \Illuminate\Support\Facades\Cache::forget("settings.api_keys.{$settingKey}");
                         \Illuminate\Support\Facades\Cache::forget("settings.api_keys");
-
-                        SystemLog::warning('settings', 'api_keys.cache_miss', "Chave {$provider} encontrada no DB mas nao no cache. Cache limpo.", [
-                            'provider' => $provider,
-                            'db_type' => $directCheck->type,
-                            'db_value_length' => strlen($directCheck->value),
-                            'decrypt_ok' => !empty($dbKey),
-                        ]);
                     } catch (\Exception $e) {
                         SystemLog::error('settings', 'api_keys.decrypt_error', "Erro ao descriptografar chave {$provider}: {$e->getMessage()}", [
                             'provider' => $provider,
-                            'db_type' => $directCheck->type,
+                            'setting_key' => $settingKey,
                         ]);
                         $dbKey = null;
                     }
@@ -703,7 +713,7 @@ class SettingsController extends Controller
             $envKey = match ($provider) {
                 'openai' => env('OPENAI_API_KEY'),
                 'anthropic' => env('ANTHROPIC_API_KEY'),
-                'gemini' => env('GEMINI_API_KEY'),
+                'google' => env('GEMINI_API_KEY'),
                 default => null,
             };
 

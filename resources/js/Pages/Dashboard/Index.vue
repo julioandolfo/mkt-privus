@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, router } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 
 interface SocialAccountData {
@@ -124,9 +124,58 @@ const props = defineProps<{
     followersChart: ChartPoint[];
     recentActivity: any[];
     analyticsSummary?: AnalyticsSummary | null;
+    period?: string;
+    periodLabel?: string;
+    periodStart?: string;
+    periodEnd?: string;
 }>();
 
 const chartMetric = ref<'followers' | 'engagement' | 'reach' | 'impressions'>('followers');
+
+// Period filter
+const activePeriod = ref(props.period || 'this_month');
+const showCustomPicker = ref(false);
+const customStart = ref(props.periodStart || '');
+const customEnd = ref(props.periodEnd || '');
+const loadingPeriod = ref(false);
+
+const periodFilters = [
+    { value: 'today', label: 'Hoje' },
+    { value: 'yesterday', label: 'Ontem' },
+    { value: 'this_week', label: 'Esta Semana' },
+    { value: 'this_month', label: 'Este Mes' },
+    { value: 'last_month', label: 'Mes Passado' },
+    { value: 'last_7', label: '7 dias' },
+    { value: 'last_30', label: '30 dias' },
+    { value: 'custom', label: 'Personalizado' },
+];
+
+function changePeriod(period: string) {
+    if (period === 'custom') {
+        showCustomPicker.value = true;
+        return;
+    }
+    showCustomPicker.value = false;
+    activePeriod.value = period;
+    loadingPeriod.value = true;
+    router.get(route('dashboard'), { period }, {
+        preserveState: true,
+        preserveScroll: true,
+        onFinish: () => { loadingPeriod.value = false; },
+    });
+}
+
+function applyCustomPeriod() {
+    if (!customStart.value || !customEnd.value) return;
+    activePeriod.value = 'custom';
+    showCustomPicker.value = false;
+    loadingPeriod.value = true;
+    router.get(route('dashboard'), { period: 'custom', start: customStart.value, end: customEnd.value }, {
+        preserveState: true,
+        preserveScroll: true,
+        onFinish: () => { loadingPeriod.value = false; },
+    });
+}
 
 const platformInfo: Record<string, { name: string; color: string; bg: string }> = {
     instagram: { name: 'Instagram', color: '#E4405F', bg: 'bg-pink-500/10' },
@@ -228,7 +277,7 @@ const periodOptions = [
 
     <AuthenticatedLayout>
         <template #header>
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between flex-wrap gap-3">
                 <h1 class="text-xl font-semibold text-white">Dashboard</h1>
                 <div class="flex items-center gap-2">
                     <Link :href="route('analytics.index')" class="rounded-xl bg-gray-800 px-4 py-2 text-xs font-medium text-gray-300 hover:bg-gray-700 transition border border-gray-700">
@@ -240,6 +289,35 @@ const periodOptions = [
                 </div>
             </div>
         </template>
+
+        <!-- Period Filter Bar -->
+        <div class="mb-6 flex items-center gap-2 flex-wrap">
+            <div class="flex items-center gap-1 bg-gray-900 rounded-xl p-1 border border-gray-800 flex-wrap">
+                <button v-for="pf in periodFilters" :key="pf.value"
+                    @click="changePeriod(pf.value)"
+                    :class="['rounded-lg px-3 py-1.5 text-xs font-medium transition whitespace-nowrap',
+                        activePeriod === pf.value ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800']">
+                    {{ pf.label }}
+                </button>
+            </div>
+            <span v-if="loadingPeriod" class="text-xs text-gray-500 flex items-center gap-1.5">
+                <svg class="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Carregando...
+            </span>
+            <span v-else class="text-xs text-gray-500">{{ periodLabel }}</span>
+
+            <!-- Custom date picker -->
+            <div v-if="showCustomPicker" class="flex items-center gap-2 ml-2">
+                <input v-model="customStart" type="date" class="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white" />
+                <span class="text-gray-500 text-xs">ate</span>
+                <input v-model="customEnd" type="date" class="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white" />
+                <button @click="applyCustomPeriod" :disabled="!customStart || !customEnd"
+                    class="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 transition disabled:opacity-50">
+                    Aplicar
+                </button>
+                <button @click="showCustomPicker = false; activePeriod = props.period || 'this_month'" class="text-gray-500 hover:text-white text-xs">&times;</button>
+            </div>
+        </div>
 
         <div class="space-y-6">
             <!-- ===== ROW 1: Stats Gerais ===== -->
@@ -284,10 +362,10 @@ const periodOptions = [
                 </div>
             </div>
 
-            <!-- ===== ANALYTICS OVERVIEW (30 dias) ===== -->
+            <!-- ===== ANALYTICS OVERVIEW ===== -->
             <div v-if="analyticsSummary?.has_any">
                 <div class="flex items-center justify-between mb-3">
-                    <h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider">Analytics — Ultimos 30 dias</h2>
+                    <h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider">Analytics — {{ periodLabel || 'Este Mes' }}</h2>
                     <Link :href="route('analytics.index')" class="text-xs text-indigo-400 hover:text-indigo-300 transition">Ver completo</Link>
                 </div>
 
@@ -429,7 +507,7 @@ const periodOptions = [
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="lg:col-span-2 rounded-2xl bg-gray-900 border border-gray-800 p-5">
                     <div class="flex items-center justify-between mb-4">
-                        <h2 class="text-sm font-medium text-white">Evolucao Social — 30 dias</h2>
+                        <h2 class="text-sm font-medium text-white">Evolucao Social — {{ periodLabel || 'Este Mes' }}</h2>
                         <div class="flex items-center gap-1">
                             <button v-for="opt in periodOptions" :key="opt.value" @click="chartMetric = opt.value"
                                 :class="['rounded-lg px-2.5 py-1 text-[10px] font-medium transition', chartMetric === opt.value ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30' : 'text-gray-500 hover:text-white']">

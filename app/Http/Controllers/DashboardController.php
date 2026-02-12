@@ -22,6 +22,13 @@ class DashboardController extends Controller
         $brand = $user->getActiveBrand();
         $brandId = $brand?->id;
 
+        // ===== PERIODO DO DASHBOARD =====
+        $period = $request->get('period', 'this_month');
+        $customStart = $request->get('start');
+        $customEnd = $request->get('end');
+
+        [$periodStart, $periodEnd, $prevStart, $prevEnd, $periodLabel] = $this->resolvePeriod($period, $customStart, $customEnd);
+
         // ===== STATS BASICOS =====
         $stats = [
             'posts_this_month' => $brand ? $brand->posts()
@@ -202,7 +209,7 @@ class DashboardController extends Controller
                 ->toArray();
         }
 
-        // ===== GRAFICO DE SEGUIDORES (ultimos 30 dias) =====
+        // ===== GRAFICO DE SEGUIDORES (periodo selecionado) =====
         $followersChart = [];
         if ($brandId) {
             $accountIds = SocialAccount::where('brand_id', $brandId)
@@ -212,7 +219,7 @@ class DashboardController extends Controller
             if ($accountIds->isNotEmpty()) {
                 $insights = SocialInsight::whereIn('social_account_id', $accountIds)
                     ->where('sync_status', 'success')
-                    ->where('date', '>=', now()->subDays(30))
+                    ->whereBetween('date', [$periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d')])
                     ->whereNotNull('followers_count')
                     ->orderBy('date')
                     ->get();
@@ -252,17 +259,16 @@ class DashboardController extends Controller
             $recentActivity = $recentPosts->toArray();
         }
 
-        // ===== ANALYTICS RESUMO (ultimos 30 dias) =====
+        // ===== ANALYTICS RESUMO (periodo selecionado) =====
         $analyticsSummary = null;
         if ($brandId) {
             $last30 = AnalyticsDailySummary::where('brand_id', $brandId)
-                ->where('date', '>=', now()->subDays(30))
+                ->whereBetween('date', [$periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d')])
                 ->get();
 
-            // Periodo anterior (30-60 dias atras) para comparacao
+            // Periodo anterior para comparacao
             $prev30 = AnalyticsDailySummary::where('brand_id', $brandId)
-                ->where('date', '>=', now()->subDays(60))
-                ->where('date', '<', now()->subDays(30))
+                ->whereBetween('date', [$prevStart->format('Y-m-d'), $prevEnd->format('Y-m-d')])
                 ->get();
 
             $variation = function ($current, $previous) {
@@ -375,6 +381,90 @@ class DashboardController extends Controller
             'followersChart' => $followersChart,
             'recentActivity' => $recentActivity,
             'analyticsSummary' => $analyticsSummary,
+            'period' => $period,
+            'periodLabel' => $periodLabel,
+            'periodStart' => $periodStart->format('Y-m-d'),
+            'periodEnd' => $periodEnd->format('Y-m-d'),
         ]);
+    }
+
+    /**
+     * Resolver datas de inicio/fim com base no periodo selecionado.
+     * Retorna [$start, $end, $prevStart, $prevEnd, $label]
+     */
+    private function resolvePeriod(string $period, ?string $customStart = null, ?string $customEnd = null): array
+    {
+        $now = Carbon::now();
+
+        switch ($period) {
+            case 'today':
+                $start = $now->copy()->startOfDay();
+                $end = $now->copy()->endOfDay();
+                $prevStart = $now->copy()->subDay()->startOfDay();
+                $prevEnd = $now->copy()->subDay()->endOfDay();
+                $label = 'Hoje';
+                break;
+
+            case 'yesterday':
+                $start = $now->copy()->subDay()->startOfDay();
+                $end = $now->copy()->subDay()->endOfDay();
+                $prevStart = $now->copy()->subDays(2)->startOfDay();
+                $prevEnd = $now->copy()->subDays(2)->endOfDay();
+                $label = 'Ontem';
+                break;
+
+            case 'this_week':
+                $start = $now->copy()->startOfWeek();
+                $end = $now->copy()->endOfDay();
+                $daysDiff = $start->diffInDays($end) + 1;
+                $prevStart = $start->copy()->subDays($daysDiff);
+                $prevEnd = $start->copy()->subDay();
+                $label = 'Esta Semana';
+                break;
+
+            case 'last_month':
+                $start = $now->copy()->subMonth()->startOfMonth();
+                $end = $now->copy()->subMonth()->endOfMonth();
+                $prevStart = $now->copy()->subMonths(2)->startOfMonth();
+                $prevEnd = $now->copy()->subMonths(2)->endOfMonth();
+                $label = 'Mes Passado';
+                break;
+
+            case 'last_7':
+                $start = $now->copy()->subDays(6)->startOfDay();
+                $end = $now->copy()->endOfDay();
+                $prevStart = $now->copy()->subDays(13)->startOfDay();
+                $prevEnd = $now->copy()->subDays(7)->endOfDay();
+                $label = 'Ultimos 7 dias';
+                break;
+
+            case 'last_30':
+                $start = $now->copy()->subDays(29)->startOfDay();
+                $end = $now->copy()->endOfDay();
+                $prevStart = $now->copy()->subDays(59)->startOfDay();
+                $prevEnd = $now->copy()->subDays(30)->endOfDay();
+                $label = 'Ultimos 30 dias';
+                break;
+
+            case 'custom':
+                $start = $customStart ? Carbon::parse($customStart)->startOfDay() : $now->copy()->startOfMonth();
+                $end = $customEnd ? Carbon::parse($customEnd)->endOfDay() : $now->copy()->endOfDay();
+                $daysDiff = $start->diffInDays($end) + 1;
+                $prevStart = $start->copy()->subDays($daysDiff);
+                $prevEnd = $start->copy()->subDay();
+                $label = $start->format('d/m') . ' - ' . $end->format('d/m');
+                break;
+
+            case 'this_month':
+            default:
+                $start = $now->copy()->startOfMonth();
+                $end = $now->copy()->endOfDay();
+                $prevStart = $now->copy()->subMonth()->startOfMonth();
+                $prevEnd = $now->copy()->subMonth()->endOfMonth();
+                $label = 'Este Mes';
+                break;
+        }
+
+        return [$start, $end, $prevStart, $prevEnd, $label];
     }
 }

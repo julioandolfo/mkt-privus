@@ -123,7 +123,7 @@ const aiForm = useForm({
 const apiKeysForm = useForm({
     openai_api_key: '',
     anthropic_api_key: '',
-    gemini_api_key: '',
+    google_api_key: '',
 });
 
 const emailForm = useForm({
