@@ -55,7 +55,7 @@ const props = defineProps<{
 }>();
 
 const activeTab = ref('overview');
-const datePreset = ref(props.filters?.preset || '30d');
+const datePreset = ref(props.filters?.preset || 'this_month');
 const startDate = ref(props.filters?.start_date || '');
 const endDate = ref(props.filters?.end_date || '');
 const showCompare = ref(props.filters?.compare ?? true);
@@ -63,11 +63,13 @@ const syncing = ref(false);
 const selectedChart = ref('sessions');
 
 const presets = [
-    { value: '7d', label: 'Últimos 7 dias' },
-    { value: '14d', label: 'Últimos 14 dias' },
-    { value: '30d', label: 'Últimos 30 dias' },
-    { value: '60d', label: 'Últimos 60 dias' },
-    { value: '90d', label: 'Últimos 90 dias' },
+    { value: 'this_month', label: 'Este Mês' },
+    { value: 'last_month', label: 'Mês Passado' },
+    { value: '7d', label: '7 dias' },
+    { value: '14d', label: '14 dias' },
+    { value: '30d', label: '30 dias' },
+    { value: '60d', label: '60 dias' },
+    { value: '90d', label: '90 dias' },
     { value: 'custom', label: 'Personalizado' },
 ];
 
@@ -87,13 +89,25 @@ function applyPreset(preset: string) {
     datePreset.value = preset;
     if (preset === 'custom') return;
 
-    const days = parseInt(preset);
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - days + 1);
+    const now = new Date();
 
-    startDate.value = start.toISOString().split('T')[0];
-    endDate.value = end.toISOString().split('T')[0];
+    if (preset === 'this_month') {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        startDate.value = start.toISOString().split('T')[0];
+        endDate.value = now.toISOString().split('T')[0];
+    } else if (preset === 'last_month') {
+        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const end = new Date(now.getFullYear(), now.getMonth(), 0);
+        startDate.value = start.toISOString().split('T')[0];
+        endDate.value = end.toISOString().split('T')[0];
+    } else {
+        const days = parseInt(preset);
+        const end = new Date();
+        const start = new Date();
+        start.setDate(start.getDate() - days + 1);
+        startDate.value = start.toISOString().split('T')[0];
+        endDate.value = end.toISOString().split('T')[0];
+    }
 
     router.get(route('analytics.index'), {
         start_date: startDate.value,

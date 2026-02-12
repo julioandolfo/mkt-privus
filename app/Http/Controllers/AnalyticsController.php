@@ -49,9 +49,17 @@ class AnalyticsController extends Controller
         }
 
         // Período de datas
-        $endDate = $request->get('end_date', now()->format('Y-m-d'));
-        $startDate = $request->get('start_date', now()->subDays(29)->format('Y-m-d'));
-        $preset = $request->get('preset', '30d');
+        $preset = $request->get('preset', 'this_month');
+        if ($preset === 'this_month' && !$request->has('start_date')) {
+            $startDate = now()->startOfMonth()->format('Y-m-d');
+            $endDate = now()->format('Y-m-d');
+        } elseif ($preset === 'last_month' && !$request->has('start_date')) {
+            $startDate = now()->subMonth()->startOfMonth()->format('Y-m-d');
+            $endDate = now()->subMonth()->endOfMonth()->format('Y-m-d');
+        } else {
+            $endDate = $request->get('end_date', now()->format('Y-m-d'));
+            $startDate = $request->get('start_date', now()->subDays(29)->format('Y-m-d'));
+        }
 
         // Período de comparação
         $days = Carbon::parse($startDate)->diffInDays(Carbon::parse($endDate)) + 1;
