@@ -3,6 +3,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import GuideBox from '@/Components/GuideBox.vue';
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+import axios from 'axios';
 
 interface Connection {
     id: number;
@@ -132,34 +133,24 @@ function testWcConnection() {
     wcTesting.value = true;
     wcTestResult.value = null;
 
-    fetch(route('analytics.connections.test-woocommerce'), {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '',
-        },
-        body: JSON.stringify({
-            store_url: wcForm.store_url,
-            consumer_key: wcForm.consumer_key,
-            consumer_secret: wcForm.consumer_secret,
-        }),
+    axios.post(route('analytics.connections.test-woocommerce'), {
+        store_url: wcForm.store_url,
+        consumer_key: wcForm.consumer_key,
+        consumer_secret: wcForm.consumer_secret,
     })
-    .then(r => r.json())
-    .then(data => {
+    .then(({ data }) => {
         wcTestResult.value = {
             success: data.success,
             message: data.success
                 ? `Conectado! WooCommerce ${data.wc_version} • Moeda: ${data.currency}`
                 : (data.error || 'Falha na conexão'),
         };
-        // Ao conectar com sucesso, buscar status disponíveis automaticamente
         if (data.success) {
             fetchWcStatuses();
         }
     })
-    .catch(() => {
-        wcTestResult.value = { success: false, message: 'Erro de rede ao testar conexão' };
+    .catch((err) => {
+        wcTestResult.value = { success: false, message: err.response?.data?.error || 'Erro de rede ao testar conexão' };
     })
     .finally(() => wcTesting.value = false);
 }
@@ -169,22 +160,14 @@ function fetchWcStatuses() {
     wcLoadingStatuses.value = true;
     wcAvailableStatuses.value = [];
 
-    const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
-
-    fetch(route('analytics.connections.woocommerce-statuses'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
-        body: JSON.stringify({
-            store_url: wcForm.store_url,
-            consumer_key: wcForm.consumer_key,
-            consumer_secret: wcForm.consumer_secret,
-        }),
+    axios.post(route('analytics.connections.woocommerce-statuses'), {
+        store_url: wcForm.store_url,
+        consumer_key: wcForm.consumer_key,
+        consumer_secret: wcForm.consumer_secret,
     })
-    .then(r => r.json())
-    .then(data => {
+    .then(({ data }) => {
         if (data.success && data.statuses) {
             wcAvailableStatuses.value = data.statuses;
-            // Se o usuário ainda não selecionou status, marcar os padrão
             if (wcForm.order_statuses.length === 0 && data.default_statuses) {
                 wcForm.order_statuses = [...data.default_statuses];
             }
@@ -233,7 +216,6 @@ function refreshWcEditStatuses() {
 
     wcStatusEditLoading.value = true;
     wcStatusFetchError.value = null;
-    const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
 
     const storeUrl = conn.config?.store_url || '';
     const consumerKey = conn.config?.consumer_key || '';
@@ -242,31 +224,16 @@ function refreshWcEditStatuses() {
     if (!storeUrl || !consumerKey || !consumerSecret) {
         wcStatusFetchError.value = 'Credenciais WooCommerce ausentes na conexão. Recrie a conexão.';
         wcStatusEditLoading.value = false;
-        console.error('WC credentials missing:', { storeUrl: !!storeUrl, consumerKey: !!consumerKey, consumerSecret: !!consumerSecret });
         return;
     }
 
-    fetch(route('analytics.connections.woocommerce-statuses'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
-        body: JSON.stringify({
-            store_url: storeUrl,
-            consumer_key: consumerKey,
-            consumer_secret: consumerSecret,
-        }),
+    axios.post(route('analytics.connections.woocommerce-statuses'), {
+        store_url: storeUrl,
+        consumer_key: consumerKey,
+        consumer_secret: consumerSecret,
     })
-    .then(r => {
-        if (!r.ok) {
-            return r.text().then(text => {
-                console.error('WC Status fetch error:', r.status, text);
-                throw new Error(`HTTP ${r.status}`);
-            });
-        }
-        return r.json();
-    })
-    .then(data => {
+    .then(({ data }) => {
         if (data.success && data.statuses) {
-            // Mesclar status já selecionados que possam não vir na API (status customizados adicionados manualmente)
             const apiSlugs = data.statuses.map((s: any) => s.slug);
             const missingCustom = wcStatusEditStatuses.value
                 .filter(slug => !apiSlugs.includes(slug))
@@ -278,8 +245,7 @@ function refreshWcEditStatuses() {
         }
     })
     .catch((err) => {
-        console.error('WC Status fetch catch:', err);
-        wcStatusFetchError.value = err.message || 'Erro de rede ao buscar status';
+        wcStatusFetchError.value = err.response?.data?.error || err.message || 'Erro ao buscar status';
     })
     .finally(() => wcStatusEditLoading.value = false);
 }
@@ -325,23 +291,11 @@ function saveWcStatuses() {
     if (!wcStatusEditConnection.value || wcStatusEditStatuses.value.length === 0) return;
     wcStatusEditSaving.value = true;
     wcStatusSaveError.value = null;
-    const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
 
-    fetch(route('analytics.connections.update-woocommerce-statuses', { connection: wcStatusEditConnection.value.id }), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
-        body: JSON.stringify({ order_statuses: wcStatusEditStatuses.value }),
+    axios.put(route('analytics.connections.update-woocommerce-statuses', { connection: wcStatusEditConnection.value.id }), {
+        order_statuses: wcStatusEditStatuses.value,
     })
-    .then(r => {
-        if (!r.ok) {
-            return r.text().then(text => {
-                console.error('WC Status save error:', r.status, text);
-                throw new Error(`HTTP ${r.status}: ${text.substring(0, 200)}`);
-            });
-        }
-        return r.json();
-    })
-    .then(data => {
+    .then(({ data }) => {
         if (data.success) {
             showWcStatusModal.value = false;
             router.reload();
@@ -350,8 +304,7 @@ function saveWcStatuses() {
         }
     })
     .catch((err) => {
-        console.error('WC Status save catch:', err);
-        wcStatusSaveError.value = err.message || 'Erro de rede ao salvar status';
+        wcStatusSaveError.value = err.response?.data?.error || err.response?.data?.message || err.message || 'Erro ao salvar status';
     })
     .finally(() => wcStatusEditSaving.value = false);
 }
