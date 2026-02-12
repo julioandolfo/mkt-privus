@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import GuideBox from '@/Components/GuideBox.vue';
-import { Head, useForm, router } from '@inertiajs/vue3';
-import { ref, computed, onMounted } from 'vue';
+import { Head, useForm, router, usePage } from '@inertiajs/vue3';
+import { ref, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 
 interface ProviderInfo {
@@ -60,6 +60,7 @@ const props = defineProps<{
     timezones: Record<string, string>;
 }>();
 
+const page = usePage();
 const activeTab = ref(props.tab || 'general');
 const testingProvider = ref<string | null>(null);
 const testResults = ref<Record<string, { success: boolean; message: string }>>({});
@@ -71,6 +72,22 @@ const testingPush = ref(false);
 const pushTestResult = ref<{ success: boolean; message: string } | null>(null);
 const subscribingPush = ref(false);
 const pushSubscribeResult = ref<{ success: boolean; message: string } | null>(null);
+
+// Flash message feedback
+const saveMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null);
+let saveMessageTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function showSaveMessage(type: 'success' | 'error', text: string) {
+    if (saveMessageTimeout) clearTimeout(saveMessageTimeout);
+    saveMessage.value = { type, text };
+    saveMessageTimeout = setTimeout(() => { saveMessage.value = null; }, 5000);
+}
+
+// Observar flash messages do Inertia
+watch(() => (page.props as any).flash, (flash: any) => {
+    if (flash?.success) showSaveMessage('success', flash.success);
+    else if (flash?.error) showSaveMessage('error', flash.error);
+}, { deep: true, immediate: true });
 
 const tabs = [
     { id: 'general', name: 'Geral', icon: 'sliders' },
@@ -153,43 +170,68 @@ function changeTab(tab: string) {
 }
 
 function saveGeneral() {
-    generalForm.put(route('settings.general'));
+    generalForm.put(route('settings.general'), {
+        preserveScroll: true,
+        onSuccess: () => showSaveMessage('success', 'Configuracoes gerais salvas com sucesso.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes gerais.'),
+    });
 }
 
 function saveAI() {
-    aiForm.put(route('settings.ai'));
+    aiForm.put(route('settings.ai'), {
+        preserveScroll: true,
+        onSuccess: () => showSaveMessage('success', 'Preferencias de IA salvas com sucesso.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar preferencias de IA.'),
+    });
 }
 
 function saveApiKeys() {
     apiKeysForm.put(route('settings.api-keys'), {
+        preserveScroll: true,
         onSuccess: () => {
             apiKeysForm.reset();
+            showSaveMessage('success', 'Chaves de API atualizadas com sucesso.');
         },
+        onError: () => showSaveMessage('error', 'Erro ao salvar chaves de API.'),
     });
 }
 
 function saveEmail() {
     emailForm.put(route('settings.email'), {
+        preserveScroll: true,
         onSuccess: () => {
             emailForm.password = '';
+            showSaveMessage('success', 'Configuracoes de email salvas com sucesso.');
         },
+        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de email.'),
     });
 }
 
 function savePush() {
     pushForm.put(route('settings.push'), {
+        preserveScroll: true,
         onSuccess: () => {
             pushForm.vapid_private_key = '';
+            showSaveMessage('success', 'Configuracoes de Push salvas com sucesso.');
         },
+        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de Push.'),
     });
 }
 
 function saveSocial() {
-    socialForm.put(route('settings.social'));
+    socialForm.put(route('settings.social'), {
+        preserveScroll: true,
+        onSuccess: () => showSaveMessage('success', 'Configuracoes de Social Media salvas com sucesso.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de Social Media.'),
+    });
 }
 
 function saveNotifications() {
-    notificationsForm.put(route('settings.notifications'));
+    notificationsForm.put(route('settings.notifications'), {
+        preserveScroll: true,
+        onSuccess: () => showSaveMessage('success', 'Configuracoes de notificacoes salvas com sucesso.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de notificacoes.'),
+    });
 }
 
 async function testConnection(provider: string) {
@@ -525,7 +567,9 @@ function saveOAuth() {
             oauthForm.google_ads_developer_token = '';
             oauthForm.tiktok_client_secret = '';
             oauthForm.pinterest_app_secret = '';
+            showSaveMessage('success', 'Credenciais OAuth salvas com sucesso.');
         },
+        onError: () => showSaveMessage('error', 'Erro ao salvar credenciais OAuth.'),
     });
 }
 
@@ -605,6 +649,26 @@ onMounted(() => {
                 <h1 class="text-xl font-semibold text-white">Configuracoes</h1>
             </div>
         </template>
+
+        <!-- Flash message de save -->
+        <Transition
+            enter-active-class="transition ease-out duration-300"
+            enter-from-class="opacity-0 -translate-y-2"
+            enter-to-class="opacity-100 translate-y-0"
+            leave-active-class="transition ease-in duration-200"
+            leave-from-class="opacity-100 translate-y-0"
+            leave-to-class="opacity-0 -translate-y-2"
+        >
+            <div v-if="saveMessage" :class="['mb-4 rounded-xl px-5 py-3.5 text-sm font-medium flex items-center justify-between',
+                saveMessage.type === 'success' ? 'bg-emerald-900/30 border border-emerald-700/40 text-emerald-300' : 'bg-red-900/30 border border-red-700/40 text-red-300']">
+                <div class="flex items-center gap-2.5">
+                    <svg v-if="saveMessage.type === 'success'" class="w-5 h-5 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <svg v-else class="w-5 h-5 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+                    <span>{{ saveMessage.text }}</span>
+                </div>
+                <button @click="saveMessage = null" class="text-gray-400 hover:text-white ml-4 shrink-0">&times;</button>
+            </div>
+        </Transition>
 
         <div class="flex flex-col lg:flex-row gap-6">
             <!-- Sidebar de tabs -->
