@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Brand;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -10,6 +11,24 @@ use Illuminate\Validation\Rules;
 
 class UserController extends Controller
 {
+    /**
+     * Vincular usuario a todas as marcas existentes (acesso total).
+     */
+    private function syncAllBrands(User $user): void
+    {
+        $allBrandIds = Brand::pluck('id');
+        $syncData = [];
+        foreach ($allBrandIds as $brandId) {
+            $syncData[$brandId] = ['role' => 'admin'];
+        }
+        $user->brands()->sync($syncData);
+
+        // Definir current_brand_id se nao tem
+        if (!$user->current_brand_id && $allBrandIds->isNotEmpty()) {
+            $user->update(['current_brand_id' => $allBrandIds->first()]);
+        }
+    }
+
     /**
      * Listar todos os usuários (JSON para uso na aba de Settings).
      */
@@ -64,8 +83,11 @@ class UserController extends Controller
             'email' => $validated['email'],
             'password' => $validated['password'],
             'is_active' => $validated['is_active'] ?? true,
-            'email_verified_at' => now(), // Já verifica ao criar pelo admin
+            'email_verified_at' => now(),
         ]);
+
+        // Vincular automaticamente a todas as marcas
+        $this->syncAllBrands($user);
 
         return back()->with('success', "Usuário \"{$user->name}\" criado com sucesso.");
     }
@@ -91,6 +113,9 @@ class UserController extends Controller
         }
 
         $user->save();
+
+        // Garantir que continua vinculado a todas as marcas
+        $this->syncAllBrands($user);
 
         return back()->with('success', "Usuário \"{$user->name}\" atualizado com sucesso.");
     }

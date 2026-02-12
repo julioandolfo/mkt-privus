@@ -56,12 +56,15 @@ class BrandsController extends Controller
 
         $brand = Brand::create($validated);
 
-        // Vincular usuario como owner
-        $brand->users()->attach($request->user()->id, [
-            'role' => BrandRole::Owner->value,
-        ]);
+        // Vincular TODOS os usuarios a nova marca (sistema unico, sem permissoes)
+        $allUsers = \App\Models\User::pluck('id');
+        $syncData = [];
+        foreach ($allUsers as $userId) {
+            $syncData[$userId] = ['role' => $userId === $request->user()->id ? BrandRole::Owner->value : 'admin'];
+        }
+        $brand->users()->sync($syncData);
 
-        // Definir como marca ativa
+        // Definir como marca ativa para quem criou
         $request->user()->switchBrand($brand);
 
         return redirect()->route('brands.index')
