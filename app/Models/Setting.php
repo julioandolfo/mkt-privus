@@ -41,10 +41,17 @@ class Setting extends Model
             default => (string) $value,
         };
 
-        static::updateOrCreate(
+        $updateData = ['value' => $storeValue, 'type' => $type];
+        if ($description !== null) {
+            $updateData['description'] = $description;
+        }
+
+        $setting = static::updateOrCreate(
             ['group' => $group, 'key' => $key],
-            ['value' => $storeValue, 'type' => $type, 'description' => $description],
+            $updateData,
         );
+
+        \Illuminate\Support\Facades\Log::info("Setting::set [{$group}.{$key}] => wasRecentlyCreated={$setting->wasRecentlyCreated}, id={$setting->id}, type={$type}, stored_length=" . strlen($storeValue ?? ''));
 
         Cache::forget("settings.{$group}.{$key}");
         Cache::forget("settings.{$group}");

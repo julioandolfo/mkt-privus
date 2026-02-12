@@ -7,11 +7,13 @@ use App\Enums\AIProvider;
 use App\Models\AiUsageLog;
 use App\Models\PushSubscription;
 use App\Models\Setting;
+use App\Models\SystemLog;
 use App\Services\PushNotificationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -235,13 +237,72 @@ class SettingsController extends Controller
             'gemini_api_key' => 'nullable|string|max:200',
         ]);
 
+        SystemLog::info('settings', 'api_keys.save.start', 'Iniciando salvamento de chaves de API', [
+            'keys_received' => array_map(fn($v) => $v !== null && $v !== '' ? 'PREENCHIDO (' . strlen($v) . ' chars)' : 'VAZIO', $validated),
+            'raw_request_keys' => array_map(fn($v) => $v !== null && $v !== '' ? 'PREENCHIDO (' . strlen($v) . ' chars)' : ($v === null ? 'NULL' : 'EMPTY_STRING'), $request->only(['openai_api_key', 'anthropic_api_key', 'gemini_api_key'])),
+        ]);
+
+        $saved = [];
+        $errors = [];
+
         foreach ($validated as $key => $value) {
             if ($value !== null && $value !== '') {
-                Setting::set('api_keys', $key, $value, 'encrypted');
+                try {
+                    Setting::set('api_keys', $key, $value, 'encrypted');
+
+                    // Verificar se realmente salvou - ler direto do banco (sem cache)
+                    $dbCheck = Setting::where('group', 'api_keys')->where('key', $key)->first();
+                    $dbExists = $dbCheck !== null;
+                    $dbValueLength = $dbCheck ? strlen($dbCheck->value ?? '') : 0;
+                    $dbType = $dbCheck ? $dbCheck->type : 'N/A';
+
+                    // Tentar descriptografar para verificar integridade
+                    $decryptOk = false;
+                    if ($dbCheck && $dbCheck->value) {
+                        try {
+                            $decrypted = \Illuminate\Support\Facades\Crypt::decryptString($dbCheck->value);
+                            $decryptOk = $decrypted === $value;
+                        } catch (\Exception $e) {
+                            $decryptOk = false;
+                        }
+                    }
+
+                    $saved[$key] = true;
+                    SystemLog::info('settings', 'api_keys.save.key_ok', "Chave {$key} salva com sucesso", [
+                        'key' => $key,
+                        'db_exists' => $dbExists,
+                        'db_value_length' => $dbValueLength,
+                        'db_type' => $dbType,
+                        'decrypt_integrity' => $decryptOk,
+                        'input_length' => strlen($value),
+                    ]);
+                } catch (\Exception $e) {
+                    $errors[$key] = $e->getMessage();
+                    SystemLog::error('settings', 'api_keys.save.key_error', "Erro ao salvar chave {$key}: {$e->getMessage()}", [
+                        'key' => $key,
+                        'exception' => get_class($e),
+                        'message' => $e->getMessage(),
+                        'trace' => substr($e->getTraceAsString(), 0, 500),
+                    ]);
+                }
+            } else {
+                SystemLog::info('settings', 'api_keys.save.key_skip', "Chave {$key} vazia, pulando", ['key' => $key, 'value_is_null' => $value === null]);
             }
         }
 
-        return back()->with('success', 'Chaves de API atualizadas com sucesso.');
+        if (!empty($errors)) {
+            return back()->with('error', 'Erro ao salvar chaves: ' . implode(', ', array_keys($errors)));
+        }
+
+        if (empty($saved)) {
+            return back()->with('error', 'Nenhuma chave foi preenchida para salvar.');
+        }
+
+        SystemLog::info('settings', 'api_keys.save.done', 'Chaves de API salvas: ' . implode(', ', array_keys($saved)), [
+            'saved_keys' => array_keys($saved),
+        ]);
+
+        return back()->with('success', count($saved) . ' chave(s) de API atualizada(s) com sucesso.');
     }
 
     /**
@@ -606,7 +667,39 @@ class SettingsController extends Controller
         $result = [];
 
         foreach ($providers as $provider) {
+            // Ler via Setting::get (usa cache)
             $dbKey = Setting::get('api_keys', "{$provider}_api_key");
+
+            // Verificar direto no banco se o cache falhou
+            if (!$dbKey) {
+                $directCheck = Setting::where('group', 'api_keys')
+                    ->where('key', "{$provider}_api_key")
+                    ->first();
+
+                if ($directCheck && $directCheck->value) {
+                    // Existe no DB mas cache retornou vazio - possivel problema de cache/decrypt
+                    try {
+                        $dbKey = \Illuminate\Support\Facades\Crypt::decryptString($directCheck->value);
+                        // Limpar cache corrompido para forcar re-cache
+                        \Illuminate\Support\Facades\Cache::forget("settings.api_keys.{$provider}_api_key");
+                        \Illuminate\Support\Facades\Cache::forget("settings.api_keys");
+
+                        SystemLog::warning('settings', 'api_keys.cache_miss', "Chave {$provider} encontrada no DB mas nao no cache. Cache limpo.", [
+                            'provider' => $provider,
+                            'db_type' => $directCheck->type,
+                            'db_value_length' => strlen($directCheck->value),
+                            'decrypt_ok' => !empty($dbKey),
+                        ]);
+                    } catch (\Exception $e) {
+                        SystemLog::error('settings', 'api_keys.decrypt_error', "Erro ao descriptografar chave {$provider}: {$e->getMessage()}", [
+                            'provider' => $provider,
+                            'db_type' => $directCheck->type,
+                        ]);
+                        $dbKey = null;
+                    }
+                }
+            }
+
             $envKey = match ($provider) {
                 'openai' => env('OPENAI_API_KEY'),
                 'anthropic' => env('ANTHROPIC_API_KEY'),

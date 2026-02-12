@@ -172,16 +172,14 @@ function changeTab(tab: string) {
 function saveGeneral() {
     generalForm.put(route('settings.general'), {
         preserveScroll: true,
-        onSuccess: () => showSaveMessage('success', 'Configuracoes gerais salvas com sucesso.'),
-        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes gerais.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes gerais. Verifique os campos.'),
     });
 }
 
 function saveAI() {
     aiForm.put(route('settings.ai'), {
         preserveScroll: true,
-        onSuccess: () => showSaveMessage('success', 'Preferencias de IA salvas com sucesso.'),
-        onError: () => showSaveMessage('error', 'Erro ao salvar preferencias de IA.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar preferencias de IA. Verifique os campos.'),
     });
 }
 
@@ -190,9 +188,8 @@ function saveApiKeys() {
         preserveScroll: true,
         onSuccess: () => {
             apiKeysForm.reset();
-            showSaveMessage('success', 'Chaves de API atualizadas com sucesso.');
         },
-        onError: () => showSaveMessage('error', 'Erro ao salvar chaves de API.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar chaves de API. Verifique os campos.'),
     });
 }
 
@@ -201,9 +198,8 @@ function saveEmail() {
         preserveScroll: true,
         onSuccess: () => {
             emailForm.password = '';
-            showSaveMessage('success', 'Configuracoes de email salvas com sucesso.');
         },
-        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de email.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de email. Verifique os campos.'),
     });
 }
 
@@ -212,25 +208,22 @@ function savePush() {
         preserveScroll: true,
         onSuccess: () => {
             pushForm.vapid_private_key = '';
-            showSaveMessage('success', 'Configuracoes de Push salvas com sucesso.');
         },
-        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de Push.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de Push. Verifique os campos.'),
     });
 }
 
 function saveSocial() {
     socialForm.put(route('settings.social'), {
         preserveScroll: true,
-        onSuccess: () => showSaveMessage('success', 'Configuracoes de Social Media salvas com sucesso.'),
-        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de Social Media.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de Social Media. Verifique os campos.'),
     });
 }
 
 function saveNotifications() {
     notificationsForm.put(route('settings.notifications'), {
         preserveScroll: true,
-        onSuccess: () => showSaveMessage('success', 'Configuracoes de notificacoes salvas com sucesso.'),
-        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de notificacoes.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar configuracoes de notificacoes. Verifique os campos.'),
     });
 }
 
@@ -567,9 +560,8 @@ function saveOAuth() {
             oauthForm.google_ads_developer_token = '';
             oauthForm.tiktok_client_secret = '';
             oauthForm.pinterest_app_secret = '';
-            showSaveMessage('success', 'Credenciais OAuth salvas com sucesso.');
         },
-        onError: () => showSaveMessage('error', 'Erro ao salvar credenciais OAuth.'),
+        onError: () => showSaveMessage('error', 'Erro ao salvar credenciais OAuth. Verifique os campos.'),
     });
 }
 
