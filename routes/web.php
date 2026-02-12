@@ -218,6 +218,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/connections/{connection}', [AnalyticsController::class, 'destroyConnection'])->name('connections.destroy');
         Route::post('/connections/{connection}/sync', [AnalyticsController::class, 'syncConnection'])->name('connections.sync');
         Route::post('/connections/test-woocommerce', [AnalyticsController::class, 'testWooCommerce'])->name('connections.test-woocommerce');
+        Route::post('/connections/woocommerce-statuses', [AnalyticsController::class, 'fetchWooCommerceStatuses'])->name('connections.woocommerce-statuses');
+        Route::put('/connections/{connection}/woocommerce-statuses', [AnalyticsController::class, 'updateWooCommerceStatuses'])->name('connections.update-woocommerce-statuses');
         Route::post('/sync-all', [AnalyticsController::class, 'syncAll'])->name('sync-all');
 
         // Investimentos Manuais

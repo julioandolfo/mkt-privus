@@ -74,6 +74,8 @@ const discoveredPlatformLocal = ref<string | null>(props.discoveredPlatform ?? n
 const showWcForm = ref(false);
 const wcTesting = ref(false);
 const wcTestResult = ref<{success: boolean; message: string} | null>(null);
+const wcAvailableStatuses = ref<{slug: string; name: string; total?: number}[]>([]);
+const wcLoadingStatuses = ref(false);
 const wcForm = useForm({
     brand_id: props.brand?.id,
     platform: 'woocommerce',
@@ -81,7 +83,16 @@ const wcForm = useForm({
     store_url: '',
     consumer_key: '',
     consumer_secret: '',
+    order_statuses: [] as string[],
 });
+
+// Modal de edição de status WooCommerce para conexões existentes
+const showWcStatusModal = ref(false);
+const wcStatusEditConnection = ref<Connection | null>(null);
+const wcStatusEditStatuses = ref<string[]>([]);
+const wcStatusEditAvailable = ref<{slug: string; name: string; total?: number}[]>([]);
+const wcStatusEditLoading = ref(false);
+const wcStatusEditSaving = ref(false);
 
 // Manual entry form
 const showManualEntryForm = ref(false);
@@ -142,11 +153,54 @@ function testWcConnection() {
                 ? `Conectado! WooCommerce ${data.wc_version} • Moeda: ${data.currency}`
                 : (data.error || 'Falha na conexão'),
         };
+        // Ao conectar com sucesso, buscar status disponíveis automaticamente
+        if (data.success) {
+            fetchWcStatuses();
+        }
     })
     .catch(() => {
         wcTestResult.value = { success: false, message: 'Erro de rede ao testar conexão' };
     })
     .finally(() => wcTesting.value = false);
+}
+
+function fetchWcStatuses() {
+    if (!wcForm.store_url || !wcForm.consumer_key || !wcForm.consumer_secret) return;
+    wcLoadingStatuses.value = true;
+    wcAvailableStatuses.value = [];
+
+    const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
+
+    fetch(route('analytics.connections.woocommerce-statuses'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
+        body: JSON.stringify({
+            store_url: wcForm.store_url,
+            consumer_key: wcForm.consumer_key,
+            consumer_secret: wcForm.consumer_secret,
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success && data.statuses) {
+            wcAvailableStatuses.value = data.statuses;
+            // Se o usuário ainda não selecionou status, marcar os padrão
+            if (wcForm.order_statuses.length === 0 && data.default_statuses) {
+                wcForm.order_statuses = [...data.default_statuses];
+            }
+        }
+    })
+    .catch(() => {})
+    .finally(() => wcLoadingStatuses.value = false);
+}
+
+function toggleWcStatus(slug: string) {
+    const idx = wcForm.order_statuses.indexOf(slug);
+    if (idx >= 0) {
+        wcForm.order_statuses.splice(idx, 1);
+    } else {
+        wcForm.order_statuses.push(slug);
+    }
 }
 
 function submitWcForm() {
@@ -155,8 +209,95 @@ function submitWcForm() {
             showWcForm.value = false;
             wcForm.reset();
             wcTestResult.value = null;
+            wcAvailableStatuses.value = [];
         },
     });
+}
+
+// ===== Edição de status WooCommerce para conexões existentes =====
+function openWcStatusEditor(conn: Connection) {
+    wcStatusEditConnection.value = conn;
+    wcStatusEditStatuses.value = [...(conn.config?.order_statuses || ['completed', 'processing', 'on-hold'])];
+    wcStatusEditAvailable.value = [];
+    showWcStatusModal.value = true;
+
+    // Buscar status disponíveis da loja
+    wcStatusEditLoading.value = true;
+    const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
+
+    fetch(route('analytics.connections.woocommerce-statuses'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
+        body: JSON.stringify({
+            store_url: conn.config?.store_url || '',
+            consumer_key: conn.config?.consumer_key || '',
+            consumer_secret: conn.config?.consumer_secret || '',
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success && data.statuses) {
+            wcStatusEditAvailable.value = data.statuses;
+        }
+    })
+    .catch(() => {})
+    .finally(() => wcStatusEditLoading.value = false);
+}
+
+function toggleWcStatusEdit(slug: string) {
+    const idx = wcStatusEditStatuses.value.indexOf(slug);
+    if (idx >= 0) {
+        wcStatusEditStatuses.value.splice(idx, 1);
+    } else {
+        wcStatusEditStatuses.value.push(slug);
+    }
+}
+
+function addCustomStatus() {
+    const input = document.querySelector('[ref="customStatusInput"]') as HTMLInputElement
+        || document.querySelector('input[placeholder="ex: pagamento-aprovado"]') as HTMLInputElement;
+    if (!input || !input.value.trim()) return;
+
+    const slug = input.value.trim().toLowerCase().replace(/\s+/g, '-').replace(/^wc-/, '');
+
+    if (showWcStatusModal.value) {
+        if (!wcStatusEditStatuses.value.includes(slug)) {
+            wcStatusEditStatuses.value.push(slug);
+            // Adicionar aos disponíveis também para visualizar
+            if (!wcStatusEditAvailable.value.find(s => s.slug === slug)) {
+                wcStatusEditAvailable.value.push({ slug, name: slug, total: undefined });
+            }
+        }
+    } else {
+        if (!wcForm.order_statuses.includes(slug)) {
+            wcForm.order_statuses.push(slug);
+            if (!wcAvailableStatuses.value.find(s => s.slug === slug)) {
+                wcAvailableStatuses.value.push({ slug, name: slug, total: undefined });
+            }
+        }
+    }
+    input.value = '';
+}
+
+function saveWcStatuses() {
+    if (!wcStatusEditConnection.value || wcStatusEditStatuses.value.length === 0) return;
+    wcStatusEditSaving.value = true;
+    const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
+
+    fetch(route('analytics.connections.update-woocommerce-statuses', { connection: wcStatusEditConnection.value.id }), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
+        body: JSON.stringify({ order_statuses: wcStatusEditStatuses.value }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showWcStatusModal.value = false;
+            router.reload();
+        }
+    })
+    .catch(() => {})
+    .finally(() => wcStatusEditSaving.value = false);
 }
 
 function openManualEntryForm(entry?: ManualEntry) {
@@ -542,6 +683,14 @@ function isConnected(platform: string): boolean {
                                 <span class="text-[10px] text-gray-600">•</span>
                                 <span class="text-[10px] text-gray-500">Por {{ conn.user_name }}</span>
                             </div>
+                            <div v-if="conn.platform === 'woocommerce' && conn.config?.order_statuses?.length > 0" class="flex items-center gap-1.5 mt-1 flex-wrap">
+                                <span class="text-[10px] text-purple-400">Status:</span>
+                                <span
+                                    v-for="st in conn.config.order_statuses"
+                                    :key="st"
+                                    class="px-1.5 py-0.5 bg-purple-500/10 text-purple-300 rounded text-[9px] font-mono border border-purple-500/20"
+                                >{{ st }}</span>
+                            </div>
                         </div>
 
                         <!-- Status -->
@@ -571,6 +720,18 @@ function isConnected(platform: string): boolean {
 
                         <!-- Actions -->
                         <div class="flex items-center gap-1">
+                            <!-- Botão de configurar status (apenas WooCommerce) -->
+                            <button
+                                v-if="conn.platform === 'woocommerce'"
+                                @click="openWcStatusEditor(conn)"
+                                class="p-2 text-gray-400 hover:text-purple-400 transition rounded-lg hover:bg-gray-800"
+                                title="Configurar Status de Pedido"
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                    <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                                    <circle cx="12" cy="12" r="3"/>
+                                </svg>
+                            </button>
                             <button
                                 @click="syncConnection(conn.id)"
                                 :disabled="syncingId === conn.id"
@@ -742,6 +903,47 @@ function isConnected(platform: string): boolean {
                             {{ wcTestResult.message }}
                         </div>
 
+                        <!-- Status de Pedido (aparece após teste bem-sucedido) -->
+                        <div v-if="wcTestResult?.success || wcAvailableStatuses.length > 0">
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="block text-xs text-gray-400">Status que contam como receita</label>
+                                <button v-if="!wcLoadingStatuses && wcAvailableStatuses.length === 0" type="button" @click="fetchWcStatuses" class="text-[10px] text-indigo-400 hover:text-indigo-300">Carregar status</button>
+                            </div>
+
+                            <div v-if="wcLoadingStatuses" class="flex items-center gap-2 py-2">
+                                <svg class="w-3.5 h-3.5 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                <span class="text-[11px] text-gray-500">Buscando status da loja...</span>
+                            </div>
+
+                            <div v-else-if="wcAvailableStatuses.length > 0" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                                <label
+                                    v-for="st in wcAvailableStatuses"
+                                    :key="st.slug"
+                                    class="flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition"
+                                    :class="wcForm.order_statuses.includes(st.slug) ? 'bg-purple-500/10 border border-purple-500/30' : 'bg-gray-800/50 border border-gray-700/50 hover:border-gray-600'"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        :checked="wcForm.order_statuses.includes(st.slug)"
+                                        @change="toggleWcStatus(st.slug)"
+                                        class="rounded border-gray-600 bg-gray-700 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 w-3.5 h-3.5"
+                                    />
+                                    <div class="flex-1 min-w-0 flex items-center gap-2">
+                                        <span class="text-xs text-white truncate">{{ st.name }}</span>
+                                        <span class="text-[10px] text-gray-500 font-mono">{{ st.slug }}</span>
+                                    </div>
+                                    <span v-if="st.total !== undefined" class="text-[10px] text-gray-500">{{ st.total }} pedidos</span>
+                                </label>
+                            </div>
+
+                            <p v-if="wcForm.order_statuses.length > 0" class="text-[10px] text-gray-500 mt-1.5">
+                                {{ wcForm.order_statuses.length }} status selecionado(s): <span class="text-gray-400">{{ wcForm.order_statuses.join(', ') }}</span>
+                            </p>
+                            <p v-else class="text-[10px] text-amber-400 mt-1.5">
+                                Nenhum status selecionado. Serão usados os padrão (completed, processing, on-hold).
+                            </p>
+                        </div>
+
                         <div class="flex gap-3">
                             <button type="button" @click="testWcConnection" :disabled="wcTesting || !wcForm.store_url || !wcForm.consumer_key || !wcForm.consumer_secret" class="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-300 rounded-xl text-sm transition border border-gray-700 flex items-center justify-center gap-2">
                                 <svg v-if="wcTesting" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -752,6 +954,106 @@ function isConnected(platform: string): boolean {
                             </button>
                         </div>
                     </form>
+                </div>
+            </div>
+
+            <!-- WooCommerce Status Edit Modal -->
+            <div v-if="showWcStatusModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" @click.self="showWcStatusModal = false">
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-md mx-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                                <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                    <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                                    <circle cx="12" cy="12" r="3"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 class="text-lg font-semibold text-white">Status de Pedido</h3>
+                                <p class="text-[11px] text-gray-500">{{ wcStatusEditConnection?.name }}</p>
+                            </div>
+                        </div>
+                        <button @click="showWcStatusModal = false" class="text-gray-400 hover:text-white">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    </div>
+
+                    <p class="text-xs text-gray-400 mb-4">
+                        Selecione quais status de pedido devem contar como <strong class="text-white">receita</strong>.
+                        Inclua status personalizados do plugin <strong class="text-purple-400">Woo Order Status</strong> ou similar.
+                    </p>
+
+                    <div v-if="wcStatusEditLoading" class="flex items-center justify-center gap-2 py-8">
+                        <svg class="w-5 h-5 animate-spin text-purple-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                        <span class="text-sm text-gray-400">Buscando status da loja...</span>
+                    </div>
+
+                    <div v-else class="space-y-1.5 max-h-64 overflow-y-auto pr-1 mb-4">
+                        <label
+                            v-for="st in wcStatusEditAvailable"
+                            :key="st.slug"
+                            class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition"
+                            :class="wcStatusEditStatuses.includes(st.slug) ? 'bg-purple-500/10 border border-purple-500/30' : 'bg-gray-800/50 border border-gray-700/50 hover:border-gray-600'"
+                        >
+                            <input
+                                type="checkbox"
+                                :checked="wcStatusEditStatuses.includes(st.slug)"
+                                @change="toggleWcStatusEdit(st.slug)"
+                                class="rounded border-gray-600 bg-gray-700 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 w-4 h-4"
+                            />
+                            <div class="flex-1 min-w-0 flex items-center gap-2">
+                                <span class="text-sm text-white">{{ st.name }}</span>
+                                <span class="text-[10px] text-gray-500 font-mono bg-gray-800 px-1.5 py-0.5 rounded">{{ st.slug }}</span>
+                            </div>
+                            <span v-if="st.total !== undefined" class="text-xs text-gray-500">{{ st.total }}</span>
+                        </label>
+
+                        <!-- Campo para adicionar status manual (caso o plugin não exponha via API) -->
+                        <div class="mt-3 pt-3 border-t border-gray-800">
+                            <label class="block text-[11px] text-gray-500 mb-1.5">Adicionar status personalizado manualmente</label>
+                            <div class="flex gap-2">
+                                <input
+                                    ref="customStatusInput"
+                                    type="text"
+                                    placeholder="ex: pagamento-aprovado"
+                                    class="flex-1 bg-gray-800 border border-gray-700 text-white text-xs rounded-lg px-3 py-1.5 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                                    @keydown.enter.prevent="addCustomStatus"
+                                />
+                                <button type="button" @click="addCustomStatus" class="px-3 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 rounded-lg text-xs transition border border-purple-500/20">
+                                    Adicionar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="wcStatusEditStatuses.length > 0" class="p-3 bg-gray-800/50 rounded-xl mb-4">
+                        <p class="text-[11px] text-gray-400 mb-1">Status selecionados ({{ wcStatusEditStatuses.length }}):</p>
+                        <div class="flex flex-wrap gap-1.5">
+                            <span
+                                v-for="slug in wcStatusEditStatuses"
+                                :key="slug"
+                                class="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-500/10 text-purple-300 rounded text-[10px] font-mono border border-purple-500/20"
+                            >
+                                {{ slug }}
+                                <button @click="toggleWcStatusEdit(slug)" class="text-purple-400 hover:text-red-400 ml-0.5">&times;</button>
+                            </span>
+                        </div>
+                    </div>
+                    <p v-else class="text-xs text-amber-400 mb-4">Selecione ao menos um status.</p>
+
+                    <div class="flex gap-3">
+                        <button @click="showWcStatusModal = false" class="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm transition border border-gray-700">
+                            Cancelar
+                        </button>
+                        <button
+                            @click="saveWcStatuses"
+                            :disabled="wcStatusEditSaving || wcStatusEditStatuses.length === 0"
+                            class="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl text-sm font-medium transition flex items-center justify-center gap-2"
+                        >
+                            <svg v-if="wcStatusEditSaving" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            {{ wcStatusEditSaving ? 'Salvando...' : 'Salvar Status' }}
+                        </button>
+                    </div>
                 </div>
             </div>
 

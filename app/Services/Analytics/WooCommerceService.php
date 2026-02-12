@@ -43,6 +43,11 @@ class WooCommerceService
     }
 
     /**
+     * Status padrão que contam como vendas efetivas
+     */
+    public const DEFAULT_ORDER_STATUSES = ['completed', 'processing', 'on-hold'];
+
+    /**
      * Sincroniza dados de pedidos WooCommerce
      */
     public function syncData(AnalyticsConnection $connection, ?string $startDate = null, ?string $endDate = null): array
@@ -56,6 +61,9 @@ class WooCommerceService
             return ['success' => false, 'error' => 'Configuração WooCommerce incompleta'];
         }
 
+        // Status de pedidos que contam como receita (padrão + personalizados)
+        $orderStatuses = $this->resolveOrderStatuses($config);
+
         $start = $startDate ?: now()->subDays(30)->format('Y-m-d');
         $end = $endDate ?: now()->format('Y-m-d');
 
@@ -66,11 +74,12 @@ class WooCommerceService
             'store_url' => $storeUrl,
             'start' => $start,
             'end' => $end,
+            'order_statuses' => $orderStatuses,
         ]);
 
         try {
             // Buscar todos os pedidos do periodo (com paginacao)
-            $allOrders = $this->fetchAllOrders($storeUrl, $consumerKey, $consumerSecret, $start, $end);
+            $allOrders = $this->fetchAllOrders($storeUrl, $consumerKey, $consumerSecret, $start, $end, $orderStatuses);
 
             SystemLog::info('analytics', 'woocommerce.sync.orders', "Encontrados " . count($allOrders) . " pedidos", [
                 'connection_id' => $connection->id,
@@ -187,15 +196,15 @@ class WooCommerceService
     /**
      * Busca todos os pedidos com paginacao
      */
-    protected function fetchAllOrders(string $storeUrl, string $key, string $secret, string $start, string $end): array
+    protected function fetchAllOrders(string $storeUrl, string $key, string $secret, string $start, string $end, array $orderStatuses = []): array
     {
         $allOrders = [];
         $page = 1;
         $perPage = 100;
         $baseUrl = rtrim($storeUrl, '/') . '/wp-json/wc/v3/orders';
 
-        // Status que contam como vendas efetivas
-        $statuses = 'completed,processing,on-hold';
+        // Status que contam como vendas efetivas (padrão + personalizados)
+        $statuses = !empty($orderStatuses) ? implode(',', $orderStatuses) : 'completed,processing,on-hold';
 
         do {
             $response = Http::withBasicAuth($key, $secret)
@@ -252,6 +261,80 @@ class WooCommerceService
         } catch (\Throwable) {
             return [];
         }
+    }
+
+    /**
+     * Resolve os status de pedido a utilizar na sincronização.
+     * Combina os status padrão com os personalizados configurados na conexão.
+     */
+    protected function resolveOrderStatuses(array $config): array
+    {
+        $customStatuses = $config['order_statuses'] ?? [];
+
+        if (empty($customStatuses)) {
+            return self::DEFAULT_ORDER_STATUSES;
+        }
+
+        // Retornar a lista personalizada (sem duplicatas)
+        return array_values(array_unique($customStatuses));
+    }
+
+    /**
+     * Busca os status de pedido disponíveis na loja WooCommerce.
+     * Inclui status padrão do WC e status personalizados de plugins.
+     */
+    public function fetchOrderStatuses(string $storeUrl, string $consumerKey, string $consumerSecret): array
+    {
+        $url = rtrim($storeUrl, '/') . '/wp-json/wc/v3/orders/statuses';
+
+        try {
+            // Tentar endpoint oficial de status (WC 3.5+)
+            $response = Http::withBasicAuth($consumerKey, $consumerSecret)
+                ->timeout(15)
+                ->get($url);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                if (is_array($data)) {
+                    return $data;
+                }
+            }
+        } catch (\Throwable) {
+            // Silenciar - tentar método alternativo
+        }
+
+        // Método alternativo: buscar do reports/orders/totals que lista status
+        $reportsUrl = rtrim($storeUrl, '/') . '/wp-json/wc/v3/reports/orders/totals';
+
+        try {
+            $response = Http::withBasicAuth($consumerKey, $consumerSecret)
+                ->timeout(15)
+                ->get($reportsUrl);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                if (is_array($data)) {
+                    return collect($data)->map(fn($item) => [
+                        'slug' => $item['slug'] ?? '',
+                        'name' => $item['name'] ?? $item['slug'] ?? '',
+                        'total' => $item['total'] ?? 0,
+                    ])->filter(fn($item) => !empty($item['slug']))->values()->toArray();
+                }
+            }
+        } catch (\Throwable) {
+            // Silenciar
+        }
+
+        // Fallback: retornar status padrão do WooCommerce
+        return [
+            ['slug' => 'pending', 'name' => 'Pendente'],
+            ['slug' => 'processing', 'name' => 'Processando'],
+            ['slug' => 'on-hold', 'name' => 'Aguardando'],
+            ['slug' => 'completed', 'name' => 'Concluido'],
+            ['slug' => 'cancelled', 'name' => 'Cancelado'],
+            ['slug' => 'refunded', 'name' => 'Reembolsado'],
+            ['slug' => 'failed', 'name' => 'Falhou'],
+        ];
     }
 
     /**

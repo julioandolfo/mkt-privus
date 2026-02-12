@@ -663,6 +663,8 @@ class AnalyticsController extends Controller
                 'store_url' => 'required|url|max:500',
                 'consumer_key' => 'required|string|max:255',
                 'consumer_secret' => 'required|string|max:255',
+                'order_statuses' => 'nullable|array',
+                'order_statuses.*' => 'string|max:100',
             ]);
 
             // Testar conexao antes de salvar
@@ -674,6 +676,14 @@ class AnalyticsController extends Controller
             }
 
             $storeUrl = rtrim($request->store_url, '/');
+
+            // Processar status de pedido (remover prefixo "wc-" se presente)
+            $orderStatuses = collect($request->order_statuses ?? [])
+                ->map(fn($s) => str_replace('wc-', '', trim($s)))
+                ->filter()
+                ->unique()
+                ->values()
+                ->toArray();
 
             AnalyticsConnection::create([
                 'brand_id' => $request->brand_id,
@@ -690,6 +700,7 @@ class AnalyticsController extends Controller
                     'consumer_secret' => $request->consumer_secret,
                     'wc_version' => $test['wc_version'] ?? null,
                     'currency' => $test['currency'] ?? 'BRL',
+                    'order_statuses' => $orderStatuses,
                 ],
             ]);
 
@@ -738,6 +749,64 @@ class AnalyticsController extends Controller
         $result = $wcService->testConnection($request->store_url, $request->consumer_key, $request->consumer_secret);
 
         return response()->json($result);
+    }
+
+    /**
+     * Buscar status de pedido disponíveis na loja WooCommerce
+     */
+    public function fetchWooCommerceStatuses(Request $request): JsonResponse
+    {
+        $request->validate([
+            'store_url' => 'required|url',
+            'consumer_key' => 'required|string',
+            'consumer_secret' => 'required|string',
+        ]);
+
+        $wcService = app(WooCommerceService::class);
+        $statuses = $wcService->fetchOrderStatuses($request->store_url, $request->consumer_key, $request->consumer_secret);
+
+        return response()->json([
+            'success' => true,
+            'statuses' => $statuses,
+            'default_statuses' => WooCommerceService::DEFAULT_ORDER_STATUSES,
+        ]);
+    }
+
+    /**
+     * Atualizar status de pedido de uma conexão WooCommerce existente
+     */
+    public function updateWooCommerceStatuses(Request $request, AnalyticsConnection $connection): JsonResponse
+    {
+        if ($connection->platform !== 'woocommerce') {
+            return response()->json(['success' => false, 'error' => 'Conexão não é WooCommerce'], 400);
+        }
+
+        $request->validate([
+            'order_statuses' => 'required|array|min:1',
+            'order_statuses.*' => 'string|max:100',
+        ]);
+
+        $orderStatuses = collect($request->order_statuses)
+            ->map(fn($s) => str_replace('wc-', '', trim($s)))
+            ->filter()
+            ->unique()
+            ->values()
+            ->toArray();
+
+        $config = $connection->config;
+        $config['order_statuses'] = $orderStatuses;
+        $connection->update(['config' => $config]);
+
+        SystemLog::info('analytics', 'woocommerce.statuses.updated', "Status WooCommerce atualizados para: {$connection->name}", [
+            'connection_id' => $connection->id,
+            'order_statuses' => $orderStatuses,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Status de pedido atualizados com sucesso',
+            'order_statuses' => $orderStatuses,
+        ]);
     }
 
     /**

@@ -94,6 +94,15 @@ class AnalyticsSyncService
                 ->whereNull('dimension_key')
                 ->get();
 
+            // Dados de custo do Google Ads via GA4 (quando Ads está vinculado ao GA4)
+            $ga4AdData = AnalyticsDataPoint::where('brand_id', $brandId)
+                ->where('platform', 'google_analytics')
+                ->where('date', $dateStr)
+                ->whereNull('dimension_key')
+                ->whereIn('metric_key', ['ga4_ad_cost', 'ga4_ad_clicks', 'ga4_ad_impressions', 'ga4_ad_conversions', 'ga4_ad_roas', 'ga4_ad_cpc', 'ga4_ad_cost_per_conversion'])
+                ->get()
+                ->keyBy('metric_key');
+
             $scData = AnalyticsDataPoint::where('brand_id', $brandId)
                 ->where('platform', 'google_search_console')
                 ->where('date', $dateStr)
@@ -108,12 +117,38 @@ class AnalyticsSyncService
                 ->get()
                 ->keyBy('metric_key');
 
-            // Agregar dados de ads (soma de API)
-            $apiAdSpend = $adData->where('metric_key', 'spend')->sum('value');
-            $totalImpressions = $adData->where('metric_key', 'impressions')->sum('value');
-            $totalClicks = $adData->where('metric_key', 'clicks')->sum('value');
-            $totalConversions = $adData->where('metric_key', 'conversions')->sum('value');
-            $adRevenue = $adData->where('metric_key', 'revenue')->sum('value') + $adData->where('metric_key', 'conversion_value')->sum('value');
+            // Agregar dados de ads diretos (soma de API Google Ads + Meta Ads)
+            $directAdSpend = $adData->where('metric_key', 'spend')->sum('value');
+            $directImpressions = $adData->where('metric_key', 'impressions')->sum('value');
+            $directClicks = $adData->where('metric_key', 'clicks')->sum('value');
+            $directConversions = $adData->where('metric_key', 'conversions')->sum('value');
+            $directAdRevenue = $adData->where('metric_key', 'revenue')->sum('value') + $adData->where('metric_key', 'conversion_value')->sum('value');
+
+            // Se não tem dados diretos do Google Ads, usar dados via GA4 (quando Ads vinculado ao Analytics)
+            $ga4AdCost = floatval($ga4AdData->get('ga4_ad_cost')?->value ?? 0);
+            $ga4AdClicks = floatval($ga4AdData->get('ga4_ad_clicks')?->value ?? 0);
+            $ga4AdImpressions = floatval($ga4AdData->get('ga4_ad_impressions')?->value ?? 0);
+            $ga4AdConversions = floatval($ga4AdData->get('ga4_ad_conversions')?->value ?? 0);
+
+            // Verificar se já tem dados diretos do Google Ads (plataforma google_ads)
+            $hasDirectGoogleAds = $adData->where('metric_key', 'spend')
+                ->filter(fn($dp) => $dp->platform === 'google_ads' && $dp->value > 0)->isNotEmpty();
+
+            // Se NÃO tem dados diretos do Google Ads mas TEM via GA4, somar o GA4
+            if (!$hasDirectGoogleAds && $ga4AdCost > 0) {
+                $apiAdSpend = $directAdSpend + $ga4AdCost;
+                $totalImpressions = $directImpressions + $ga4AdImpressions;
+                $totalClicks = $directClicks + $ga4AdClicks;
+                $totalConversions = $directConversions + $ga4AdConversions;
+                $adRevenue = $directAdRevenue;
+            } else {
+                // Usar apenas dados diretos (evitar duplicar se já tem Google Ads API)
+                $apiAdSpend = $directAdSpend;
+                $totalImpressions = $directImpressions;
+                $totalClicks = $directClicks;
+                $totalConversions = $directConversions;
+                $adRevenue = $directAdRevenue;
+            }
 
             $adCtr = $totalImpressions > 0 ? ($totalClicks / $totalImpressions) * 100 : 0;
             $adCpc = $totalClicks > 0 ? $apiAdSpend / $totalClicks : 0;
@@ -368,9 +403,9 @@ class AnalyticsSyncService
                 ->get(['dimension_value as name', 'value', 'extra'])
                 ->toArray(),
             'campaigns' => AnalyticsDataPoint::where('brand_id', $brandId)
-                ->whereIn('platform', ['google_ads', 'meta_ads'])
+                ->whereIn('platform', ['google_ads', 'meta_ads', 'google_analytics'])
                 ->where('dimension_key', 'campaign')
-                ->where('metric_key', 'spend')
+                ->whereIn('metric_key', ['spend', 'ga4_ad_cost'])
                 ->where('date', $endDate)
                 ->orderByDesc('value')
                 ->limit(10)
