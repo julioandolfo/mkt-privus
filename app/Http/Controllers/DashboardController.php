@@ -6,6 +6,10 @@ use App\Models\AnalyticsConnection;
 use App\Models\AnalyticsDailySummary;
 use App\Models\Brand;
 use App\Models\CustomMetric;
+use App\Models\EmailAiSuggestion;
+use App\Models\EmailCampaign;
+use App\Models\EmailContact;
+use App\Models\EmailProvider;
 use App\Models\ManualAdEntry;
 use App\Models\MetricGoal;
 use App\Models\Post;
@@ -396,6 +400,80 @@ class DashboardController extends Controller
             }
         }
 
+        // ===== EMAIL MARKETING RESUMO =====
+        $emailSummary = null;
+        {
+            $hasProviders = EmailProvider::when($brandId, fn($q) => $q->where('brand_id', $brandId))->exists();
+            $hasCampaigns = EmailCampaign::when($brandId, fn($q) => $q->where('brand_id', $brandId))->exists();
+            $hasContacts = EmailContact::when($brandId, fn($q) => $q->where('brand_id', $brandId))->exists();
+
+            if ($hasProviders || $hasCampaigns || $hasContacts) {
+                // Campanhas no periodo
+                $emailCampaignsQuery = EmailCampaign::when($brandId, fn($q) => $q->where('brand_id', $brandId))
+                    ->whereIn('status', ['sent', 'sending'])
+                    ->whereBetween('started_at', [$periodStart, $periodEnd]);
+
+                $emailAgg = (clone $emailCampaignsQuery)->selectRaw('
+                    COUNT(*) as campaigns_sent,
+                    COALESCE(SUM(total_sent), 0) as total_sent,
+                    COALESCE(SUM(total_delivered), 0) as total_delivered,
+                    COALESCE(SUM(total_bounced), 0) as total_bounced,
+                    COALESCE(SUM(total_opened), 0) as total_opened,
+                    COALESCE(SUM(total_clicked), 0) as total_clicked,
+                    COALESCE(SUM(total_unsubscribed), 0) as total_unsubscribed,
+                    COALESCE(SUM(unique_opens), 0) as unique_opens,
+                    COALESCE(SUM(unique_clicks), 0) as unique_clicks
+                ')->first();
+
+                $eSent = (int) ($emailAgg->total_sent ?? 0);
+                $eDelivered = (int) ($emailAgg->total_delivered ?? 0);
+                $eUniqueOpens = (int) ($emailAgg->unique_opens ?? 0);
+                $eUniqueClicks = (int) ($emailAgg->unique_clicks ?? 0);
+
+                // Periodo anterior
+                $prevEmailAgg = EmailCampaign::when($brandId, fn($q) => $q->where('brand_id', $brandId))
+                    ->whereIn('status', ['sent', 'sending'])
+                    ->whereBetween('started_at', [$prevStart, $prevEnd])
+                    ->selectRaw('
+                        COALESCE(SUM(total_sent), 0) as total_sent,
+                        COALESCE(SUM(total_delivered), 0) as total_delivered,
+                        COALESCE(SUM(unique_opens), 0) as unique_opens,
+                        COALESCE(SUM(unique_clicks), 0) as unique_clicks
+                    ')->first();
+
+                $prevEDelivered = (int) ($prevEmailAgg->total_delivered ?? 0);
+                $prevEUniqueOpens = (int) ($prevEmailAgg->unique_opens ?? 0);
+                $prevEUniqueClicks = (int) ($prevEmailAgg->unique_clicks ?? 0);
+
+                $emailSummary = [
+                    'has_email' => true,
+                    'campaigns_sent' => (int) ($emailAgg->campaigns_sent ?? 0),
+                    'total_sent' => $eSent,
+                    'total_delivered' => $eDelivered,
+                    'total_bounced' => (int) ($emailAgg->total_bounced ?? 0),
+                    'total_opened' => (int) ($emailAgg->total_opened ?? 0),
+                    'total_clicked' => (int) ($emailAgg->total_clicked ?? 0),
+                    'total_unsubscribed' => (int) ($emailAgg->total_unsubscribed ?? 0),
+                    'unique_opens' => $eUniqueOpens,
+                    'unique_clicks' => $eUniqueClicks,
+                    'open_rate' => $eDelivered > 0 ? round(($eUniqueOpens / $eDelivered) * 100, 2) : 0,
+                    'click_rate' => $eDelivered > 0 ? round(($eUniqueClicks / $eDelivered) * 100, 2) : 0,
+                    'bounce_rate' => $eSent > 0 ? round(((int)($emailAgg->total_bounced ?? 0) / $eSent) * 100, 2) : 0,
+                    'delivery_rate' => $eSent > 0 ? round(($eDelivered / $eSent) * 100, 2) : 0,
+                    // Contatos
+                    'total_contacts' => EmailContact::when($brandId, fn($q) => $q->where('brand_id', $brandId))->count(),
+                    'active_contacts' => EmailContact::when($brandId, fn($q) => $q->where('brand_id', $brandId))->where('status', 'active')->count(),
+                    // Comparacao
+                    'prev_total_sent' => (int) ($prevEmailAgg->total_sent ?? 0),
+                    'prev_open_rate' => $prevEDelivered > 0 ? round(($prevEUniqueOpens / $prevEDelivered) * 100, 2) : 0,
+                    'prev_click_rate' => $prevEDelivered > 0 ? round(($prevEUniqueClicks / $prevEDelivered) * 100, 2) : 0,
+                    // Sugestoes IA pendentes
+                    'pending_suggestions' => EmailAiSuggestion::when($brandId, fn($q) => $q->where('brand_id', $brandId))
+                        ->where('status', 'pending')->count(),
+                ];
+            }
+        }
+
         return Inertia::render('Dashboard/Index', [
             'stats' => $stats,
             'socialAccounts' => $socialAccounts,
@@ -405,6 +483,7 @@ class DashboardController extends Controller
             'followersChart' => $followersChart,
             'recentActivity' => $recentActivity,
             'analyticsSummary' => $analyticsSummary,
+            'emailSummary' => $emailSummary,
             'period' => $period,
             'periodLabel' => $periodLabel,
             'periodStart' => $periodStart->format('Y-m-d'),

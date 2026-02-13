@@ -72,6 +72,29 @@ interface ChartPoint {
     impressions: number;
 }
 
+interface EmailSummary {
+    has_email: boolean;
+    campaigns_sent: number;
+    total_sent: number;
+    total_delivered: number;
+    total_bounced: number;
+    total_opened: number;
+    total_clicked: number;
+    total_unsubscribed: number;
+    unique_opens: number;
+    unique_clicks: number;
+    open_rate: number;
+    click_rate: number;
+    bounce_rate: number;
+    delivery_rate: number;
+    total_contacts: number;
+    active_contacts: number;
+    prev_total_sent: number;
+    prev_open_rate: number;
+    prev_click_rate: number;
+    pending_suggestions: number;
+}
+
 interface AnalyticsSummary {
     sessions: number;
     sessions_variation: number | null;
@@ -124,6 +147,7 @@ const props = defineProps<{
     followersChart: ChartPoint[];
     recentActivity: any[];
     analyticsSummary?: AnalyticsSummary | null;
+    emailSummary?: EmailSummary | null;
     period?: string;
     periodLabel?: string;
     periodStart?: string;
@@ -227,6 +251,11 @@ function formatNumber(num: number | null | undefined): string {
 
 function formatCurrency(num: number): string {
     return 'R$ ' + num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function deltaPercent(current: number, previous: number): number | null {
+    if (!previous || previous === 0) return current > 0 ? 100 : null;
+    return Math.round(((current - previous) / Math.abs(previous)) * 1000) / 10;
 }
 
 function formatDuration(seconds: number): string {
@@ -479,6 +508,83 @@ const periodOptions = [
                         <span class="w-2 h-2 rounded-full" :style="{ backgroundColor: conn.color }"></span>
                         <span class="text-[10px] text-gray-400">{{ conn.label }}</span>
                         <span :class="['w-1.5 h-1.5 rounded-full', conn.sync_status === 'success' ? 'bg-emerald-400' : conn.sync_status === 'error' ? 'bg-red-400' : 'bg-gray-600']"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== EMAIL MARKETING ===== -->
+            <div v-if="emailSummary?.has_email">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider">Email Marketing — {{ periodLabel || 'Este Mes' }}</h2>
+                    <Link :href="route('email.dashboard')" class="text-xs text-indigo-400 hover:text-indigo-300 transition">Ver Dashboard Completo</Link>
+                </div>
+
+                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+                    <!-- Campanhas Enviadas -->
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Campanhas</p>
+                        <p class="text-xl font-bold text-indigo-400">{{ emailSummary.campaigns_sent }}</p>
+                        <p class="text-[10px] text-gray-600 mt-0.5">enviadas no periodo</p>
+                    </div>
+
+                    <!-- Emails Enviados -->
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Emails Enviados</p>
+                        <p class="text-xl font-bold text-blue-400">{{ formatNumber(emailSummary.total_sent) }}</p>
+                        <p v-if="deltaPercent(emailSummary.total_sent, emailSummary.prev_total_sent) !== null"
+                            :class="['text-[10px] font-medium mt-0.5', deltaPercent(emailSummary.total_sent, emailSummary.prev_total_sent)! >= 0 ? 'text-emerald-400' : 'text-red-400']">
+                            {{ deltaPercent(emailSummary.total_sent, emailSummary.prev_total_sent)! >= 0 ? '+' : '' }}{{ deltaPercent(emailSummary.total_sent, emailSummary.prev_total_sent) }}%
+                        </p>
+                    </div>
+
+                    <!-- Entregues -->
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Entregues</p>
+                        <p class="text-xl font-bold text-emerald-400">{{ formatNumber(emailSummary.total_delivered) }}</p>
+                        <p class="text-[10px] text-gray-600 mt-0.5">{{ emailSummary.delivery_rate }}% entrega</p>
+                    </div>
+
+                    <!-- Taxa de Abertura -->
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Taxa Abertura</p>
+                        <p class="text-xl font-bold text-indigo-400">{{ emailSummary.open_rate }}%</p>
+                        <p v-if="emailSummary.prev_open_rate > 0"
+                            :class="['text-[10px] font-medium mt-0.5', emailSummary.open_rate >= emailSummary.prev_open_rate ? 'text-emerald-400' : 'text-red-400']">
+                            {{ emailSummary.open_rate >= emailSummary.prev_open_rate ? '+' : '' }}{{ (emailSummary.open_rate - emailSummary.prev_open_rate).toFixed(1) }}pp
+                        </p>
+                        <p v-else class="text-[10px] text-gray-600 mt-0.5">{{ formatNumber(emailSummary.unique_opens) }} aberturas</p>
+                    </div>
+
+                    <!-- Taxa de Cliques -->
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Taxa Cliques</p>
+                        <p class="text-xl font-bold text-emerald-400">{{ emailSummary.click_rate }}%</p>
+                        <p v-if="emailSummary.prev_click_rate > 0"
+                            :class="['text-[10px] font-medium mt-0.5', emailSummary.click_rate >= emailSummary.prev_click_rate ? 'text-emerald-400' : 'text-red-400']">
+                            {{ emailSummary.click_rate >= emailSummary.prev_click_rate ? '+' : '' }}{{ (emailSummary.click_rate - emailSummary.prev_click_rate).toFixed(1) }}pp
+                        </p>
+                        <p v-else class="text-[10px] text-gray-600 mt-0.5">{{ formatNumber(emailSummary.unique_clicks) }} cliques</p>
+                    </div>
+
+                    <!-- Bounce Rate -->
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Bounce Rate</p>
+                        <p class="text-xl font-bold" :class="emailSummary.bounce_rate > 5 ? 'text-red-400' : 'text-emerald-400'">{{ emailSummary.bounce_rate }}%</p>
+                        <p class="text-[10px] text-gray-600 mt-0.5">{{ formatNumber(emailSummary.total_bounced) }} bounces</p>
+                    </div>
+
+                    <!-- Contatos + IA -->
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Contatos</p>
+                        <p class="text-xl font-bold text-purple-400">{{ formatNumber(emailSummary.active_contacts) }}</p>
+                        <p class="text-[10px] text-gray-600 mt-0.5">de {{ formatNumber(emailSummary.total_contacts) }} total</p>
+                        <Link v-if="emailSummary.pending_suggestions > 0" :href="route('email.ai-suggestions.index')"
+                            class="inline-flex items-center gap-1 mt-1.5 text-[10px] font-medium text-amber-400 hover:text-amber-300 transition">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                            </svg>
+                            {{ emailSummary.pending_suggestions }} sugestoes IA
+                        </Link>
                     </div>
                 </div>
             </div>
