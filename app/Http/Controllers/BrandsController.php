@@ -204,49 +204,70 @@ class BrandsController extends Controller
      */
     public function uploadAsset(Request $request, Brand $brand): JsonResponse
     {
-        $request->validate([
-            'file' => 'required|image|mimes:jpeg,jpg,png,gif,webp,svg|max:10240', // 10MB
-            'category' => 'required|string|in:logo,icon,watermark,reference',
-            'label' => 'nullable|string|max:255',
-        ]);
-
-        $file = $request->file('file');
-        $category = $request->input('category');
-        $label = $request->input('label', $file->getClientOriginalName());
-
-        // Salvar arquivo
-        $path = $file->store("brands/{$brand->id}/assets", 'public');
-
-        // Obter dimensoes da imagem
-        $dimensions = null;
         try {
-            $imageSize = getimagesize($file->getPathname());
-            if ($imageSize) {
-                $dimensions = ['width' => $imageSize[0], 'height' => $imageSize[1]];
+            $request->validate([
+                'file' => 'required|image|mimes:jpeg,jpg,png,gif,webp,svg|max:10240', // 10MB
+                'category' => 'required|string|in:logo,icon,watermark,reference',
+                'label' => 'nullable|string|max:255',
+            ]);
+
+            $file = $request->file('file');
+            $category = $request->input('category');
+            $label = $request->input('label', $file->getClientOriginalName());
+
+            // Salvar arquivo
+            $path = $file->store("brands/{$brand->id}/assets", 'public');
+
+            if (!$path) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Falha ao salvar arquivo. Verifique permissões do storage.',
+                ], 500);
             }
-        } catch (\Exception $e) {
-            // Ignora erro de dimensoes (SVG por exemplo)
+
+            // Obter dimensoes da imagem
+            $dimensions = null;
+            try {
+                $imageSize = getimagesize($file->getPathname());
+                if ($imageSize) {
+                    $dimensions = ['width' => $imageSize[0], 'height' => $imageSize[1]];
+                }
+            } catch (\Exception $e) {
+                // Ignora erro de dimensoes (SVG por exemplo)
+            }
+
+            // Calcular sort_order
+            $maxOrder = $brand->assets()->where('category', $category)->max('sort_order') ?? 0;
+
+            $asset = $brand->assets()->create([
+                'category' => $category,
+                'label' => $label,
+                'file_path' => $path,
+                'file_name' => $file->getClientOriginalName(),
+                'mime_type' => $file->getClientMimeType(),
+                'file_size' => $file->getSize(),
+                'dimensions' => $dimensions,
+                'is_primary' => $brand->assets()->where('category', $category)->count() === 0,
+                'sort_order' => $maxOrder + 1,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'asset' => $asset->fresh(),
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            $this->safeLog('error', 'BrandsController@uploadAsset: Erro', [
+                'brand_id' => $brand->id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao fazer upload: ' . $e->getMessage(),
+            ], 500);
         }
-
-        // Calcular sort_order
-        $maxOrder = $brand->assets()->where('category', $category)->max('sort_order') ?? 0;
-
-        $asset = $brand->assets()->create([
-            'category' => $category,
-            'label' => $label,
-            'file_path' => $path,
-            'file_name' => $file->getClientOriginalName(),
-            'mime_type' => $file->getClientMimeType(),
-            'file_size' => $file->getSize(),
-            'dimensions' => $dimensions,
-            'is_primary' => $brand->assets()->where('category', $category)->count() === 0,
-            'sort_order' => $maxOrder + 1,
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'asset' => $asset->fresh(),
-        ]);
     }
 
     /**
