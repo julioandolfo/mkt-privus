@@ -16,6 +16,14 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\SocialAccountController;
 use App\Http\Controllers\SocialOAuthController;
 use App\Http\Controllers\LogsController;
+use App\Http\Controllers\EmailProviderController;
+use App\Http\Controllers\EmailListController;
+use App\Http\Controllers\EmailTemplateController;
+use App\Http\Controllers\EmailCampaignController;
+use App\Http\Controllers\EmailEditorController;
+use App\Http\Controllers\EmailTrackingController;
+use App\Http\Controllers\EmailAnalyticsController;
+use App\Http\Controllers\EmailAiSuggestionController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -38,6 +46,16 @@ Route::get('/analytics/oauth/callback/{platform}', [AnalyticsController::class, 
 
 Route::get('/social/oauth/callback/{platform}', [SocialOAuthController::class, 'callback'])
     ->name('social.oauth.callback');
+
+/*
+|--------------------------------------------------------------------------
+| Email Tracking (rotas públicas, sem auth)
+|--------------------------------------------------------------------------
+*/
+Route::get('/email/t/open/{token}', [EmailTrackingController::class, 'open'])->name('email.track.open');
+Route::get('/email/t/click/{token}', [EmailTrackingController::class, 'click'])->name('email.track.click');
+Route::get('/email/unsubscribe/{token}', [EmailTrackingController::class, 'unsubscribe'])->name('email.unsubscribe');
+Route::post('/email/webhook/sendpulse', [EmailTrackingController::class, 'sendpulseWebhook'])->name('email.webhook.sendpulse');
 
 /*
 |--------------------------------------------------------------------------
@@ -245,6 +263,89 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/{log}', [LogsController::class, 'show'])->name('show');
         Route::post('/cleanup', [LogsController::class, 'cleanup'])->name('cleanup');
         Route::post('/clear', [LogsController::class, 'clear'])->name('clear');
+    });
+
+    // ===== EMAIL MARKETING =====
+    Route::prefix('email')->name('email.')->group(function () {
+        // Dashboard / Analytics
+        Route::get('/', [EmailAnalyticsController::class, 'dashboard'])->name('dashboard');
+        Route::get('/campaign-analytics/{campaign}', [EmailAnalyticsController::class, 'campaignAnalytics'])->name('campaign-analytics');
+
+        // Provedores
+        Route::prefix('providers')->name('providers.')->group(function () {
+            Route::get('/', [EmailProviderController::class, 'index'])->name('index');
+            Route::post('/', [EmailProviderController::class, 'store'])->name('store');
+            Route::put('/{provider}', [EmailProviderController::class, 'update'])->name('update');
+            Route::delete('/{provider}', [EmailProviderController::class, 'destroy'])->name('destroy');
+            Route::post('/{provider}/test', [EmailProviderController::class, 'test'])->name('test');
+            Route::post('/{provider}/send-test', [EmailProviderController::class, 'sendTest'])->name('send-test');
+        });
+
+        // Listas de Contatos
+        Route::prefix('lists')->name('lists.')->group(function () {
+            Route::get('/', [EmailListController::class, 'index'])->name('index');
+            Route::get('/create', [EmailListController::class, 'create'])->name('create');
+            Route::post('/', [EmailListController::class, 'store'])->name('store');
+            Route::get('/{list}', [EmailListController::class, 'show'])->name('show');
+            Route::put('/{list}', [EmailListController::class, 'update'])->name('update');
+            Route::delete('/{list}', [EmailListController::class, 'destroy'])->name('destroy');
+            Route::post('/{list}/contacts', [EmailListController::class, 'addContact'])->name('add-contact');
+            Route::delete('/{list}/contacts/{contact}', [EmailListController::class, 'removeContact'])->name('remove-contact');
+            Route::post('/{list}/import', [EmailListController::class, 'import'])->name('import');
+            Route::post('/{list}/sources', [EmailListController::class, 'addSource'])->name('add-source');
+            Route::post('/{list}/sources/{source}/sync', [EmailListController::class, 'syncSource'])->name('sync-source');
+            Route::delete('/{list}/sources/{source}', [EmailListController::class, 'removeSource'])->name('remove-source');
+        });
+
+        // Templates
+        Route::prefix('templates')->name('templates.')->group(function () {
+            Route::get('/', [EmailTemplateController::class, 'index'])->name('index');
+            Route::get('/create', [EmailTemplateController::class, 'create'])->name('create');
+            Route::post('/', [EmailTemplateController::class, 'store'])->name('store');
+            Route::get('/{template}/edit', [EmailTemplateController::class, 'edit'])->name('edit');
+            Route::put('/{template}', [EmailTemplateController::class, 'update'])->name('update');
+            Route::delete('/{template}', [EmailTemplateController::class, 'destroy'])->name('destroy');
+            Route::post('/{template}/duplicate', [EmailTemplateController::class, 'duplicate'])->name('duplicate');
+        });
+
+        // Campanhas
+        Route::prefix('campaigns')->name('campaigns.')->group(function () {
+            Route::get('/', [EmailCampaignController::class, 'index'])->name('index');
+            Route::get('/create', [EmailCampaignController::class, 'create'])->name('create');
+            Route::post('/', [EmailCampaignController::class, 'store'])->name('store');
+            Route::get('/{campaign}', [EmailCampaignController::class, 'show'])->name('show');
+            Route::get('/{campaign}/edit', [EmailCampaignController::class, 'edit'])->name('edit');
+            Route::put('/{campaign}', [EmailCampaignController::class, 'update'])->name('update');
+            Route::delete('/{campaign}', [EmailCampaignController::class, 'destroy'])->name('destroy');
+            Route::post('/{campaign}/send', [EmailCampaignController::class, 'send'])->name('send');
+            Route::post('/{campaign}/schedule', [EmailCampaignController::class, 'schedule'])->name('schedule');
+            Route::post('/{campaign}/pause', [EmailCampaignController::class, 'pause'])->name('pause');
+            Route::post('/{campaign}/cancel', [EmailCampaignController::class, 'cancel'])->name('cancel');
+            Route::post('/{campaign}/duplicate', [EmailCampaignController::class, 'duplicate'])->name('duplicate');
+            Route::post('/{campaign}/send-test', [EmailCampaignController::class, 'sendTest'])->name('send-test');
+        });
+
+        // Editor (API JSON)
+        Route::prefix('editor')->name('editor.')->group(function () {
+            Route::post('/upload-asset', [EmailEditorController::class, 'uploadAsset'])->name('upload-asset');
+            Route::get('/assets', [EmailEditorController::class, 'listAssets'])->name('assets');
+            Route::delete('/assets/{asset}', [EmailEditorController::class, 'deleteAsset'])->name('delete-asset');
+            Route::get('/saved-blocks', [EmailEditorController::class, 'savedBlocks'])->name('saved-blocks');
+            Route::post('/saved-blocks', [EmailEditorController::class, 'storeSavedBlock'])->name('store-saved-block');
+            Route::put('/saved-blocks/{block}', [EmailEditorController::class, 'updateSavedBlock'])->name('update-saved-block');
+            Route::delete('/saved-blocks/{block}', [EmailEditorController::class, 'destroySavedBlock'])->name('delete-saved-block');
+            Route::get('/woo-products', [EmailEditorController::class, 'wooProducts'])->name('woo-products');
+            Route::post('/generate-ai', [EmailEditorController::class, 'generateWithAI'])->name('generate-ai');
+        });
+
+        // Sugestões IA
+        Route::prefix('ai-suggestions')->name('ai-suggestions.')->group(function () {
+            Route::get('/', [EmailAiSuggestionController::class, 'index'])->name('index');
+            Route::post('/{suggestion}/accept', [EmailAiSuggestionController::class, 'accept'])->name('accept');
+            Route::post('/{suggestion}/reject', [EmailAiSuggestionController::class, 'reject'])->name('reject');
+            Route::post('/{suggestion}/create-campaign', [EmailAiSuggestionController::class, 'createCampaign'])->name('create-campaign');
+            Route::post('/generate', [EmailAiSuggestionController::class, 'generate'])->name('generate');
+        });
     });
 
     // ===== MODULOS FUTUROS =====

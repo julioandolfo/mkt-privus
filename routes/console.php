@@ -102,3 +102,28 @@ Schedule::call(fn() => \App\Models\OAuthDiscoveredAccount::cleanup())->daily();
 
 // Limpar logs antigos (30+ dias) - 1x por semana
 Schedule::call(fn() => \App\Models\SystemLog::cleanup(30))->weekly();
+
+/*
+|--------------------------------------------------------------------------
+| Email Marketing - Tarefas Agendadas
+|--------------------------------------------------------------------------
+*/
+
+// Gerar sugestões de email marketing com IA - 1x por dia às 7:30
+Schedule::job(new \App\Jobs\GenerateEmailAiSuggestionsJob)->dailyAt('07:30')->withoutOverlapping(15);
+
+// Sincronizar fontes externas de contatos (WooCommerce, MySQL, Sheets) - 1x por dia às 5h
+Schedule::job(new \App\Jobs\SyncAllEmailListSourcesJob)->dailyAt('05:00')->withoutOverlapping(30);
+
+// Processar campanhas agendadas - a cada minuto
+Schedule::call(function () {
+    $campaigns = \App\Models\EmailCampaign::readyToSend()->get();
+    foreach ($campaigns as $campaign) {
+        app(\App\Services\Email\EmailCampaignService::class)->startCampaign($campaign);
+    }
+})->name('email.process-scheduled')->everyMinute()->withoutOverlapping();
+
+// Atualizar estatísticas de campanhas em andamento - a cada 5 minutos
+Schedule::call(function () {
+    \App\Models\EmailCampaign::where('status', 'sending')->each(fn($c) => $c->refreshStats());
+})->name('email.refresh-stats')->everyFiveMinutes()->withoutOverlapping();

@@ -66,7 +66,11 @@ class SocialInsightsService
                 'account_id' => $account->id,
                 'platform' => $platform,
                 'followers' => $data['followers_count'] ?? null,
+                'reach' => $data['reach'] ?? null,
+                'impressions' => $data['impressions'] ?? null,
                 'engagement' => $data['engagement'] ?? null,
+                'likes' => $data['likes'] ?? null,
+                'comments' => $data['comments'] ?? null,
             ]);
 
             return $insight;
@@ -167,21 +171,36 @@ class SocialInsightsService
             $data['posts_count'] = $p['media_count'] ?? null;
         }
 
-        // 2. Insights do perfil (ultimos 28 dias = period day, since/until)
-        // Metricas de conta Instagram Business
+        // 2. Insights do perfil (ultimos 28 dias)
+        // Metricas de conta Instagram Business/Creator
+        // Tentativa 1: metric_type=total_value (API v18+) — retorna total do periodo
         $insightMetrics = 'impressions,reach,profile_views,website_clicks,email_contacts,phone_call_clicks,text_message_clicks,get_directions_clicks';
+
+        $since28 = now()->subDays(28)->startOfDay()->timestamp;
+        $untilNow = now()->startOfDay()->timestamp;
 
         $insights = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
             'access_token' => $token,
             'metric' => $insightMetrics,
             'period' => 'day',
-            'since' => now()->subDay()->startOfDay()->timestamp,
-            'until' => now()->startOfDay()->timestamp,
+            'metric_type' => 'total_value',
+            'since' => $since28,
+            'until' => $untilNow,
         ]);
 
-        if ($insights->successful()) {
-            foreach ($insights->json('data', []) as $metric) {
-                $value = $metric['values'][0]['value'] ?? 0;
+        $insightsData = $insights->json('data', []);
+        $insightsParsed = false;
+
+        // Extrair total_value (API nova)
+        if ($insights->successful() && !empty($insightsData)) {
+            foreach ($insightsData as $metric) {
+                // API nova: total_value dentro do metric
+                $value = $metric['total_value']['value']
+                    ?? $metric['values'][0]['value']
+                    ?? null;
+
+                if ($value === null) continue;
+                $insightsParsed = true;
                 $name = $metric['name'];
 
                 match ($name) {
@@ -195,6 +214,46 @@ class SocialInsightsService
                     'get_directions_clicks' => $data['platform_data']['directions_clicks'] = $value,
                     default => null,
                 };
+            }
+        }
+
+        // Fallback: se total_value nao retornou dados, tentar period=day e somar valores diarios
+        if (!$insightsParsed) {
+            $insightsFallback = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+                'access_token' => $token,
+                'metric' => 'impressions,reach',
+                'period' => 'day',
+                'since' => now()->subDays(7)->startOfDay()->timestamp,
+                'until' => $untilNow,
+            ]);
+
+            if ($insightsFallback->successful()) {
+                foreach ($insightsFallback->json('data', []) as $metric) {
+                    // Somar todos os valores diarios do periodo
+                    $sum = 0;
+                    foreach ($metric['values'] ?? [] as $dayValue) {
+                        $sum += $dayValue['value'] ?? 0;
+                    }
+                    if ($sum > 0) {
+                        $insightsParsed = true;
+                        match ($metric['name']) {
+                            'impressions' => $data['impressions'] = $sum,
+                            'reach' => $data['reach'] = $sum,
+                            default => null,
+                        };
+                    }
+                }
+            }
+
+            if (!$insightsParsed) {
+                SystemLog::warning('social', 'insights.ig.reach_empty', "Instagram insights API retornou vazio para reach/impressions", [
+                    'account_id' => $account->id,
+                    'username' => $account->username,
+                    'api_response_status' => $insights->status(),
+                    'api_response_error' => $insights->json('error') ?? null,
+                    'fallback_status' => $insightsFallback->status(),
+                    'fallback_error' => $insightsFallback->json('error') ?? null,
+                ]);
             }
         }
 
@@ -340,33 +399,58 @@ class SocialInsightsService
             $data['platform_data']['category'] = $p['category'] ?? null;
         }
 
-        // 2. Page Insights (daily)
-        $metrics = 'page_impressions,page_impressions_unique,page_engaged_users,page_post_engagements,page_fan_adds,page_fan_removes,page_views_total,page_actions_post_reactions_like_total,page_actions_post_reactions_love_total';
+        // 2. Page Insights (ultimos 7 dias, somando diarios)
+        $metrics = 'page_impressions,page_impressions_unique,page_engaged_users,page_post_engagements,page_fan_adds,page_fan_removes,page_views_total,page_actions_post_reactions_like_total';
+
+        $since7 = now()->subDays(7)->startOfDay()->timestamp;
+        $untilNow = now()->startOfDay()->timestamp;
 
         $insights = Http::get("https://graph.facebook.com/{$apiVersion}/{$pageId}/insights", [
             'access_token' => $token,
             'metric' => $metrics,
             'period' => 'day',
-            'since' => now()->subDay()->startOfDay()->timestamp,
-            'until' => now()->startOfDay()->timestamp,
+            'since' => $since7,
+            'until' => $untilNow,
         ]);
+
+        $fbInsightsParsed = false;
 
         if ($insights->successful()) {
             foreach ($insights->json('data', []) as $metric) {
-                $value = $metric['values'][0]['value'] ?? 0;
+                // Somar todos os valores diarios do periodo para ter o total dos ultimos 7 dias
+                $sum = 0;
+                foreach ($metric['values'] ?? [] as $dayValue) {
+                    $sum += $dayValue['value'] ?? 0;
+                }
+                // Tambem verificar se ha um unico valor (caso a API retorne formato antigo)
+                if ($sum === 0 && isset($metric['values'][0]['value'])) {
+                    $sum = $metric['values'][0]['value'];
+                }
+
+                if ($sum > 0) $fbInsightsParsed = true;
 
                 match ($metric['name']) {
-                    'page_impressions' => $data['impressions'] = $value,
-                    'page_impressions_unique' => $data['reach'] = $value,
-                    'page_engaged_users' => $data['platform_data']['engaged_users'] = $value,
-                    'page_post_engagements' => $data['engagement'] = $value,
-                    'page_fan_adds' => $data['followers_gained'] = $value,
-                    'page_fan_removes' => $data['followers_lost'] = $value,
-                    'page_views_total' => $data['platform_data']['page_views'] = $value,
-                    'page_actions_post_reactions_like_total' => $data['likes'] = $value,
+                    'page_impressions' => $data['impressions'] = $sum,
+                    'page_impressions_unique' => $data['reach'] = $sum,
+                    'page_engaged_users' => $data['platform_data']['engaged_users'] = $sum,
+                    'page_post_engagements' => $data['engagement'] = $sum,
+                    'page_fan_adds' => $data['followers_gained'] = $sum,
+                    'page_fan_removes' => $data['followers_lost'] = $sum,
+                    'page_views_total' => $data['platform_data']['page_views'] = $sum,
+                    'page_actions_post_reactions_like_total' => $data['likes'] = $sum,
                     default => null,
                 };
             }
+        }
+
+        if (!$fbInsightsParsed) {
+            SystemLog::warning('social', 'insights.fb.reach_empty', "Facebook page insights retornou vazio para reach/impressions", [
+                'account_id' => $account->id,
+                'page_id' => $pageId,
+                'api_status' => $insights->status(),
+                'api_error' => $insights->json('error') ?? null,
+                'data_count' => count($insights->json('data', [])),
+            ]);
         }
 
         // Net followers

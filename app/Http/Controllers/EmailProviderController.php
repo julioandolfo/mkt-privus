@@ -1,0 +1,202 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\EmailProvider;
+use App\Services\Email\EmailProviderService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Crypt;
+use Inertia\Inertia;
+
+class EmailProviderController extends Controller
+{
+    public function index(Request $request)
+    {
+        $brandId = session('current_brand_id');
+
+        $providers = EmailProvider::where(function ($q) use ($brandId) {
+            $q->where('brand_id', $brandId)->orWhereNull('brand_id');
+        })
+            ->latest()
+            ->get()
+            ->map(function ($p) {
+                return [
+                    'id' => $p->id,
+                    'name' => $p->name,
+                    'type' => $p->type,
+                    'brand_id' => $p->brand_id,
+                    'is_active' => $p->is_active,
+                    'is_default' => $p->is_default,
+                    'daily_limit' => $p->daily_limit,
+                    'sends_today' => $p->sends_today,
+                    'remaining_quota' => $p->getRemainingQuota(),
+                    'campaigns_count' => $p->campaigns()->count(),
+                    'created_at' => $p->created_at->format('d/m/Y H:i'),
+                    // Informacoes parciais do config para exibicao
+                    'config_summary' => $this->getConfigSummary($p),
+                ];
+            });
+
+        return Inertia::render('Email/Providers/Index', [
+            'providers' => $providers,
+        ]);
+    }
+
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'type' => 'required|in:smtp,sendpulse',
+            'brand_id' => 'nullable|exists:brands,id',
+            'is_default' => 'boolean',
+            'daily_limit' => 'nullable|integer|min:0',
+            // SMTP fields
+            'host' => 'required_if:type,smtp|string|nullable',
+            'port' => 'nullable|integer',
+            'encryption' => 'nullable|in:tls,ssl,none',
+            'username' => 'required_if:type,smtp|string|nullable',
+            'password' => 'required_if:type,smtp|string|nullable',
+            'from_address' => 'nullable|email',
+            'from_name' => 'nullable|string|max:255',
+            // SendPulse fields
+            'api_user_id' => 'required_if:type,sendpulse|string|nullable',
+            'api_secret' => 'required_if:type,sendpulse|string|nullable',
+            'from_email' => 'nullable|email',
+        ]);
+
+        $config = match ($validated['type']) {
+            'smtp' => [
+                'host' => $validated['host'],
+                'port' => $validated['port'] ?? 587,
+                'encryption' => $validated['encryption'] ?? 'tls',
+                'username' => $validated['username'],
+                'password' => $validated['password'],
+                'from_address' => $validated['from_address'] ?? $validated['username'],
+                'from_name' => $validated['from_name'] ?? config('app.name'),
+            ],
+            'sendpulse' => [
+                'api_user_id' => $validated['api_user_id'],
+                'api_secret' => $validated['api_secret'],
+                'from_email' => $validated['from_email'] ?? '',
+                'from_name' => $validated['from_name'] ?? config('app.name'),
+            ],
+        };
+
+        $brandId = $validated['brand_id'] ?? session('current_brand_id');
+
+        // Se is_default, desmarcar outros
+        if ($request->boolean('is_default')) {
+            EmailProvider::where('brand_id', $brandId)
+                ->update(['is_default' => false]);
+        }
+
+        $provider = EmailProvider::create([
+            'brand_id' => $brandId,
+            'user_id' => Auth::id(),
+            'type' => $validated['type'],
+            'name' => $validated['name'],
+            'config' => $config,
+            'is_default' => $request->boolean('is_default', false),
+            'daily_limit' => $validated['daily_limit'] ?? null,
+        ]);
+
+        return redirect()->route('email.providers.index')
+            ->with('success', 'Provedor de email criado com sucesso!');
+    }
+
+    public function update(Request $request, EmailProvider $provider)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'is_default' => 'boolean',
+            'daily_limit' => 'nullable|integer|min:0',
+            'is_active' => 'boolean',
+            // SMTP fields
+            'host' => 'nullable|string',
+            'port' => 'nullable|integer',
+            'encryption' => 'nullable|in:tls,ssl,none',
+            'username' => 'nullable|string',
+            'password' => 'nullable|string',
+            'from_address' => 'nullable|email',
+            'from_name' => 'nullable|string|max:255',
+            // SendPulse fields
+            'api_user_id' => 'nullable|string',
+            'api_secret' => 'nullable|string',
+            'from_email' => 'nullable|email',
+        ]);
+
+        // Atualizar config mesclando com existente
+        $config = $provider->config;
+        $configFields = $provider->type === 'smtp'
+            ? ['host', 'port', 'encryption', 'username', 'password', 'from_address', 'from_name']
+            : ['api_user_id', 'api_secret', 'from_email', 'from_name'];
+
+        foreach ($configFields as $field) {
+            if (isset($validated[$field]) && $validated[$field] !== '') {
+                $config[$field] = $validated[$field];
+            }
+        }
+
+        if ($request->boolean('is_default')) {
+            EmailProvider::where('brand_id', $provider->brand_id)
+                ->where('id', '!=', $provider->id)
+                ->update(['is_default' => false]);
+        }
+
+        $provider->update([
+            'name' => $validated['name'],
+            'config' => $config,
+            'is_default' => $request->boolean('is_default', false),
+            'daily_limit' => $validated['daily_limit'] ?? null,
+            'is_active' => $request->boolean('is_active', true),
+        ]);
+
+        return redirect()->route('email.providers.index')
+            ->with('success', 'Provedor atualizado com sucesso!');
+    }
+
+    public function destroy(EmailProvider $provider)
+    {
+        if ($provider->campaigns()->where('status', 'sending')->exists()) {
+            return back()->with('error', 'Não é possível excluir um provedor com campanhas em andamento.');
+        }
+
+        $provider->delete();
+        return redirect()->route('email.providers.index')
+            ->with('success', 'Provedor removido.');
+    }
+
+    public function test(Request $request, EmailProvider $provider, EmailProviderService $service)
+    {
+        $email = $request->input('test_email', Auth::user()->email);
+        $result = $service->testConnection($provider);
+
+        return response()->json($result);
+    }
+
+    public function sendTest(Request $request, EmailProvider $provider, EmailProviderService $service)
+    {
+        $request->validate(['test_email' => 'required|email']);
+        $result = $service->sendTest($provider, $request->input('test_email'));
+
+        return response()->json($result);
+    }
+
+    private function getConfigSummary(EmailProvider $provider): array
+    {
+        $config = $provider->config;
+        return match ($provider->type) {
+            'smtp' => [
+                'host' => $config['host'] ?? '-',
+                'port' => $config['port'] ?? 587,
+                'from' => $config['from_address'] ?? $config['username'] ?? '-',
+            ],
+            'sendpulse' => [
+                'from' => $config['from_email'] ?? '-',
+                'api_user_id' => substr($config['api_user_id'] ?? '', 0, 8) . '...',
+            ],
+            default => [],
+        };
+    }
+}

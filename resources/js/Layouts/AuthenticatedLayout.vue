@@ -41,6 +41,17 @@ const navigation: NavItem[] = [
             { name: 'Contas', href: 'social.accounts.index', routeMatch: 'social.accounts.*' },
         ],
     },
+    {
+        name: 'Email Marketing', href: 'email.dashboard', icon: 'mail', routeMatch: 'email.*', enabled: true,
+        children: [
+            { name: 'Dashboard', href: 'email.dashboard', routeMatch: 'email.dashboard' },
+            { name: 'Campanhas', href: 'email.campaigns.index', routeMatch: 'email.campaigns.*' },
+            { name: 'Templates', href: 'email.templates.index', routeMatch: 'email.templates.*' },
+            { name: 'Listas', href: 'email.lists.index', routeMatch: 'email.lists.*' },
+            { name: 'Sugestões IA', href: 'email.ai-suggestions.index', routeMatch: 'email.ai-suggestions.*' },
+            { name: 'Provedores', href: 'email.providers.index', routeMatch: 'email.providers.*' },
+        ],
+    },
     { name: 'Chat IA', href: 'chat.index', icon: 'message-circle', routeMatch: 'chat.*', enabled: true },
     { name: 'Blog', href: null, icon: 'file-text', routeMatch: 'blog.*', enabled: false, badge: 'Em breve' },
     { name: 'Links', href: null, icon: 'link', routeMatch: 'links.*', enabled: false, badge: 'Em breve' },
@@ -247,6 +258,9 @@ function toggleSidebar() {
                                 </template>
                                 <template v-else-if="item.icon === 'bar-chart-2'">
                                     <line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" />
+                                </template>
+                                <template v-else-if="item.icon === 'mail'">
+                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" />
                                 </template>
                             </svg>
                             <span v-if="sidebarOpen" class="flex-1 text-left">{{ item.name }}</span>
