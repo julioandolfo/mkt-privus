@@ -51,7 +51,11 @@ class Setting extends Model
             $updateData,
         );
 
-        \Illuminate\Support\Facades\Log::info("Setting::set [{$group}.{$key}] => wasRecentlyCreated={$setting->wasRecentlyCreated}, id={$setting->id}, type={$type}, stored_length=" . strlen($storeValue ?? ''));
+        try {
+            \Illuminate\Support\Facades\Log::info("Setting::set [{$group}.{$key}] => wasRecentlyCreated={$setting->wasRecentlyCreated}, id={$setting->id}, type={$type}, stored_length=" . strlen($storeValue ?? ''));
+        } catch (\Throwable $e) {
+            // Log failure must never crash the application
+        }
 
         Cache::forget("settings.{$group}.{$key}");
         Cache::forget("settings.{$group}");

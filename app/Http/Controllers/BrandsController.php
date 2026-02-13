@@ -34,13 +34,24 @@ class BrandsController extends Controller
         return Inertia::render('Brands/Create');
     }
 
+    /**
+     * Safe log helper - logging failures must never crash the application.
+     */
+    private function safeLog(string $level, string $message, array $context = []): void
+    {
+        try {
+            Log::{$level}($message, $context);
+        } catch (\Throwable $e) {
+            // Fallback: write to PHP error_log if Laravel log is broken
+            error_log("MKT-PRIVUS [{$level}] {$message} " . json_encode($context));
+        }
+    }
+
     public function store(Request $request): RedirectResponse
     {
-        Log::info('BrandsController@store: Iniciando criação de marca', [
+        $this->safeLog('info', 'BrandsController@store: Iniciando criação de marca', [
             'user_id' => $request->user()->id,
             'input_keys' => array_keys($request->all()),
-            'has_urls' => $request->has('urls'),
-            'urls_count' => is_array($request->input('urls')) ? count($request->input('urls')) : 'not_array',
         ]);
 
         try {
@@ -62,8 +73,6 @@ class BrandsController extends Controller
                 'keywords.*' => 'string|max:100',
             ]);
 
-            Log::info('BrandsController@store: Validação OK', ['validated_keys' => array_keys($validated)]);
-
             // Gerar slug único
             $baseSlug = Str::slug($validated['name']);
             $slug = $baseSlug;
@@ -84,11 +93,9 @@ class BrandsController extends Controller
                 }
             }
 
-            Log::info('BrandsController@store: Criando marca no banco', ['slug' => $slug, 'name' => $validated['name']]);
-
             $brand = Brand::create($validated);
 
-            Log::info('BrandsController@store: Marca criada', ['brand_id' => $brand->id]);
+            $this->safeLog('info', 'BrandsController@store: Marca criada', ['brand_id' => $brand->id, 'slug' => $slug]);
 
             // Vincular TODOS os usuarios a nova marca (sistema unico, sem permissoes)
             $allUsers = \App\Models\User::pluck('id');
@@ -98,40 +105,29 @@ class BrandsController extends Controller
             }
             $brand->users()->sync($syncData);
 
-            Log::info('BrandsController@store: Usuários vinculados', ['users_count' => count($syncData)]);
-
             // Definir como marca ativa para quem criou
             $request->user()->switchBrand($brand);
-
-            Log::info('BrandsController@store: Marca ativa definida. Sucesso!');
 
             return redirect()->route('brands.edit', $brand)
                 ->with('success', 'Marca criada com sucesso! Agora adicione logotipos e imagens de referência.');
 
         } catch (\Illuminate\Validation\ValidationException $e) {
-            Log::warning('BrandsController@store: Erro de validação', [
-                'errors' => $e->errors(),
-                'input' => $request->except(['_token']),
-            ]);
             throw $e;
 
         } catch (\Illuminate\Database\QueryException $e) {
-            Log::error('BrandsController@store: Erro de banco de dados', [
+            $this->safeLog('error', 'BrandsController@store: Erro de banco', [
                 'message' => $e->getMessage(),
                 'code' => $e->getCode(),
-                'sql' => $e->getSql(),
-                'bindings' => $e->getBindings(),
             ]);
             return redirect()->back()
                 ->withInput()
                 ->withErrors(['name' => 'Erro ao salvar no banco de dados: ' . $e->getMessage()]);
 
         } catch (\Exception $e) {
-            Log::error('BrandsController@store: Erro inesperado', [
+            $this->safeLog('error', 'BrandsController@store: Erro inesperado', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString(),
             ]);
             return redirect()->back()
                 ->withInput()

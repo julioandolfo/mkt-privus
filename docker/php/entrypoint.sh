@@ -21,15 +21,32 @@ if [ -d "/var/www/html/build-assets" ]; then
     echo "==> Manifest: $(ls -la /var/www/html/public/build/.vite/manifest.json 2>/dev/null || echo 'NAO ENCONTRADO')"
 fi
 
-# Garantir permissoes do storage e cache
-chown -R www:www /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
-chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
+# Garantir permissoes do storage e cache (CRITICAL: must succeed for logging to work)
+echo "==> Ajustando permissoes de storage e cache..."
+chown -R www:www /var/www/html/storage /var/www/html/bootstrap/cache 2>&1 || echo "==> ERRO: chown falhou no storage!"
+chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache 2>&1 || echo "==> ERRO: chmod falhou no storage!"
 
 # Garantir que o diretorio de logs existe e tem permissao
 mkdir -p /var/www/html/storage/logs
+mkdir -p /var/www/html/storage/framework/sessions
+mkdir -p /var/www/html/storage/framework/views
+mkdir -p /var/www/html/storage/framework/cache/data
+
+# Criar arquivos de log com permissoes corretas
 touch /var/www/html/storage/logs/laravel.log
-chown www:www /var/www/html/storage/logs/laravel.log
-chmod 664 /var/www/html/storage/logs/laravel.log
+touch /var/www/html/storage/logs/php-errors.log
+chown www:www /var/www/html/storage/logs/laravel.log /var/www/html/storage/logs/php-errors.log
+chmod 664 /var/www/html/storage/logs/laravel.log /var/www/html/storage/logs/php-errors.log
+
+# Verificar se o storage realmente ficou gravavel
+TEST_FILE="/var/www/html/storage/logs/.perm-test"
+if su-exec www:www touch "$TEST_FILE" 2>/dev/null; then
+    rm -f "$TEST_FILE"
+    echo "==> Permissoes de storage: OK"
+else
+    echo "==> ALERTA: storage NAO gravavel pelo usuario www! Tentando chmod 777..."
+    chmod -R 777 /var/www/html/storage 2>/dev/null || true
+fi
 
 # Apenas o container principal (php-fpm) faz setup do banco
 if [ "$1" = "php-fpm" ]; then
