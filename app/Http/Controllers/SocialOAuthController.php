@@ -44,40 +44,52 @@ class SocialOAuthController extends Controller
                 ->with('error', 'Plataforma não suportada.');
         }
 
-        $brand = $request->user()->getActiveBrand();
-
-        // Para Meta: Instagram e Facebook usam a mesma autenticação
-        $oauthPlatform = in_array($platform, ['facebook', 'instagram']) ? 'facebook' : $platform;
-
-        // Gerar state para segurança CSRF
-        $state = Str::random(40);
-
-        // Salvar no Cache (mais confiavel que sessao em Docker)
-        Cache::put('social_oauth_' . $state, [
-            'platform' => $platform,
-            'brand_id' => $brand?->id,
-            'user_id' => auth()->id(),
-            'popup' => $isPopup,
-        ], now()->addMinutes(15));
-
-        // Tambem na sessao como fallback
-        session([
-            'oauth_state' => $state,
-            'oauth_platform' => $platform,
-            'oauth_brand_id' => $brand?->id,
-            'oauth_popup' => $isPopup,
-        ]);
-
-        $redirectUri = route('social.oauth.callback', $oauthPlatform);
-
-        SystemLog::debug('oauth', 'oauth.redirect.config', "Configuracao OAuth", [
-            'oauth_platform' => $oauthPlatform,
-            'redirect_uri' => $redirectUri,
-            'brand_id' => $brand->id,
-            'state_prefix' => substr($state, 0, 8) . '...',
-        ]);
-
         try {
+            $brand = $request->user()->getActiveBrand();
+
+            if (!$brand) {
+                $errorMsg = 'Nenhuma marca ativa. Crie ou selecione uma marca antes de conectar contas.';
+                SystemLog::warning('oauth', 'oauth.redirect.no_brand', $errorMsg);
+                if ($isPopup) {
+                    return response()->json(['error' => $errorMsg], 400);
+                }
+                return redirect()->route('brands.index')->with('error', $errorMsg);
+            }
+
+            // Para Meta: Instagram e Facebook usam a mesma autenticação
+            $oauthPlatform = in_array($platform, ['facebook', 'instagram']) ? 'facebook' : $platform;
+
+            // Verificar se as credenciais OAuth estão configuradas para a plataforma
+            $this->validateOAuthCredentials($platform, $oauthPlatform, $isPopup);
+
+            // Gerar state para segurança CSRF
+            $state = Str::random(40);
+
+            // Salvar no Cache (mais confiavel que sessao em Docker)
+            Cache::put('social_oauth_' . $state, [
+                'platform' => $platform,
+                'brand_id' => $brand->id,
+                'user_id' => auth()->id(),
+                'popup' => $isPopup,
+            ], now()->addMinutes(15));
+
+            // Tambem na sessao como fallback
+            session([
+                'oauth_state' => $state,
+                'oauth_platform' => $platform,
+                'oauth_brand_id' => $brand->id,
+                'oauth_popup' => $isPopup,
+            ]);
+
+            $redirectUri = route('social.oauth.callback', $oauthPlatform);
+
+            SystemLog::debug('oauth', 'oauth.redirect.config', "Configuracao OAuth", [
+                'oauth_platform' => $oauthPlatform,
+                'redirect_uri' => $redirectUri,
+                'brand_id' => $brand->id,
+                'state_prefix' => substr($state, 0, 8) . '...',
+            ]);
+
             $authUrl = $this->oauthService->getAuthorizationUrl($platform, $redirectUri, $state);
 
             SystemLog::info('oauth', 'oauth.redirect.success', "URL de autorizacao gerada com sucesso para {$platform}", [
@@ -90,17 +102,23 @@ class SocialOAuthController extends Controller
 
             return redirect()->away($authUrl);
         } catch (\Throwable $e) {
-            SystemLog::error('oauth', 'oauth.redirect.error', "Erro ao gerar URL OAuth: {$e->getMessage()}", [
-                'platform' => $platform,
-                'exception' => get_class($e),
-                'trace' => substr($e->getTraceAsString(), 0, 1000),
-            ]);
-            Log::error("OAuth redirect error for {$platform}", ['error' => $e->getMessage()]);
+            try {
+                SystemLog::error('oauth', 'oauth.redirect.error', "Erro ao gerar URL OAuth: {$e->getMessage()}", [
+                    'platform' => $platform,
+                    'exception' => get_class($e),
+                    'file' => $e->getFile() . ':' . $e->getLine(),
+                    'trace' => substr($e->getTraceAsString(), 0, 1000),
+                ]);
+            } catch (\Throwable $logErr) {
+                error_log("OAuth error (log also failed): {$e->getMessage()}");
+            }
+
+            $errorMsg = 'Erro ao iniciar autenticação: ' . $e->getMessage();
             if ($isPopup) {
-                return response()->json(['error' => 'Erro ao iniciar autenticação: ' . $e->getMessage()], 500);
+                return response()->json(['error' => $errorMsg], 500);
             }
             return redirect()->route('social.accounts.index')
-                ->with('error', 'Erro ao iniciar autenticação: ' . $e->getMessage());
+                ->with('error', $errorMsg);
         }
     }
 
@@ -555,6 +573,38 @@ class SocialOAuthController extends Controller
         ];
 
         return response()->json($platforms);
+    }
+
+    /**
+     * Valida se as credenciais OAuth estão configuradas para a plataforma.
+     * Lança exceção com mensagem clara se não estiverem.
+     */
+    private function validateOAuthCredentials(string $platform, string $oauthPlatform, bool $isPopup): void
+    {
+        $platformNames = [
+            'facebook' => 'Meta (Facebook)',
+            'instagram' => 'Meta (Instagram)',
+            'linkedin' => 'LinkedIn',
+            'youtube' => 'Google (YouTube)',
+            'tiktok' => 'TikTok',
+            'pinterest' => 'Pinterest',
+        ];
+
+        $hasCredentials = match ($oauthPlatform) {
+            'facebook' => $this->hasMetaCredentials(),
+            'linkedin' => !empty(config('social_oauth.linkedin.client_id')) || !empty($this->getSetting('linkedin_client_id')),
+            'youtube' => !empty(config('social_oauth.google.client_id')) || !empty($this->getSetting('google_client_id')),
+            'tiktok' => !empty(config('social_oauth.tiktok.client_key')) || !empty($this->getSetting('tiktok_client_key')),
+            'pinterest' => !empty(config('social_oauth.pinterest.app_id')) || !empty($this->getSetting('pinterest_app_id')),
+            default => false,
+        };
+
+        if (!$hasCredentials) {
+            $name = $platformNames[$platform] ?? $platform;
+            throw new \RuntimeException(
+                "Credenciais OAuth para {$name} não configuradas. Acesse Configurações > OAuth para configurar."
+            );
+        }
     }
 
     private function hasMetaCredentials(): bool
