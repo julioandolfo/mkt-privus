@@ -3,7 +3,7 @@ import { ref } from 'vue';
 import { useForm, router, usePage } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 
-const props = defineProps({ providers: Array });
+const props = defineProps({ providers: Array, webhooks: Array });
 const page = usePage();
 const flash = page.props.flash || {};
 
@@ -77,6 +77,15 @@ function testConnection(provider) {
 }
 
 const typeLabels = { smtp: 'SMTP', sendpulse: 'SendPulse', sms_sendpulse: 'SMS SendPulse' };
+
+const copiedUrl = ref(null);
+const showEvents = ref(false);
+function copyWebhook(url) {
+    navigator.clipboard.writeText(url).then(() => {
+        copiedUrl.value = url;
+        setTimeout(() => { copiedUrl.value = null; }, 2000);
+    });
+}
 </script>
 
 <template>
@@ -127,6 +136,92 @@ const typeLabels = { smtp: 'SMTP', sendpulse: 'SendPulse', sms_sendpulse: 'SMS S
                     <button @click="openEdit(p)" class="px-3 py-1.5 text-xs bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 transition">Editar</button>
                     <button @click="deleteProvider(p.id)" class="px-3 py-1.5 text-xs bg-red-900/30 text-red-400 rounded-lg hover:bg-red-900/50 transition">Remover</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Webhooks URLs -->
+        <div v-if="webhooks?.length" class="mt-8">
+            <h2 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                </svg>
+                Webhooks SendPulse
+            </h2>
+            <p class="text-sm text-gray-400 mb-4">
+                Configure <strong class="text-gray-300">uma única URL</strong> no painel do SendPulse para receber todos os eventos de Email e SMS. O sistema detecta automaticamente o tipo e processa.
+            </p>
+
+            <!-- Webhook Principal -->
+            <div class="grid gap-3">
+                <template v-for="wh in webhooks" :key="wh.label">
+                    <!-- Card principal (destaque) -->
+                    <div v-if="wh.primary" class="bg-gray-900 rounded-xl border-2 border-indigo-500/40 p-5">
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="flex items-center gap-2">
+                                <span class="px-2 py-0.5 text-[10px] font-bold rounded bg-indigo-600/30 text-indigo-300 uppercase tracking-wider">{{ wh.method }}</span>
+                                <h3 class="text-sm font-semibold text-white">{{ wh.label }}</h3>
+                                <span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-green-900/40 text-green-400 uppercase">Recomendado</span>
+                            </div>
+                            <button
+                                @click="copyWebhook(wh.url)"
+                                class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition"
+                                :class="copiedUrl === wh.url ? 'bg-green-600/20 text-green-400' : 'bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30'"
+                            >
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                </svg>
+                                {{ copiedUrl === wh.url ? 'Copiado!' : 'Copiar URL' }}
+                            </button>
+                        </div>
+                        <code class="block w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-indigo-300 font-mono select-all break-all">{{ wh.url }}</code>
+                        <p class="text-xs text-gray-400 mt-3">{{ wh.description }}</p>
+
+                        <!-- Eventos suportados -->
+                        <div v-if="wh.events?.length" class="mt-4">
+                            <button @click="showEvents = !showEvents" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 transition">
+                                <svg :class="['w-3.5 h-3.5 transition-transform', showEvents && 'rotate-90']" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><polyline points="9 18 15 12 9 6" /></svg>
+                                {{ showEvents ? 'Ocultar' : 'Ver' }} eventos suportados ({{ wh.events.length }})
+                            </button>
+                            <div v-if="showEvents" class="mt-2 grid grid-cols-2 gap-1">
+                                <div v-for="evt in wh.events" :key="evt" class="flex items-center gap-1.5 text-xs text-gray-500">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></span>
+                                    {{ evt }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cards legados (compactos) -->
+                    <div v-else class="bg-gray-900/50 rounded-xl border border-gray-800/50 p-3 flex items-center justify-between">
+                        <div class="flex items-center gap-3 min-w-0">
+                            <span class="px-1.5 py-0.5 text-[9px] font-bold rounded bg-gray-800 text-gray-500 uppercase tracking-wider shrink-0">{{ wh.method }}</span>
+                            <div class="min-w-0">
+                                <h3 class="text-xs font-medium text-gray-500">{{ wh.label }}</h3>
+                                <code class="text-[11px] text-gray-600 font-mono truncate block">{{ wh.url }}</code>
+                            </div>
+                        </div>
+                        <button
+                            @click="copyWebhook(wh.url)"
+                            class="flex items-center gap-1 px-2 py-1 text-[10px] bg-gray-800/50 text-gray-500 rounded hover:bg-gray-800 hover:text-gray-300 transition shrink-0"
+                        >
+                            {{ copiedUrl === wh.url ? 'Copiado!' : 'Copiar' }}
+                        </button>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Instruções -->
+            <div class="mt-4 bg-blue-900/20 border border-blue-800/30 rounded-lg p-4">
+                <h4 class="text-sm font-medium text-blue-300 mb-2">Como configurar no SendPulse:</h4>
+                <ol class="text-xs text-blue-400/80 space-y-1.5 list-decimal list-inside">
+                    <li>Acesse o painel do SendPulse → <strong>Configurações → Webhooks</strong></li>
+                    <li>Cole a <strong>URL Unificada</strong> acima no campo de URL</li>
+                    <li>Selecione <strong>todos os eventos</strong> desejados (entrega, bounce, abertura, clique, spam, unsubscribe, etc.)</li>
+                    <li>Salve — o sistema detecta automaticamente se o evento é de Email ou SMS</li>
+                </ol>
+                <p class="text-[11px] text-blue-400/60 mt-3 border-t border-blue-800/20 pt-2">
+                    Dica: Como o SendPulse permite apenas uma URL por evento, use a URL unificada para todos. Os eventos legados (separados) continuam funcionando caso já estejam configurados.
+                </p>
             </div>
         </div>
 

@@ -225,6 +225,26 @@ class ContentCalendarService
             $totalTokens = ($captionResponse['input_tokens'] ?? 0) + ($captionResponse['output_tokens'] ?? 0)
                 + ($hashtagResponse['input_tokens'] ?? 0) + ($hashtagResponse['output_tokens'] ?? 0);
 
+            // Tentar gerar imagem com DALL-E 3
+            $imageData = $this->aiGateway->tryGenerateImageForContent(
+                brand: $brand,
+                topic: $item->title,
+                caption: trim($captionResponse['content']),
+                platform: $platform,
+                postType: $item->post_type ?? 'feed',
+            );
+
+            $metadata = [
+                'calendar_item_id' => $item->id,
+                'calendar_date' => $item->scheduled_date->format('Y-m-d'),
+                'category' => $item->category,
+                'generated_at' => now()->toIso8601String(),
+            ];
+
+            if ($imageData) {
+                $metadata['generated_image'] = $imageData;
+            }
+
             $suggestion = ContentSuggestion::create([
                 'brand_id' => $brand->id,
                 'content_rule_id' => null,
@@ -236,12 +256,7 @@ class ContentCalendarService
                 'status' => 'pending',
                 'ai_model_used' => $aiModel->value,
                 'tokens_used' => $totalTokens,
-                'metadata' => [
-                    'calendar_item_id' => $item->id,
-                    'calendar_date' => $item->scheduled_date->format('Y-m-d'),
-                    'category' => $item->category,
-                    'generated_at' => now()->toIso8601String(),
-                ],
+                'metadata' => $metadata,
             ]);
 
             // Atualizar item do calendário

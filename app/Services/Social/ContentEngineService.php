@@ -72,6 +72,24 @@ class ContentEngineService
             $totalTokens = ($captionResponse['input_tokens'] ?? 0) + ($captionResponse['output_tokens'] ?? 0)
                 + ($hashtagResponse['input_tokens'] ?? 0) + ($hashtagResponse['output_tokens'] ?? 0);
 
+            // Tentar gerar imagem com DALL-E 3
+            $imageData = $this->aiGateway->tryGenerateImageForContent(
+                brand: $brand,
+                topic: $rule->name,
+                caption: trim($captionResponse['content']),
+                platform: $platform,
+                postType: $rule->post_type ?? 'feed',
+            );
+
+            $metadata = [
+                'rule_category' => $rule->category,
+                'generated_at' => now()->toISOString(),
+            ];
+
+            if ($imageData) {
+                $metadata['generated_image'] = $imageData;
+            }
+
             $suggestion = ContentSuggestion::create([
                 'brand_id' => $brand->id,
                 'content_rule_id' => $rule->id,
@@ -83,10 +101,7 @@ class ContentEngineService
                 'status' => 'pending',
                 'ai_model_used' => $model->value,
                 'tokens_used' => $totalTokens,
-                'metadata' => [
-                    'rule_category' => $rule->category,
-                    'generated_at' => now()->toISOString(),
-                ],
+                'metadata' => $metadata,
             ]);
 
             Log::info("ContentEngine: Sugestão gerada da pauta #{$rule->id} para marca #{$brand->id}", [
@@ -138,22 +153,42 @@ class ContentEngineService
             $parsed = $this->parseSmartSuggestions($response['content']);
 
             foreach ($parsed as $item) {
+                $title = $item['title'] ?? 'Sugestão da IA';
+                $caption = $item['caption'] ?? '';
+                $platforms = $item['platforms'] ?? ['instagram'];
+                $postType = $item['post_type'] ?? 'feed';
+
+                // Tentar gerar imagem com DALL-E 3 para cada sugestão
+                $imageData = $this->aiGateway->tryGenerateImageForContent(
+                    brand: $brand,
+                    topic: $title,
+                    caption: $caption,
+                    platform: $platforms[0] ?? 'instagram',
+                    postType: $postType,
+                );
+
+                $metadata = [
+                    'type' => 'smart_suggestion',
+                    'category' => $item['category'] ?? 'geral',
+                    'generated_at' => now()->toISOString(),
+                ];
+
+                if ($imageData) {
+                    $metadata['generated_image'] = $imageData;
+                }
+
                 $suggestion = ContentSuggestion::create([
                     'brand_id' => $brand->id,
-                    'content_rule_id' => null, // Gerada automaticamente
-                    'title' => $item['title'] ?? 'Sugestão da IA',
-                    'caption' => $item['caption'] ?? '',
+                    'content_rule_id' => null,
+                    'title' => $title,
+                    'caption' => $caption,
                     'hashtags' => $item['hashtags'] ?? [],
-                    'platforms' => $item['platforms'] ?? ['instagram'],
-                    'post_type' => $item['post_type'] ?? 'feed',
+                    'platforms' => $platforms,
+                    'post_type' => $postType,
                     'status' => 'pending',
                     'ai_model_used' => $model->value,
                     'tokens_used' => intval($totalTokens / max(count($parsed), 1)),
-                    'metadata' => [
-                        'type' => 'smart_suggestion',
-                        'category' => $item['category'] ?? 'geral',
-                        'generated_at' => now()->toISOString(),
-                    ],
+                    'metadata' => $metadata,
                 ]);
 
                 $suggestions[] = $suggestion;

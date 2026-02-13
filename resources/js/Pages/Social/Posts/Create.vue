@@ -46,7 +46,7 @@ const mediaInput = ref<HTMLInputElement | null>(null);
 const mediaPreviews = ref<Array<{ file: File; url: string; type: string }>>([]);
 const dragOver = ref(false);
 
-// AI Generation
+// AI Generation (legenda)
 const aiModalOpen = ref(false);
 const aiTopic = ref('');
 const aiTone = ref('');
@@ -54,6 +54,43 @@ const aiInstructions = ref('');
 const aiModel = ref(props.aiModels[0]?.value || 'gpt-4o-mini');
 const aiGenerating = ref(false);
 const aiError = ref('');
+
+// AI Complete Post (post completo)
+const aiCompleteOpen = ref(false);
+const aiCompleteTopic = ref('');
+const aiCompleteTone = ref('');
+const aiCompleteInstructions = ref('');
+const aiCompleteModel = ref(props.aiModels[0]?.value || 'gpt-4o-mini');
+const aiCompleteGenerating = ref(false);
+const aiCompleteError = ref('');
+const aiCompleteStep = ref<'config' | 'generating' | 'result'>('config');
+const aiCompleteResult = ref<any>(null);
+
+// Opções de análise
+const analyzeHistory = ref(true);
+const analyzeWebsite = ref(true);
+const analyzeSocial = ref(true);
+const generateImage = ref(true);
+const imageStyle = ref('');
+const imageSize = ref('1024x1024');
+
+const imageStyleOptions = [
+    { value: '', label: 'Automático (baseado na marca)' },
+    { value: 'flat design, minimalist, vector illustration', label: 'Flat / Minimalista' },
+    { value: 'photorealistic, professional photography', label: 'Fotorrealista' },
+    { value: '3D render, modern, glossy', label: 'Render 3D' },
+    { value: 'watercolor, artistic, soft', label: 'Aquarela / Artístico' },
+    { value: 'neon, vibrant, dark background', label: 'Neon / Vibrante' },
+    { value: 'vintage, retro, film grain', label: 'Vintage / Retrô' },
+    { value: 'geometric, abstract, modern', label: 'Geométrico / Abstrato' },
+    { value: 'hand drawn, sketch, creative', label: 'Ilustração Manual' },
+];
+
+const imageSizeOptions = [
+    { value: '1024x1024', label: 'Quadrado (1:1) - Feed' },
+    { value: '1792x1024', label: 'Paisagem (16:9) - YouTube/LinkedIn' },
+    { value: '1024x1792', label: 'Retrato (9:16) - Stories/Reels' },
+];
 
 // Hashtag input
 const hashtagInput = ref('');
@@ -143,7 +180,85 @@ function removeHashtag(index: number) {
     form.hashtags.splice(index, 1);
 }
 
-// ===== AI GENERATION =====
+// ===== AI COMPLETE POST =====
+function openAIComplete() {
+    aiCompleteOpen.value = true;
+    aiCompleteError.value = '';
+    aiCompleteStep.value = 'config';
+    aiCompleteResult.value = null;
+}
+
+function closeAIComplete() {
+    aiCompleteOpen.value = false;
+}
+
+async function generateCompletePost() {
+    if (!aiCompleteTopic.value.trim()) {
+        aiCompleteError.value = 'Informe o tema/assunto do post.';
+        return;
+    }
+    if (!form.platforms.length) {
+        aiCompleteError.value = 'Selecione ao menos uma plataforma antes.';
+        return;
+    }
+
+    aiCompleteGenerating.value = true;
+    aiCompleteError.value = '';
+    aiCompleteStep.value = 'generating';
+
+    try {
+        const response = await axios.post(route('social.generate-complete'), {
+            topic: aiCompleteTopic.value,
+            platform: form.platforms[0],
+            type: form.type,
+            tone: aiCompleteTone.value || undefined,
+            instructions: aiCompleteInstructions.value || undefined,
+            model: aiCompleteModel.value,
+            analyze_history: analyzeHistory.value,
+            analyze_website: analyzeWebsite.value,
+            analyze_social: analyzeSocial.value,
+            generate_image: generateImage.value,
+            image_style: imageStyle.value || undefined,
+            image_size: imageSize.value,
+        });
+
+        aiCompleteResult.value = response.data;
+        aiCompleteStep.value = 'result';
+    } catch (e: any) {
+        aiCompleteError.value = e.response?.data?.error || 'Erro ao gerar post. Tente novamente.';
+        aiCompleteStep.value = 'config';
+    } finally {
+        aiCompleteGenerating.value = false;
+    }
+}
+
+async function applyCompleteResult() {
+    const result = aiCompleteResult.value;
+    if (!result) return;
+
+    if (result.title) form.title = result.title;
+    if (result.caption) form.caption = result.caption;
+    if (result.hashtags?.length) form.hashtags = result.hashtags;
+
+    // Se imagem foi gerada com sucesso, baixar e adicionar como mídia
+    if (result.image?.url && !result.image?.error) {
+        try {
+            const imgResponse = await fetch(result.image.url);
+            const blob = await imgResponse.blob();
+            const file = new File([blob], `ai-generated-${Date.now()}.png`, { type: 'image/png' });
+
+            const url = URL.createObjectURL(file);
+            mediaPreviews.value.push({ file, url, type: 'image' });
+            form.media.push(file);
+        } catch (e) {
+            console.warn('Falha ao baixar imagem gerada:', e);
+        }
+    }
+
+    closeAIComplete();
+}
+
+// ===== AI GENERATION (legenda apenas) =====
 function openAIModal() {
     aiModalOpen.value = true;
     aiError.value = '';
@@ -388,6 +503,27 @@ const toneOptions = [
                     <InputError :message="form.errors.media" class="mt-2" />
                 </div>
 
+                <!-- Criar Post Completo com IA (destaque) -->
+                <button
+                    type="button"
+                    @click="openAIComplete"
+                    class="w-full rounded-2xl border-2 border-dashed border-purple-500/30 bg-gradient-to-r from-purple-900/20 to-indigo-900/20 p-6 flex items-center gap-5 hover:border-purple-500/50 hover:from-purple-900/30 hover:to-indigo-900/30 transition-all group"
+                >
+                    <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-600/30 to-indigo-600/30 shrink-0 group-hover:from-purple-600/40 group-hover:to-indigo-600/40 transition">
+                        <svg class="w-7 h-7 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+                        </svg>
+                    </div>
+                    <div class="text-left flex-1">
+                        <h3 class="text-base font-semibold text-white group-hover:text-purple-200 transition">Criar Post Completo com IA</h3>
+                        <p class="text-sm text-gray-400 mt-0.5">Gera título, legenda, hashtags e imagem automaticamente. Analisa o histórico, site e redes da marca.</p>
+                    </div>
+                    <div class="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-sm font-medium group-hover:from-purple-500 group-hover:to-indigo-500 transition">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                        Criar
+                    </div>
+                </button>
+
                 <!-- Secao 4: Legenda + Hashtags -->
                 <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
                     <div class="flex items-center justify-between mb-4">
@@ -400,7 +536,7 @@ const toneOptions = [
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                 <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
                             </svg>
-                            Gerar com IA
+                            Gerar Legenda com IA
                         </button>
                     </div>
 
@@ -590,6 +726,206 @@ const toneOptions = [
                             </svg>
                             {{ aiGenerating ? 'Gerando...' : 'Gerar Legenda + Hashtags' }}
                         </button>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+        <!-- Modal: Criar Post Completo com IA -->
+        <Teleport to="body">
+            <div v-if="aiCompleteOpen" class="fixed inset-0 z-[60] flex items-center justify-center">
+                <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="closeAIComplete" />
+                <div class="relative w-full max-w-2xl rounded-2xl bg-gray-900 border border-gray-700 shadow-2xl mx-4 max-h-[90vh] overflow-y-auto">
+
+                    <!-- Header -->
+                    <div class="sticky top-0 bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between z-10 rounded-t-2xl">
+                        <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-600 to-indigo-600 flex items-center justify-center">
+                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                            </div>
+                            Criar Post Completo com IA
+                        </h3>
+                        <button @click="closeAIComplete" class="text-gray-500 hover:text-white transition">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                        </button>
+                    </div>
+
+                    <!-- Step: Config -->
+                    <div v-if="aiCompleteStep === 'config'" class="p-6 space-y-5">
+                        <!-- Tema -->
+                        <div>
+                            <label class="text-sm font-medium text-gray-300 mb-1 block">Tema / Assunto do Post *</label>
+                            <input v-model="aiCompleteTopic" type="text"
+                                class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                placeholder="Ex: Lançamento do novo produto, promoção de verão, dica de moda..." />
+                        </div>
+
+                        <!-- Tom e Modelo -->
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-sm text-gray-400 mb-1 block">Tom de Voz</label>
+                                <select v-model="aiCompleteTone" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option v-for="tone in toneOptions" :key="tone.value" :value="tone.value">{{ tone.label }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-sm text-gray-400 mb-1 block">Modelo de IA</label>
+                                <select v-model="aiCompleteModel" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option v-for="m in aiModels" :key="m.value" :value="m.value">{{ m.label }}</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Análise inteligente -->
+                        <div>
+                            <h4 class="text-sm font-medium text-white mb-3 flex items-center gap-2">
+                                <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                                Análise Inteligente
+                            </h4>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                <label class="flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/50 p-3 cursor-pointer hover:bg-gray-800 transition"
+                                    :class="analyzeHistory && 'border-indigo-500/40 bg-indigo-900/10'">
+                                    <input type="checkbox" v-model="analyzeHistory" class="rounded border-gray-600 text-indigo-600 focus:ring-indigo-500" />
+                                    <div>
+                                        <p class="text-sm text-white">Histórico</p>
+                                        <p class="text-[10px] text-gray-500">Posts com mais engajamento</p>
+                                    </div>
+                                </label>
+                                <label class="flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/50 p-3 cursor-pointer hover:bg-gray-800 transition"
+                                    :class="analyzeWebsite && 'border-indigo-500/40 bg-indigo-900/10'">
+                                    <input type="checkbox" v-model="analyzeWebsite" class="rounded border-gray-600 text-indigo-600 focus:ring-indigo-500" />
+                                    <div>
+                                        <p class="text-sm text-white">Website</p>
+                                        <p class="text-[10px] text-gray-500">URLs e links da marca</p>
+                                    </div>
+                                </label>
+                                <label class="flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/50 p-3 cursor-pointer hover:bg-gray-800 transition"
+                                    :class="analyzeSocial && 'border-indigo-500/40 bg-indigo-900/10'">
+                                    <input type="checkbox" v-model="analyzeSocial" class="rounded border-gray-600 text-indigo-600 focus:ring-indigo-500" />
+                                    <div>
+                                        <p class="text-sm text-white">Redes Sociais</p>
+                                        <p class="text-[10px] text-gray-500">Contas conectadas</p>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Geração de Imagem -->
+                        <div>
+                            <label class="flex items-center gap-3 mb-3 cursor-pointer">
+                                <input type="checkbox" v-model="generateImage" class="rounded border-gray-600 text-indigo-600 focus:ring-indigo-500" />
+                                <div>
+                                    <span class="text-sm font-medium text-white">Gerar Imagem com IA</span>
+                                    <span class="text-[10px] text-gray-500 ml-2">(DALL-E 3 — requer chave OpenAI)</span>
+                                </div>
+                            </label>
+                            <div v-if="generateImage" class="grid grid-cols-2 gap-3 pl-7">
+                                <div>
+                                    <label class="text-xs text-gray-400 mb-1 block">Estilo Visual</label>
+                                    <select v-model="imageStyle" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option v-for="s in imageStyleOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-xs text-gray-400 mb-1 block">Proporção</label>
+                                    <select v-model="imageSize" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option v-for="s in imageSizeOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Instruções extras -->
+                        <div>
+                            <label class="text-sm text-gray-400 mb-1 block">Orientações extras (opcional)</label>
+                            <textarea v-model="aiCompleteInstructions" rows="3"
+                                class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                placeholder="Ex: Focar em promoção de 20%, incluir CTA para o site, mencionar frete grátis..." />
+                        </div>
+
+                        <!-- Erro -->
+                        <div v-if="aiCompleteError" class="rounded-xl bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-400">
+                            {{ aiCompleteError }}
+                        </div>
+
+                        <!-- Botão -->
+                        <button @click="generateCompletePost" :disabled="aiCompleteGenerating || !aiCompleteTopic.trim()"
+                            class="w-full rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 py-3 text-sm font-semibold text-white hover:from-purple-700 hover:to-indigo-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                            Criar Post Completo
+                        </button>
+                    </div>
+
+                    <!-- Step: Generating -->
+                    <div v-if="aiCompleteStep === 'generating'" class="p-12 flex flex-col items-center justify-center text-center">
+                        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-600/30 to-indigo-600/30 flex items-center justify-center mb-6">
+                            <svg class="w-8 h-8 text-indigo-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                        </div>
+                        <h4 class="text-lg font-semibold text-white mb-2">Criando seu post...</h4>
+                        <p class="text-sm text-gray-400">A IA está analisando a marca e gerando conteúdo otimizado.</p>
+                        <div class="mt-4 space-y-2 text-xs text-gray-500">
+                            <p v-if="analyzeHistory">Analisando histórico de engajamento...</p>
+                            <p v-if="analyzeWebsite">Analisando sites e links da marca...</p>
+                            <p v-if="analyzeSocial">Analisando redes sociais conectadas...</p>
+                            <p>Gerando título, legenda e hashtags...</p>
+                            <p v-if="generateImage">Gerando imagem com DALL-E 3...</p>
+                        </div>
+                    </div>
+
+                    <!-- Step: Result -->
+                    <div v-if="aiCompleteStep === 'result' && aiCompleteResult" class="p-6 space-y-5">
+                        <div class="rounded-xl bg-green-900/20 border border-green-700/30 p-3 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            <p class="text-sm text-green-300">Post gerado com sucesso! Revise e ajuste antes de aplicar.</p>
+                        </div>
+
+                        <!-- Título -->
+                        <div>
+                            <label class="text-xs font-medium text-gray-400 mb-1 block">Título</label>
+                            <input v-model="aiCompleteResult.title" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm" />
+                        </div>
+
+                        <!-- Legenda -->
+                        <div>
+                            <label class="text-xs font-medium text-gray-400 mb-1 block">Legenda</label>
+                            <textarea v-model="aiCompleteResult.caption" rows="6" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm" />
+                        </div>
+
+                        <!-- Hashtags -->
+                        <div>
+                            <label class="text-xs font-medium text-gray-400 mb-1 block">Hashtags</label>
+                            <div class="flex flex-wrap gap-1.5">
+                                <span v-for="(tag, i) in aiCompleteResult.hashtags" :key="i" class="px-2.5 py-1 rounded-lg bg-indigo-600/20 text-indigo-300 text-xs">
+                                    {{ tag }}
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Imagem gerada -->
+                        <div v-if="aiCompleteResult.image">
+                            <label class="text-xs font-medium text-gray-400 mb-1 block">Imagem Gerada</label>
+                            <div v-if="aiCompleteResult.image.url && !aiCompleteResult.image.error" class="rounded-xl overflow-hidden border border-gray-700">
+                                <img :src="aiCompleteResult.image.url" class="w-full max-h-80 object-contain bg-gray-800" alt="Imagem gerada por IA" />
+                            </div>
+                            <div v-else-if="aiCompleteResult.image.error" class="rounded-xl bg-yellow-900/20 border border-yellow-700/30 p-3">
+                                <p class="text-xs text-yellow-400">Imagem não pôde ser gerada: {{ aiCompleteResult.image.error }}</p>
+                                <p v-if="aiCompleteResult.image.image_prompt" class="text-[10px] text-gray-500 mt-1">Prompt sugerido: "{{ aiCompleteResult.image.image_prompt }}"</p>
+                            </div>
+                        </div>
+
+                        <!-- Ações -->
+                        <div class="flex items-center gap-3 pt-2">
+                            <button @click="aiCompleteStep = 'config'" class="flex-1 rounded-xl border border-gray-700 py-2.5 text-sm text-gray-400 hover:bg-gray-800 hover:text-white transition">
+                                Gerar Novamente
+                            </button>
+                            <button @click="applyCompleteResult"
+                                class="flex-1 rounded-xl bg-gradient-to-r from-green-600 to-emerald-600 py-2.5 text-sm font-semibold text-white hover:from-green-700 hover:to-emerald-700 transition flex items-center justify-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                                Aplicar ao Post
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

@@ -37,6 +37,8 @@ interface Suggestion {
     rule_category: string | null;
     is_from_rule: boolean;
     rejection_reason: string | null;
+    has_generated_image: boolean;
+    generated_image_url: string | null;
     created_at: string;
     metadata: any;
 }
@@ -222,10 +224,27 @@ async function generateSmart() {
                                 <p v-if="s.title" class="text-sm font-medium text-gray-200 mb-1">{{ s.title }}</p>
 
                                 <!-- Caption preview / expand -->
-                                <p v-if="expandedId !== s.id" class="text-sm text-gray-400 cursor-pointer" @click="toggleExpand(s.id)">
-                                    {{ s.caption_preview }}
-                                </p>
+                                <div v-if="expandedId !== s.id" class="flex items-start gap-2 cursor-pointer" @click="toggleExpand(s.id)">
+                                    <!-- Thumbnail da imagem gerada -->
+                                    <img v-if="s.has_generated_image && s.generated_image_url" :src="s.generated_image_url" :alt="s.title || ''" class="w-10 h-10 rounded-lg object-cover border border-gray-700 shrink-0" />
+                                    <p class="text-sm text-gray-400">
+                                        {{ s.caption_preview }}
+                                        <span v-if="s.has_generated_image" class="inline-flex items-center ml-1 text-purple-400 text-[10px]">
+                                            <svg class="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                            IA
+                                        </span>
+                                    </p>
+                                </div>
                                 <div v-else>
+                                    <!-- Imagem gerada pela IA -->
+                                    <div v-if="s.has_generated_image && s.generated_image_url" class="mb-3">
+                                        <div class="relative inline-block rounded-xl overflow-hidden border border-gray-700">
+                                            <img :src="s.generated_image_url" :alt="s.title || 'Imagem gerada'" class="max-h-48 w-auto rounded-xl object-cover" />
+                                            <span class="absolute top-2 left-2 rounded-md bg-purple-600/90 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
+                                                DALL-E 3
+                                            </span>
+                                        </div>
+                                    </div>
                                     <p class="text-sm text-gray-300 whitespace-pre-line mb-2 cursor-pointer" @click="toggleExpand(s.id)">{{ s.caption }}</p>
                                     <div v-if="s.hashtags.length" class="flex flex-wrap gap-1.5 mb-2">
                                         <span v-for="tag in s.hashtags" :key="tag" class="text-[11px] text-indigo-400">{{ tag }}</span>

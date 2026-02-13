@@ -20,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         $middleware->validateCsrfTokens(except: [
+            'webhook/*',
             'email/webhook/*',
             'email/t/*',
             'sms/webhook/*',

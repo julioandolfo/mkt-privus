@@ -39,8 +39,50 @@ class EmailProviderController extends Controller
                 ];
             });
 
+        // Montar URLs dos webhooks para exibição
+        $baseUrl = config('app.url');
+        $webhooks = [
+            [
+                'label' => 'Webhook Unificado (Email + SMS)',
+                'url' => $baseUrl . '/webhook/sendpulse',
+                'method' => 'POST',
+                'primary' => true,
+                'description' => 'URL principal — recebe e processa automaticamente eventos de Email e SMS. Configure esta URL para TODOS os eventos no painel do SendPulse.',
+                'events' => [
+                    'Entregue (delivered)',
+                    'Erro permanente (hard bounce)',
+                    'Erro temporário (soft bounce)',
+                    'Marcado como spam (complaint)',
+                    'Abertura de email (open)',
+                    'Clique no email (click)',
+                    'Novo assinante (subscribe)',
+                    'Removido da lista',
+                    'Cancelou assinatura (unsubscribe)',
+                    'Estado de envio mudando',
+                    'SMS entregue / falhou / clicado / opt-out',
+                ],
+            ],
+            [
+                'label' => 'Email (legado)',
+                'url' => $baseUrl . '/email/webhook/sendpulse',
+                'method' => 'POST',
+                'primary' => false,
+                'description' => 'URL alternativa que aceita apenas eventos de email. Use a URL unificada acima preferencialmente.',
+                'events' => [],
+            ],
+            [
+                'label' => 'SMS (legado)',
+                'url' => $baseUrl . '/sms/webhook/sendpulse',
+                'method' => 'POST',
+                'primary' => false,
+                'description' => 'URL alternativa que aceita apenas eventos de SMS. Use a URL unificada acima preferencialmente.',
+                'events' => [],
+            ],
+        ];
+
         return Inertia::render('Email/Providers/Index', [
             'providers' => $providers,
+            'webhooks' => $webhooks,
         ]);
     }
 

@@ -5,10 +5,12 @@ namespace App\Http\Controllers;
 use App\Enums\PostStatus;
 use App\Models\ContentSuggestion;
 use App\Models\Post;
+use App\Models\PostMedia;
 use App\Services\Social\ContentEngineService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -90,6 +92,9 @@ class ContentSuggestionController extends Controller
             'type' => $suggestion->post_type,
             'status' => $scheduleNow ? PostStatus::Scheduled : PostStatus::Draft,
         ]);
+
+        // Copiar imagem gerada pela IA (se existir) para PostMedia
+        $this->attachGeneratedImage($post, $suggestion);
 
         $suggestion->update([
             'status' => 'converted',
@@ -181,6 +186,9 @@ class ContentSuggestionController extends Controller
                     'status' => PostStatus::Draft,
                 ]);
 
+                // Copiar imagem gerada pela IA (se existir)
+                $this->attachGeneratedImage($post, $suggestion);
+
                 $suggestion->update([
                     'status' => 'converted',
                     'metadata' => array_merge($suggestion->metadata ?? [], [
@@ -219,8 +227,54 @@ class ContentSuggestionController extends Controller
 
     // ===== PRIVATE =====
 
+    /**
+     * Anexa imagem gerada pela IA (armazenada no metadata da sugestão) como PostMedia.
+     */
+    private function attachGeneratedImage(Post $post, ContentSuggestion $suggestion): void
+    {
+        $metadata = $suggestion->metadata ?? [];
+        $imageInfo = $metadata['generated_image'] ?? null;
+
+        if (!$imageInfo || empty($imageInfo['path'])) {
+            return;
+        }
+
+        // Verificar se o arquivo existe no storage
+        if (!Storage::disk('public')->exists($imageInfo['path'])) {
+            return;
+        }
+
+        $fileSize = Storage::disk('public')->size($imageInfo['path']);
+
+        // Determinar dimensões a partir do size (ex: "1024x1024")
+        $dimensions = explode('x', $imageInfo['size'] ?? '1024x1024');
+        $width = (int) ($dimensions[0] ?? 1024);
+        $height = (int) ($dimensions[1] ?? 1024);
+
+        PostMedia::create([
+            'post_id' => $post->id,
+            'type' => 'image',
+            'file_path' => $imageInfo['path'],
+            'file_name' => basename($imageInfo['path']),
+            'mime_type' => 'image/png',
+            'file_size' => $fileSize,
+            'width' => $width,
+            'height' => $height,
+            'order' => 0,
+            'alt_text' => $suggestion->title,
+            'metadata' => [
+                'source' => 'ai_generated',
+                'model' => $imageInfo['model'] ?? 'dall-e-3',
+                'prompt' => $imageInfo['prompt'] ?? null,
+            ],
+        ]);
+    }
+
     private function formatSuggestion(ContentSuggestion $suggestion): array
     {
+        $metadata = $suggestion->metadata ?? [];
+        $generatedImage = $metadata['generated_image'] ?? null;
+
         return [
             'id' => $suggestion->id,
             'title' => $suggestion->title,
@@ -238,6 +292,8 @@ class ContentSuggestionController extends Controller
             'rule_category' => $suggestion->contentRule?->category,
             'is_from_rule' => $suggestion->isFromRule(),
             'rejection_reason' => $suggestion->rejection_reason,
+            'has_generated_image' => $generatedImage !== null,
+            'generated_image_url' => $generatedImage ? ($generatedImage['url'] ?? null) : null,
             'created_at' => $suggestion->created_at->format('d/m/Y H:i'),
             'metadata' => $suggestion->metadata,
         ];

@@ -8,10 +8,12 @@ use App\Enums\PostType;
 use App\Enums\SocialPlatform;
 use App\Models\Post;
 use App\Models\PostMedia;
+use App\Services\AI\AIGateway;
 use App\Services\Social\ContentGeneratorService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -387,6 +389,222 @@ class PostController extends Controller
                 'error' => 'Erro ao gerar conteúdo: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Gerar post COMPLETO com IA (legenda + hashtags + título + imagem)
+     * Analisa contexto da marca, histórico, site, redes sociais, etc.
+     */
+    public function generateCompletePost(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'topic' => 'required|string|max:500',
+            'platform' => 'required|string',
+            'type' => 'nullable|string',
+            'tone' => 'nullable|string|max:100',
+            'instructions' => 'nullable|string|max:2000',
+            'model' => 'nullable|string',
+            // Opções de análise
+            'analyze_history' => 'boolean',
+            'analyze_website' => 'boolean',
+            'analyze_social' => 'boolean',
+            // Opções de imagem
+            'generate_image' => 'boolean',
+            'image_style' => 'nullable|string|max:200',
+            'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792',
+        ]);
+
+        $brand = $request->user()->getActiveBrand();
+        if (!$brand) {
+            return response()->json(['error' => 'Nenhuma marca ativa selecionada.'], 422);
+        }
+
+        $platform = SocialPlatform::from($validated['platform']);
+        $postType = isset($validated['type']) ? PostType::from($validated['type']) : PostType::Feed;
+        $aiModel = isset($validated['model']) ? AIModel::from($validated['model']) : AIModel::GPT4oMini;
+
+        try {
+            // ===== FASE 1: Coletar contexto enriquecido =====
+            $extraContext = $this->buildEnrichedContext(
+                $brand,
+                $platform,
+                analyzeHistory: $validated['analyze_history'] ?? true,
+                analyzeWebsite: $validated['analyze_website'] ?? true,
+                analyzeSocial: $validated['analyze_social'] ?? true,
+            );
+
+            // ===== FASE 2: Gerar texto completo (título + legenda + hashtags) =====
+            $enrichedInstructions = trim(
+                ($validated['instructions'] ?? '') . "\n\n" . $extraContext
+            );
+
+            $textResult = $this->contentGenerator->generateCaption(
+                brand: $brand,
+                user: $request->user(),
+                platform: $platform,
+                postType: $postType,
+                topic: $validated['topic'],
+                tone: $validated['tone'] ?? null,
+                instructions: $enrichedInstructions,
+                model: $aiModel,
+            );
+
+            // Gerar título
+            $aiGateway = app(AIGateway::class);
+            $titleResult = $aiGateway->chat(
+                model: $aiModel,
+                messages: [
+                    ['role' => 'system', 'content' => 'Você gera títulos curtos (3-8 palavras) para posts de redes sociais. Responda APENAS com o título, sem aspas, sem explicação.'],
+                    ['role' => 'user', 'content' => "Crie um título para um post sobre: {$validated['topic']}\n\nLegenda gerada: " . mb_substr($textResult['caption'] ?? '', 0, 200)],
+                ],
+                brand: $brand,
+                user: $request->user(),
+                feature: 'complete_post_title',
+            );
+            $title = trim($titleResult['content'] ?? '');
+
+            // ===== FASE 3: Gerar imagem (se solicitado) =====
+            $imageData = null;
+            if ($validated['generate_image'] ?? false) {
+                try {
+                    $imagePrompt = $this->buildImagePrompt(
+                        $brand,
+                        $validated['topic'],
+                        $textResult['caption'] ?? '',
+                        $platform,
+                        $postType,
+                        $validated['image_style'] ?? null,
+                    );
+
+                    $imageData = $aiGateway->generateImage(
+                        prompt: $imagePrompt,
+                        brand: $brand,
+                        user: $request->user(),
+                        size: $validated['image_size'] ?? '1024x1024',
+                        quality: 'standard',
+                    );
+                } catch (\Exception $e) {
+                    Log::warning("Image generation failed: {$e->getMessage()}");
+                    $imageData = [
+                        'error' => $e->getMessage(),
+                        'image_prompt' => $imagePrompt ?? '',
+                    ];
+                }
+            }
+
+            return response()->json([
+                'title' => $title,
+                'caption' => $textResult['caption'] ?? '',
+                'hashtags' => $textResult['hashtags'] ?? [],
+                'image' => $imageData,
+                'model' => $textResult['model'] ?? $aiModel->value,
+                'context_used' => [
+                    'history' => $validated['analyze_history'] ?? true,
+                    'website' => $validated['analyze_website'] ?? true,
+                    'social' => $validated['analyze_social'] ?? true,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Erro ao gerar post completo: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Constrói contexto enriquecido a partir de análise da marca
+     */
+    private function buildEnrichedContext(
+        \App\Models\Brand $brand,
+        SocialPlatform $platform,
+        bool $analyzeHistory = true,
+        bool $analyzeWebsite = true,
+        bool $analyzeSocial = true,
+    ): string {
+        $context = [];
+
+        // Analisar histórico de engajamento
+        if ($analyzeHistory) {
+            $recentPosts = Post::forBrand($brand->id)
+                ->where('status', PostStatus::Published)
+                ->latest('published_at')
+                ->limit(10)
+                ->get(['caption', 'platforms', 'published_at', 'metadata']);
+
+            if ($recentPosts->isNotEmpty()) {
+                $topPosts = $recentPosts->map(function ($p) {
+                    $likes = $p->metadata['likes'] ?? $p->metadata['engagement']?? 0;
+                    return [
+                        'caption_preview' => mb_substr($p->caption, 0, 100),
+                        'platforms' => $p->platforms,
+                        'likes' => $likes,
+                    ];
+                })->sortByDesc('likes')->take(5);
+
+                $context[] = "ANÁLISE DE HISTÓRICO DE POSTS (top 5 por engajamento):";
+                foreach ($topPosts as $i => $tp) {
+                    $context[] = "  " . ($i + 1) . ". [{$tp['likes']} likes] \"{$tp['caption_preview']}...\"";
+                }
+                $context[] = "Use esse padrão como referência para tom, estilo e formato que mais engaja.";
+            }
+        }
+
+        // Analisar website
+        if ($analyzeWebsite) {
+            $urls = $brand->getAllUrls();
+            if (!empty($urls)) {
+                $context[] = "\nSITES E LINKS DA MARCA (use para CTAs e referências):";
+                foreach ($urls as $url) {
+                    $label = $url['label'] ?? $url['type'] ?? 'Link';
+                    $context[] = "  - {$label}: {$url['url']}";
+                }
+            }
+        }
+
+        // Analisar redes sociais conectadas
+        if ($analyzeSocial) {
+            $accounts = $brand->socialAccounts()->where('is_active', true)->get();
+            if ($accounts->isNotEmpty()) {
+                $context[] = "\nREDES SOCIAIS CONECTADAS:";
+                foreach ($accounts as $acc) {
+                    $context[] = "  - {$acc->platform}: @{$acc->username} ({$acc->display_name})";
+                }
+                $context[] = "Considere fazer cross-referência entre as redes quando relevante.";
+            }
+        }
+
+        // Público-alvo e tom
+        if ($brand->target_audience) {
+            $context[] = "\nPÚBLICO-ALVO: {$brand->target_audience}";
+        }
+        if ($brand->segment) {
+            $context[] = "SEGMENTO: {$brand->segment}";
+        }
+
+        // Keywords da marca
+        $keywords = is_array($brand->keywords) ? $brand->keywords : [];
+        if (!empty($keywords)) {
+            $context[] = "\nPALAVRAS-CHAVE DA MARCA: " . implode(', ', $keywords);
+            $context[] = "Incorpore naturalmente algumas dessas palavras-chave no conteúdo.";
+        }
+
+        return implode("\n", $context);
+    }
+
+    /**
+     * Constrói o prompt de geração de imagem (delega para helper compartilhado)
+     */
+    private function buildImagePrompt(
+        \App\Models\Brand $brand,
+        string $topic,
+        string $caption,
+        SocialPlatform $platform,
+        PostType $postType,
+        ?string $imageStyle = null,
+    ): string {
+        return AIGateway::buildSocialImagePrompt(
+            $brand, $topic, $caption, $platform->value, $postType->value, $imageStyle
+        );
     }
 
     /**

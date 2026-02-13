@@ -71,7 +71,14 @@ class AIGateway
     }
 
     /**
-     * Gera imagem com IA
+     * Gera imagem com IA (DALL-E 3 via OpenAI)
+     *
+     * @param string $prompt Descrição da imagem a gerar
+     * @param Brand|null $brand Marca para contexto visual
+     * @param User|null $user Usuário para log
+     * @param string $size Tamanho: '1024x1024', '1792x1024', '1024x1792'
+     * @param string $quality 'standard' ou 'hd'
+     * @return array{url: string, revised_prompt: string, size: string, model: string}
      */
     public function generateImage(
         string $prompt,
@@ -80,8 +87,175 @@ class AIGateway
         string $size = '1024x1024',
         string $quality = 'standard',
     ): array {
-        // TODO: Implementar com OpenAI DALL-E 3 e/ou Stability AI
-        throw new \RuntimeException('Geração de imagem será implementada em breve.');
+        $apiKey = $this->resolveApiKey(AIProvider::OpenAI);
+
+        if (!$apiKey) {
+            throw new \RuntimeException('OPENAI_API_KEY não configurada. Necessária para gerar imagens com DALL-E 3.');
+        }
+
+        // Enriquecer prompt com contexto visual da marca
+        $enhancedPrompt = $prompt;
+        if ($brand) {
+            $brandHints = "Style context: Brand '{$brand->name}'";
+            if ($brand->primary_color) $brandHints .= ", primary color {$brand->primary_color}";
+            if ($brand->secondary_color) $brandHints .= ", secondary color {$brand->secondary_color}";
+            if ($brand->segment) $brandHints .= ", segment: {$brand->segment}";
+            $enhancedPrompt = "{$brandHints}. {$prompt}";
+        }
+
+        // Limitar a 4000 chars (limite DALL-E 3)
+        $enhancedPrompt = mb_substr($enhancedPrompt, 0, 4000);
+
+        $response = \Illuminate\Support\Facades\Http::withHeaders([
+            'Authorization' => "Bearer {$apiKey}",
+            'Content-Type' => 'application/json',
+        ])->timeout(120)->post('https://api.openai.com/v1/images/generations', [
+            'model' => 'dall-e-3',
+            'prompt' => $enhancedPrompt,
+            'n' => 1,
+            'size' => $size,
+            'quality' => $quality,
+            'response_format' => 'url',
+        ]);
+
+        if (!$response->successful()) {
+            $errorBody = $response->json();
+            $errorMsg = $errorBody['error']['message'] ?? $response->body();
+            throw new \RuntimeException("DALL-E 3 Error: {$errorMsg}");
+        }
+
+        $data = $response->json();
+        $imageData = $data['data'][0] ?? [];
+
+        // Log de uso
+        if ($user) {
+            try {
+                AiUsageLog::create([
+                    'user_id' => $user->id,
+                    'brand_id' => $brand?->id,
+                    'provider' => 'openai',
+                    'model' => 'dall-e-3',
+                    'feature' => 'image_generation',
+                    'input_tokens' => mb_strlen($enhancedPrompt),
+                    'output_tokens' => 0,
+                    'estimated_cost' => $quality === 'hd' ? 0.080 : 0.040, // Custo por imagem DALL-E 3
+                ]);
+            } catch (\Exception $e) {
+                Log::warning("Falha ao registrar log de geração de imagem: {$e->getMessage()}");
+            }
+        }
+
+        return [
+            'url' => $imageData['url'] ?? '',
+            'revised_prompt' => $imageData['revised_prompt'] ?? $enhancedPrompt,
+            'size' => $size,
+            'model' => 'dall-e-3',
+        ];
+    }
+
+    /**
+     * Constrói prompt de imagem para conteúdo social a partir de contexto da marca.
+     * Helper reutilizável por PostController, ContentCalendarService, ContentEngineService.
+     */
+    public static function buildSocialImagePrompt(
+        Brand $brand,
+        string $topic,
+        string $caption,
+        string $platform = 'instagram',
+        string $postType = 'feed',
+        ?string $imageStyle = null,
+    ): string {
+        $aspectRatio = match ($postType) {
+            'story', 'reel' => 'portrait (9:16)',
+            'video' => 'landscape (16:9)',
+            default => 'square (1:1)',
+        };
+
+        $prompt = "Create a professional social media post image for {$platform}. ";
+        $prompt .= "Format: {$aspectRatio}. ";
+        $prompt .= "Topic: {$topic}. ";
+
+        if ($imageStyle) {
+            $prompt .= "Visual style: {$imageStyle}. ";
+        } else {
+            $prompt .= "Style: modern, clean, professional, high quality. ";
+        }
+
+        if ($brand->segment) {
+            $prompt .= "Industry: {$brand->segment}. ";
+        }
+
+        if ($brand->primary_color) {
+            $prompt .= "Use brand colors: primary {$brand->primary_color}";
+            if ($brand->secondary_color) $prompt .= ", secondary {$brand->secondary_color}";
+            if ($brand->accent_color) $prompt .= ", accent {$brand->accent_color}";
+            $prompt .= ". ";
+        }
+
+        $captionEssence = mb_substr(strip_tags($caption), 0, 150);
+        if ($captionEssence) {
+            $prompt .= "Content context: \"{$captionEssence}\". ";
+        }
+
+        $prompt .= "Do NOT include any text, words or letters in the image. ";
+        $prompt .= "The image should be purely visual/photographic/illustrative. ";
+        $prompt .= "Make it eye-catching and suitable for a social media feed.";
+
+        return $prompt;
+    }
+
+    /**
+     * Tenta gerar uma imagem para um ContentSuggestion, salvando no storage e no metadata.
+     * Retorna o caminho relativo da imagem ou null em caso de falha.
+     */
+    public function tryGenerateImageForContent(
+        Brand $brand,
+        string $topic,
+        string $caption,
+        string $platform = 'instagram',
+        string $postType = 'feed',
+    ): ?array {
+        try {
+            $size = match ($postType) {
+                'story', 'reel' => '1024x1792',
+                'video' => '1792x1024',
+                default => '1024x1024',
+            };
+
+            $prompt = self::buildSocialImagePrompt($brand, $topic, $caption, $platform, $postType);
+
+            $result = $this->generateImage(
+                prompt: $prompt,
+                brand: $brand,
+                size: $size,
+                quality: 'standard',
+            );
+
+            if (!empty($result['url'])) {
+                // Baixar e salvar localmente
+                $imageContent = @file_get_contents($result['url']);
+                if ($imageContent) {
+                    $filename = 'ai-generated/' . uniqid('img_') . '.png';
+                    \Illuminate\Support\Facades\Storage::disk('public')->put($filename, $imageContent);
+
+                    return [
+                        'path' => $filename,
+                        'url' => \Illuminate\Support\Facades\Storage::disk('public')->url($filename),
+                        'prompt' => $result['revised_prompt'] ?? $prompt,
+                        'size' => $size,
+                        'model' => 'dall-e-3',
+                    ];
+                }
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::warning("Image generation for content failed: {$e->getMessage()}", [
+                'brand_id' => $brand->id,
+                'topic' => $topic,
+            ]);
+            return null;
+        }
     }
 
     // ===== PROVIDERS =====

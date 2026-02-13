@@ -1,8 +1,11 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, defineAsyncComponent } from 'vue';
 import { useForm } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import axios from 'axios';
+
+// Carregar GrapesEditor apenas quando necessário (lazy load)
+const GrapesEditor = defineAsyncComponent(() => import('@/Components/Email/GrapesEditor.vue'));
 
 const props = defineProps({
     providers: Array,
@@ -42,11 +45,36 @@ const aiSubjectGenerating = ref(false);
 const aiError = ref('');
 
 // Template selection
-const templateSource = ref('none'); // 'none' | 'custom' | 'starter' | 'ai'
+const templateSource = ref('none'); // 'none' | 'custom' | 'starter' | 'ai' | 'scratch'
 const selectedTemplate = ref(null);
 const showHtmlEditor = ref(false);
 const previewHtml = ref('');
 const showPreviewModal = ref(false);
+
+// Visual Editor (GrapesJS)
+const showVisualEditor = ref(false);
+const jsonContent = ref(null);
+
+function openVisualEditor() {
+    showVisualEditor.value = true;
+}
+
+function closeVisualEditor() {
+    showVisualEditor.value = false;
+}
+
+function onEditorHtmlUpdate(html) {
+    form.html_content = html;
+}
+
+function onEditorJsonUpdate(json) {
+    jsonContent.value = json;
+}
+
+function onEditorSave() {
+    // O HTML já foi atualizado via onEditorHtmlUpdate
+    showVisualEditor.value = false;
+}
 
 const estimatedRecipients = computed(() => {
     const includeIds = form.lists;
@@ -99,6 +127,69 @@ function applyStarterTemplate(starter) {
     if (starter.subject && !form.subject) form.subject = starter.subject;
     selectedTemplate.value = starter;
     templateSource.value = 'starter';
+}
+
+function startFromScratch() {
+    form.email_template_id = null;
+    form.html_content = getBlankEmailHtml();
+    selectedTemplate.value = { name: 'Começar do Zero', id: null };
+    templateSource.value = 'scratch';
+}
+
+function getBlankEmailHtml() {
+    return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f4;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f4;">
+        <tr>
+            <td align="center" style="padding:20px 0;">
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;">
+                    <!-- Cabeçalho -->
+                    <tr>
+                        <td style="padding:30px 40px;background-color:#6366f1;text-align:center;">
+                            <h1 style="margin:0;color:#ffffff;font-size:24px;">Seu Título Aqui</h1>
+                        </td>
+                    </tr>
+                    <!-- Conteúdo -->
+                    <tr>
+                        <td style="padding:40px;">
+                            <p style="margin:0 0 16px;color:#333333;font-size:16px;line-height:1.6;">
+                                Escreva o conteúdo do seu email aqui. Personalize com sua mensagem.
+                            </p>
+                            <p style="margin:0 0 24px;color:#666666;font-size:14px;line-height:1.6;">
+                                Adicione mais parágrafos, imagens e botões conforme necessário.
+                            </p>
+                            <!-- Botão CTA -->
+                            <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+                                <tr>
+                                    <td style="background-color:#6366f1;border-radius:6px;">
+                                        <a href="#" style="display:inline-block;padding:12px 32px;color:#ffffff;text-decoration:none;font-size:14px;font-weight:bold;">
+                                            Saiba Mais
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <!-- Rodapé -->
+                    <tr>
+                        <td style="padding:20px 40px;background-color:#f8f8f8;text-align:center;border-top:1px solid #e5e5e5;">
+                            <p style="margin:0;color:#999999;font-size:12px;">
+                                © 2026 Sua Empresa. Todos os direitos reservados.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>`;
 }
 
 function clearTemplate() {
@@ -284,25 +375,93 @@ function submit() {
 
             <!-- Step 3: Conteúdo -->
             <div v-show="currentStep === 3" class="space-y-6">
-                <!-- Template selecionado (banner) -->
-                <div v-if="selectedTemplate" class="rounded-xl border border-indigo-500/30 bg-indigo-900/20 p-4 flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-lg bg-indigo-600/30 flex items-center justify-center">
-                            <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <!-- Template selecionado (banner + ações) -->
+                <div v-if="selectedTemplate" class="space-y-4">
+                    <div class="rounded-xl border border-indigo-500/30 bg-indigo-900/20 p-4 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-lg bg-indigo-600/30 flex items-center justify-center">
+                                <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-indigo-300">{{ selectedTemplate.name }}</p>
+                                <p class="text-xs text-gray-500">{{ { scratch: 'Começar do zero', starter: 'Template pronto', custom: 'Seu template', ai: 'Gerado por IA', manual: 'HTML manual' }[templateSource] || '' }}</p>
+                            </div>
                         </div>
-                        <div>
-                            <p class="text-sm font-medium text-indigo-300">Template selecionado: {{ selectedTemplate.name }}</p>
-                            <p class="text-xs text-gray-500">{{ templateSource === 'starter' ? 'Template pronto' : templateSource === 'custom' ? 'Seu template' : templateSource === 'ai' ? 'Gerado por IA' : '' }}</p>
-                        </div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button type="button" @click="previewTemplate(form.html_content)" class="px-3 py-1.5 text-xs bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700">Preview</button>
                         <button type="button" @click="clearTemplate" class="px-3 py-1.5 text-xs bg-red-900/30 text-red-400 rounded-lg hover:bg-red-900/50">Trocar</button>
+                    </div>
+
+                    <!-- Ações de edição -->
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <!-- Editar no Editor Visual -->
+                        <button type="button" @click="openVisualEditor"
+                            class="flex items-center gap-3 rounded-xl border-2 border-indigo-500/30 bg-indigo-900/10 p-4 hover:bg-indigo-900/20 hover:border-indigo-500/50 transition group">
+                            <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600/20 shrink-0">
+                                <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                </svg>
+                            </div>
+                            <div class="text-left">
+                                <p class="text-sm font-medium text-indigo-300">Editor Visual</p>
+                                <p class="text-[11px] text-gray-500">Drag & drop com blocos</p>
+                            </div>
+                        </button>
+
+                        <!-- Preview -->
+                        <button type="button" @click="previewTemplate(form.html_content)"
+                            class="flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/50 p-4 hover:bg-gray-800 hover:border-gray-600 transition">
+                            <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-700 shrink-0">
+                                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                                </svg>
+                            </div>
+                            <div class="text-left">
+                                <p class="text-sm font-medium text-gray-300">Preview</p>
+                                <p class="text-[11px] text-gray-500">Visualizar resultado</p>
+                            </div>
+                        </button>
+
+                        <!-- Editar HTML -->
+                        <button type="button" @click="showHtmlEditor = !showHtmlEditor"
+                            class="flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/50 p-4 hover:bg-gray-800 hover:border-gray-600 transition">
+                            <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-700 shrink-0">
+                                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
+                                </svg>
+                            </div>
+                            <div class="text-left">
+                                <p class="text-sm font-medium text-gray-300">Editar HTML</p>
+                                <p class="text-[11px] text-gray-500">Código fonte direto</p>
+                            </div>
+                        </button>
+                    </div>
+
+                    <!-- Editor HTML inline (quando aberto) -->
+                    <div v-if="showHtmlEditor" class="rounded-xl border border-gray-800 bg-gray-900 p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-medium text-gray-300">Código HTML</h3>
+                            <button type="button" @click="showHtmlEditor = false" class="text-xs text-gray-500 hover:text-white">&times; Fechar</button>
+                        </div>
+                        <textarea v-model="form.html_content" rows="14" class="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-3 font-mono text-xs text-white" placeholder="Cole ou edite o HTML do email aqui..."></textarea>
                     </div>
                 </div>
 
                 <!-- Seleção de template (quando nenhum selecionado) -->
                 <div v-if="!selectedTemplate" class="space-y-6">
+                    <!-- Começar do Zero -->
+                    <button type="button" @click="startFromScratch"
+                        class="w-full rounded-xl border-2 border-dashed border-gray-700 bg-gray-900/50 p-6 flex items-center gap-5 hover:border-indigo-500/50 hover:bg-gray-900 transition group">
+                        <div class="flex h-14 w-14 items-center justify-center rounded-xl bg-gray-800 group-hover:bg-indigo-600/20 transition shrink-0">
+                            <svg class="w-7 h-7 text-gray-500 group-hover:text-indigo-400 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 4.5v15m7.5-7.5h-15" />
+                            </svg>
+                        </div>
+                        <div class="text-left">
+                            <h3 class="text-base font-semibold text-white group-hover:text-indigo-300 transition">Começar do Zero</h3>
+                            <p class="text-sm text-gray-500 mt-0.5">Inicie com uma estrutura HTML básica pronta para personalizar (cabeçalho, conteúdo, botão CTA e rodapé).</p>
+                        </div>
+                    </button>
+
                     <!-- Seus Templates -->
                     <div v-if="templates?.length" class="rounded-xl border border-gray-800 bg-gray-900 p-6">
                         <div class="flex items-center justify-between mb-4">
@@ -396,17 +555,22 @@ function submit() {
                         <p v-if="aiError" class="mt-2 text-xs text-red-400">{{ aiError }}</p>
                     </div>
 
-                    <!-- HTML Manual -->
+                    <!-- HTML Manual (quando nenhum template selecionado) -->
                     <div class="rounded-xl border border-gray-800 bg-gray-900 p-6">
                         <div class="flex items-center justify-between mb-4">
-                            <h3 class="text-base font-semibold text-white">HTML Manual</h3>
+                            <h3 class="text-base font-semibold text-white">Colar HTML</h3>
                             <button type="button" @click="showHtmlEditor = !showHtmlEditor" class="text-xs text-gray-400 hover:text-white">
                                 {{ showHtmlEditor ? 'Esconder' : 'Colar HTML direto' }}
                             </button>
                         </div>
                         <div v-if="showHtmlEditor">
                             <textarea v-model="form.html_content" rows="12" class="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-3 font-mono text-xs text-white" placeholder="Cole o HTML do email aqui..."></textarea>
-                            <p v-if="form.errors.html_content" class="mt-1 text-xs text-red-400">{{ form.errors.html_content }}</p>
+                            <div class="flex justify-end mt-2" v-if="form.html_content">
+                                <button type="button" @click="selectedTemplate = { name: 'HTML Manual', id: null }; templateSource = 'manual'; showHtmlEditor = false"
+                                    class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-500 transition">
+                                    Usar este HTML
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -487,6 +651,50 @@ function submit() {
                     </div>
                 </div>
             </div>
+        </Teleport>
+
+        <!-- Modal: Editor Visual (GrapesJS) - Fullscreen -->
+        <Teleport to="body">
+            <Transition
+                enter-active-class="transition duration-200 ease-out"
+                enter-from-class="opacity-0"
+                enter-to-class="opacity-100"
+                leave-active-class="transition duration-150 ease-in"
+                leave-from-class="opacity-100"
+                leave-to-class="opacity-0"
+            >
+                <div v-if="showVisualEditor" class="fixed inset-0 z-[200] flex flex-col bg-gray-950">
+                    <!-- Header do editor -->
+                    <div class="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800 shrink-0">
+                        <div class="flex items-center gap-3">
+                            <button @click="closeVisualEditor" class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                                Voltar
+                            </button>
+                            <div class="h-5 w-px bg-gray-700"></div>
+                            <h3 class="text-sm font-medium text-white">Editor Visual — {{ form.name || 'Nova Campanha' }}</h3>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button @click="closeVisualEditor"
+                                class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-500 transition flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                Concluir edição
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- GrapesJS -->
+                    <div class="flex-1 overflow-hidden">
+                        <GrapesEditor
+                            :htmlContent="form.html_content"
+                            :jsonContent="jsonContent"
+                            @update:htmlContent="onEditorHtmlUpdate"
+                            @update:jsonContent="onEditorJsonUpdate"
+                            @save="onEditorSave"
+                        />
+                    </div>
+                </div>
+            </Transition>
         </Teleport>
     </AuthenticatedLayout>
 </template>

@@ -58,6 +58,7 @@ const navigation: NavItem[] = [
             { name: 'Dashboard', href: 'sms.dashboard', routeMatch: 'sms.dashboard' },
             { name: 'Campanhas', href: 'sms.campaigns.index', routeMatch: 'sms.campaigns.*' },
             { name: 'Templates', href: 'sms.templates.index', routeMatch: 'sms.templates.*' },
+            { name: 'Provedores', href: 'email.providers.index', routeMatch: 'email.providers.*' },
         ],
     },
     { name: 'Chat IA', href: 'chat.index', icon: 'message-circle', routeMatch: 'chat.*', enabled: true },

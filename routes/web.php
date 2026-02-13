@@ -28,6 +28,7 @@ use App\Http\Controllers\SmsCampaignController;
 use App\Http\Controllers\SmsTemplateController;
 use App\Http\Controllers\SmsDashboardController;
 use App\Http\Controllers\SmsWebhookController;
+use App\Http\Controllers\SendPulseWebhookController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -59,8 +60,12 @@ Route::get('/social/oauth/callback/{platform}', [SocialOAuthController::class, '
 Route::get('/email/t/open/{token}', [EmailTrackingController::class, 'open'])->name('email.track.open');
 Route::get('/email/t/click/{token}', [EmailTrackingController::class, 'click'])->name('email.track.click');
 Route::get('/email/unsubscribe/{token}', [EmailTrackingController::class, 'unsubscribe'])->name('email.unsubscribe');
-Route::post('/email/webhook/sendpulse', [EmailTrackingController::class, 'sendpulseWebhook'])->name('email.webhook.sendpulse');
-Route::post('/sms/webhook/sendpulse', [SmsWebhookController::class, 'sendpulseWebhook'])->name('sms.webhook.sendpulse');
+// Webhook UNIFICADO SendPulse (usar esta URL no painel do SendPulse)
+Route::post('/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])->name('webhook.sendpulse');
+
+// Webhooks legados (redirecionam para o unificado para compatibilidade)
+Route::post('/email/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])->name('email.webhook.sendpulse');
+Route::post('/sms/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])->name('sms.webhook.sendpulse');
 
 /*
 |--------------------------------------------------------------------------
@@ -142,6 +147,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         // Geracao de conteudo com IA
         Route::post('/generate', [PostController::class, 'generateContent'])->name('generate');
+        Route::post('/generate-complete', [PostController::class, 'generateCompletePost'])->name('generate-complete');
 
         // Calendario
         Route::get('/calendar', [PostController::class, 'calendar'])->name('calendar.index');

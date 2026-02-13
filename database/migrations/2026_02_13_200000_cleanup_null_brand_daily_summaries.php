@@ -18,16 +18,26 @@ return new class extends Migration
         Log::info("Cleanup: removidas {$deleted} linhas com brand_id NULL de analytics_daily_summaries");
 
         // Fazer o mesmo para analytics_data_points se houver
-        $deletedDp = DB::table('analytics_data_points')
-            ->whereNull('brand_id')
+        // Passo 1: Buscar IDs das linhas NULL que tem duplicata com brand_id
+        // (separado do DELETE para evitar erro MySQL 1093: can't specify target table for update in FROM clause)
+        $idsToDelete = DB::table('analytics_data_points as adp1')
+            ->whereNull('adp1.brand_id')
             ->whereExists(function ($query) {
                 $query->select(DB::raw(1))
                     ->from('analytics_data_points as adp2')
-                    ->whereColumn('adp2.date', 'analytics_data_points.date')
-                    ->whereColumn('adp2.metric_key', 'analytics_data_points.metric_key')
+                    ->whereColumn('adp2.date', 'adp1.date')
+                    ->whereColumn('adp2.metric_key', 'adp1.metric_key')
                     ->whereNotNull('adp2.brand_id');
             })
-            ->delete();
+            ->pluck('adp1.id');
+
+        // Passo 2: Deletar pelos IDs (evita o erro 1093)
+        $deletedDp = 0;
+        if ($idsToDelete->isNotEmpty()) {
+            $deletedDp = DB::table('analytics_data_points')
+                ->whereIn('id', $idsToDelete)
+                ->delete();
+        }
 
         Log::info("Cleanup: removidas {$deletedDp} linhas duplicadas com brand_id NULL de analytics_data_points");
     }
