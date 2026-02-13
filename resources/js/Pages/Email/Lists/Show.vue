@@ -1,16 +1,37 @@
 <script setup>
 import { ref, watch, computed } from 'vue';
-import { useForm, router, usePage } from '@inertiajs/vue3';
+import { useForm, router, usePage, Link } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import axios from 'axios';
 
 const props = defineProps({ list: Object, contacts: Object, sources: Array, wcConnections: Array });
-const flash = usePage().props.flash || {};
+
+// Toast notification reativo
+const toastMessage = ref('');
+const toastType = ref('success');
+const toastVisible = ref(false);
+let toastTimer = null;
+
+function showToast(message, type = 'success') {
+    toastMessage.value = message;
+    toastType.value = type;
+    toastVisible.value = true;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastVisible.value = false; }, 4000);
+}
+
+// Verificar flash do server a cada navegacao
+const page = usePage();
+watch(() => page.props.flash, (flash) => {
+    if (flash?.success) showToast(flash.success, 'success');
+    if (flash?.error) showToast(flash.error, 'error');
+}, { immediate: true, deep: true });
 
 const activeTab = ref('contacts');
 const showAddContact = ref(false);
 const showImport = ref(false);
 const showAddSource = ref(false);
+const syncingSourceId = ref(null);
 
 const contactForm = useForm({ email: '', first_name: '', last_name: '', phone: '', company: '' });
 const importForm = useForm({ file: null, mapping: {} });
@@ -124,24 +145,27 @@ watch(() => sourceForm.type, () => { resetMysqlState(); });
 
 function addContact() {
     contactForm.post(route('email.lists.add-contact', props.list.id), {
+        preserveScroll: true,
         onSuccess: () => { showAddContact.value = false; contactForm.reset(); },
     });
 }
 
 function removeContact(contactId) {
     if (confirm('Remover este contato da lista?')) {
-        router.delete(route('email.lists.remove-contact', [props.list.id, contactId]));
+        router.delete(route('email.lists.remove-contact', [props.list.id, contactId]), { preserveScroll: true });
     }
 }
 
 function submitImport() {
     importForm.post(route('email.lists.import', props.list.id), {
+        preserveScroll: true,
         onSuccess: () => { showImport.value = false; },
     });
 }
 
 function addSource() {
     sourceForm.post(route('email.lists.add-source', props.list.id), {
+        preserveScroll: true,
         onSuccess: () => { showAddSource.value = false; sourceForm.reset(); resetMysqlState(); },
     });
 }
@@ -152,13 +176,23 @@ function openAddSource() {
 }
 
 function syncSource(sourceId) {
-    router.post(route('email.lists.sync-source', [props.list.id, sourceId]));
+    syncingSourceId.value = sourceId;
+    router.post(route('email.lists.sync-source', [props.list.id, sourceId]), {}, {
+        preserveScroll: true,
+        onFinish: () => { syncingSourceId.value = null; },
+    });
 }
 
 function removeSource(sourceId) {
     if (confirm('Remover esta fonte?')) {
-        router.delete(route('email.lists.remove-source', [props.list.id, sourceId]));
+        router.delete(route('email.lists.remove-source', [props.list.id, sourceId]), { preserveScroll: true });
     }
+}
+
+// Paginacao
+function goToPage(url) {
+    if (!url) return;
+    router.get(url, {}, { preserveState: true, preserveScroll: true });
 }
 
 const statusColors = { active: 'text-green-400', unsubscribed: 'text-red-400', bounced: 'text-orange-400', complained: 'text-red-500' };
@@ -191,7 +225,21 @@ function columnTypeIcon(dataType) {
             </div>
         </template>
 
-        <div v-if="flash?.success" class="mb-6 px-4 py-3 rounded-lg bg-green-900/30 border border-green-700/50 text-green-300 text-sm">{{ flash.success }}</div>
+        <!-- Toast Notification -->
+        <Teleport to="body">
+            <Transition enter-active-class="transition duration-300 ease-out" enter-from-class="translate-y-2 opacity-0" enter-to-class="translate-y-0 opacity-100"
+                leave-active-class="transition duration-200 ease-in" leave-from-class="translate-y-0 opacity-100" leave-to-class="translate-y-2 opacity-0">
+                <div v-if="toastVisible" class="fixed bottom-6 right-6 z-[100] max-w-sm">
+                    <div :class="['px-4 py-3 rounded-xl shadow-xl border text-sm flex items-center gap-2',
+                        toastType === 'success' ? 'bg-green-900/90 border-green-700/50 text-green-200' : 'bg-red-900/90 border-red-700/50 text-red-200']">
+                        <svg v-if="toastType === 'success'" class="w-5 h-5 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <svg v-else class="w-5 h-5 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+                        <span>{{ toastMessage }}</span>
+                        <button @click="toastVisible = false" class="ml-2 text-gray-400 hover:text-white shrink-0">&times;</button>
+                    </div>
+                </div>
+            </Transition>
+        </Teleport>
 
         <!-- Tabs -->
         <div class="flex gap-1 mb-6 border-b border-gray-800">
@@ -202,32 +250,78 @@ function columnTypeIcon(dataType) {
         </div>
 
         <!-- Contacts Tab -->
-        <div v-if="activeTab === 'contacts'" class="bg-gray-900 rounded-xl border border-gray-800">
-            <table class="w-full text-sm">
-                <thead><tr class="text-gray-500 text-xs uppercase border-b border-gray-800">
-                    <th class="text-left py-3 px-4">Email</th>
-                    <th class="text-left py-3 px-4">Nome</th>
-                    <th class="text-left py-3 px-4">Telefone</th>
-                    <th class="text-left py-3 px-4">Status</th>
-                    <th class="text-left py-3 px-4">Fonte</th>
-                    <th class="text-right py-3 px-4"></th>
-                </tr></thead>
-                <tbody>
-                    <tr v-for="c in contacts?.data" :key="c.id" class="border-b border-gray-800/50">
-                        <td class="py-3 px-4 text-gray-200">{{ c.email }}</td>
-                        <td class="py-3 px-4 text-gray-300">{{ c.full_name }}</td>
-                        <td class="py-3 px-4 text-gray-400">{{ c.phone || '-' }}</td>
-                        <td class="py-3 px-4"><span :class="statusColors[c.status]">{{ c.status }}</span></td>
-                        <td class="py-3 px-4 text-gray-500 text-xs">{{ c.source }}</td>
-                        <td class="py-3 px-4 text-right">
-                            <button @click.stop="removeContact(c.id)" class="text-xs text-red-400 hover:text-red-300">Remover</button>
-                        </td>
-                    </tr>
-                    <tr v-if="!contacts?.data?.length">
-                        <td colspan="6" class="py-8 text-center text-gray-500">Nenhum contato nesta lista.</td>
-                    </tr>
-                </tbody>
-            </table>
+        <div v-if="activeTab === 'contacts'">
+            <div class="bg-gray-900 rounded-xl border border-gray-800">
+                <table class="w-full text-sm">
+                    <thead><tr class="text-gray-500 text-xs uppercase border-b border-gray-800">
+                        <th class="text-left py-3 px-4">Email</th>
+                        <th class="text-left py-3 px-4">Nome</th>
+                        <th class="text-left py-3 px-4">Telefone</th>
+                        <th class="text-left py-3 px-4">Status</th>
+                        <th class="text-left py-3 px-4">Fonte</th>
+                        <th class="text-right py-3 px-4"></th>
+                    </tr></thead>
+                    <tbody>
+                        <tr v-for="c in contacts?.data" :key="c.id" class="border-b border-gray-800/50 hover:bg-gray-800/30">
+                            <td class="py-3 px-4 text-gray-200">{{ c.email }}</td>
+                            <td class="py-3 px-4 text-gray-300">{{ c.full_name }}</td>
+                            <td class="py-3 px-4 text-gray-400">{{ c.phone || '-' }}</td>
+                            <td class="py-3 px-4"><span :class="statusColors[c.status]">{{ c.status }}</span></td>
+                            <td class="py-3 px-4 text-gray-500 text-xs">{{ c.source }}</td>
+                            <td class="py-3 px-4 text-right">
+                                <button @click.stop="removeContact(c.id)" class="text-xs text-red-400 hover:text-red-300">Remover</button>
+                            </td>
+                        </tr>
+                        <tr v-if="!contacts?.data?.length">
+                            <td colspan="6" class="py-8 text-center text-gray-500">Nenhum contato nesta lista.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Paginacao -->
+            <div v-if="contacts?.last_page > 1" class="flex items-center justify-between mt-4 px-1">
+                <p class="text-xs text-gray-500">
+                    Mostrando {{ contacts.from }}-{{ contacts.to }} de {{ contacts.total.toLocaleString('pt-BR') }} contatos
+                </p>
+                <div class="flex items-center gap-1">
+                    <button @click="goToPage(contacts.prev_page_url)" :disabled="!contacts.prev_page_url"
+                        class="px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-30 disabled:cursor-not-allowed bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-700">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+                    </button>
+
+                    <!-- Primeira pagina -->
+                    <button v-if="contacts.current_page > 3" @click="goToPage(contacts.links[1]?.url)"
+                        class="px-3 py-1.5 rounded-lg text-xs font-medium transition bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700 hover:text-white">1</button>
+                    <span v-if="contacts.current_page > 4" class="text-gray-600 text-xs px-1">...</span>
+
+                    <!-- Paginas proximas -->
+                    <template v-for="link in contacts.links" :key="link.label">
+                        <button v-if="!link.label.includes('Previous') && !link.label.includes('Next') && !link.label.includes('&laquo;') && !link.label.includes('&raquo;')
+                            && Math.abs(parseInt(link.label) - contacts.current_page) <= 2"
+                            @click="goToPage(link.url)"
+                            :disabled="!link.url"
+                            :class="['px-3 py-1.5 rounded-lg text-xs font-medium transition border min-w-[32px] text-center',
+                                link.active ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700 hover:text-white disabled:opacity-30']"
+                            v-html="link.label">
+                        </button>
+                    </template>
+
+                    <!-- Ultima pagina -->
+                    <span v-if="contacts.current_page < contacts.last_page - 3" class="text-gray-600 text-xs px-1">...</span>
+                    <button v-if="contacts.current_page < contacts.last_page - 2"
+                        @click="goToPage(contacts.links[contacts.links.length - 2]?.url)"
+                        class="px-3 py-1.5 rounded-lg text-xs font-medium transition bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700 hover:text-white">{{ contacts.last_page }}</button>
+
+                    <button @click="goToPage(contacts.next_page_url)" :disabled="!contacts.next_page_url"
+                        class="px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-30 disabled:cursor-not-allowed bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-700">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                    </button>
+
+                    <!-- Info pagina -->
+                    <span class="text-xs text-gray-600 ml-2">Pag. {{ contacts.current_page }}/{{ contacts.last_page }}</span>
+                </div>
+            </div>
         </div>
 
         <!-- Sources Tab -->
@@ -243,7 +337,11 @@ function columnTypeIcon(dataType) {
                     <p v-if="s.sync_error" class="text-xs text-red-400 mt-1">{{ s.sync_error }}</p>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button @click="syncSource(s.id)" class="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-500">Sincronizar</button>
+                    <button @click="syncSource(s.id)" :disabled="syncingSourceId === s.id"
+                        class="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 disabled:opacity-60 flex items-center gap-1.5 transition">
+                        <svg v-if="syncingSourceId === s.id" class="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                        {{ syncingSourceId === s.id ? 'Sincronizando...' : 'Sincronizar' }}
+                    </button>
                     <button @click="removeSource(s.id)" class="px-3 py-1.5 text-xs bg-red-900/30 text-red-400 rounded-lg hover:bg-red-900/50">Remover</button>
                 </div>
             </div>
