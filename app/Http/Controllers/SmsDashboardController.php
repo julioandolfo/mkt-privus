@@ -7,12 +7,30 @@ use App\Models\SmsCampaignEvent;
 use App\Models\SmsTemplate;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Inertia\Inertia;
 
 class SmsDashboardController extends Controller
 {
     public function index(Request $request)
     {
+        // Verificar se as tabelas SMS existem (migration pode nao ter rodado)
+        if (!Schema::hasTable('sms_campaigns')) {
+            return Inertia::render('Sms/Dashboard', [
+                'kpis' => [
+                    'total_campaigns' => 0, 'total_sent' => 0, 'total_delivered' => 0,
+                    'total_failed' => 0, 'total_clicked' => 0, 'delivery_rate' => 0,
+                    'failure_rate' => 0, 'click_rate' => 0,
+                ],
+                'recentCampaigns' => [],
+                'dailyStats' => [],
+                'statusDistribution' => [],
+                'period' => 'this_month',
+                'templates_count' => 0,
+                'migrationPending' => true,
+            ]);
+        }
+
         $brandId = session('current_brand_id');
         $period = $request->input('period', 'this_month');
 

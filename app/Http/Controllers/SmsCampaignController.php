@@ -10,6 +10,7 @@ use App\Services\Sms\SmsCampaignService;
 use App\Services\Sms\SmsProviderService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 use Inertia\Inertia;
 
 class SmsCampaignController extends Controller
@@ -21,6 +22,14 @@ class SmsCampaignController extends Controller
 
     public function index(Request $request)
     {
+        if (!Schema::hasTable('sms_campaigns')) {
+            return Inertia::render('Sms/Campaigns/Index', [
+                'campaigns' => ['data' => [], 'links' => [], 'last_page' => 1, 'total' => 0],
+                'filters' => [],
+                'migrationPending' => true,
+            ]);
+        }
+
         $brandId = session('current_brand_id');
 
         $campaigns = SmsCampaign::where('brand_id', $brandId)
@@ -65,12 +74,13 @@ class SmsCampaignController extends Controller
                 ->where('type', 'sms_sendpulse')
                 ->where('is_active', true)
                 ->get(['id', 'name']),
-            'templates' => SmsTemplate::where('brand_id', $brandId)
-                ->active()
-                ->orderByDesc('created_at')
-                ->get(['id', 'name', 'body', 'category']),
+            'templates' => Schema::hasTable('sms_templates')
+                ? SmsTemplate::where('brand_id', $brandId)
+                    ->active()
+                    ->orderByDesc('created_at')
+                    ->get(['id', 'name', 'body', 'category'])
+                : [],
             'lists' => EmailList::where('brand_id', $brandId)
-                ->withCount('contacts')
                 ->get(['id', 'name', 'contacts_count']),
         ]);
     }

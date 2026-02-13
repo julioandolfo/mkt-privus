@@ -5,12 +5,22 @@ namespace App\Http\Controllers;
 use App\Models\SmsTemplate;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 use Inertia\Inertia;
 
 class SmsTemplateController extends Controller
 {
     public function index(Request $request)
     {
+        if (!Schema::hasTable('sms_templates')) {
+            return Inertia::render('Sms/Templates/Index', [
+                'templates' => ['data' => [], 'links' => [], 'last_page' => 1, 'total' => 0],
+                'filters' => [],
+                'starterTemplates' => self::getStarterTemplates(),
+                'migrationPending' => true,
+            ]);
+        }
+
         $brandId = session('current_brand_id');
 
         $templates = SmsTemplate::where('brand_id', $brandId)

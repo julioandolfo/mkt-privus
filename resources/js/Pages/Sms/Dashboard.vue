@@ -10,6 +10,7 @@ const props = defineProps({
     statusDistribution: Object,
     period: String,
     templates_count: Number,
+    migrationPending: Boolean,
 });
 
 const activePeriod = ref(props.period || 'this_month');
@@ -73,6 +74,11 @@ function fmt(n) {
                 </div>
             </div>
         </template>
+
+        <!-- Migration Pending Alert -->
+        <div v-if="migrationPending" class="mb-6 px-4 py-3 rounded-lg bg-yellow-900/30 border border-yellow-700/50 text-yellow-300 text-sm">
+            As tabelas SMS ainda nao foram criadas. Execute <code class="bg-gray-800 px-1 rounded">php artisan migrate</code> no servidor para ativar o modulo SMS.
+        </div>
 
         <!-- KPIs -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
