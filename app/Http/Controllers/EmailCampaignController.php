@@ -71,6 +71,7 @@ class EmailCampaignController extends Controller
             'providers' => $providers,
             'lists' => $lists,
             'templates' => $templates,
+            'starterTemplates' => EmailTemplateController::getStarterTemplates(),
         ]);
     }
 

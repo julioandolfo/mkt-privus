@@ -145,8 +145,11 @@ async function initEditor() {
     editor.on('component:add', emitChanges);
     editor.on('component:remove', emitChanges);
 
-    // Customizar tema escuro do editor
+    // Customizar tema escuro do editor + correcoes
     applyDarkTheme();
+
+    // Adicionar bordas visuais nos componentes do canvas
+    injectCanvasStyles();
 
     // Carregar blocos salvos
     loadSavedBlocks();
@@ -158,7 +161,8 @@ function getDefaultBlocks() {
             id: 'section',
             label: 'Seção',
             category: 'Layout',
-            content: `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;"><tr><td style="padding:20px;">
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><rect x="2" y="4" width="20" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="2" y1="10" x2="22" y2="10" stroke="currentColor" stroke-width="1" opacity="0.3"/></svg>`,
+            content: `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;border:1px dashed #e5e7eb;"><tr><td style="padding:20px;">
                 <p style="margin:0;">Conteúdo da seção</p>
             </td></tr></table>`,
             attributes: { class: 'gjs-block-section' },
@@ -167,43 +171,49 @@ function getDefaultBlocks() {
             id: 'columns-2',
             label: '2 Colunas',
             category: 'Layout',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><rect x="2" y="4" width="9" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="13" y="4" width="9" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
             content: `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;"><tr>
-                <td width="50%" style="padding:10px;" valign="top"><p>Coluna 1</p></td>
-                <td width="50%" style="padding:10px;" valign="top"><p>Coluna 2</p></td>
+                <td width="50%" style="padding:10px;border:1px dashed #e5e7eb;" valign="top"><p>Coluna 1</p></td>
+                <td width="50%" style="padding:10px;border:1px dashed #e5e7eb;" valign="top"><p>Coluna 2</p></td>
             </tr></table>`,
         },
         {
             id: 'columns-3',
             label: '3 Colunas',
             category: 'Layout',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><rect x="1" y="4" width="6" height="16" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="4" width="6" height="16" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="17" y="4" width="6" height="16" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
             content: `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;"><tr>
-                <td width="33%" style="padding:10px;" valign="top"><p>Col 1</p></td>
-                <td width="34%" style="padding:10px;" valign="top"><p>Col 2</p></td>
-                <td width="33%" style="padding:10px;" valign="top"><p>Col 3</p></td>
+                <td width="33%" style="padding:10px;border:1px dashed #e5e7eb;" valign="top"><p>Col 1</p></td>
+                <td width="34%" style="padding:10px;border:1px dashed #e5e7eb;" valign="top"><p>Col 2</p></td>
+                <td width="33%" style="padding:10px;border:1px dashed #e5e7eb;" valign="top"><p>Col 3</p></td>
             </tr></table>`,
         },
         {
             id: 'heading',
             label: 'Título',
             category: 'Texto',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><text x="4" y="18" font-size="18" font-weight="bold" fill="currentColor" font-family="sans-serif">H1</text></svg>`,
             content: '<h1 style="color:#333;font-family:Inter,Arial,sans-serif;font-size:28px;font-weight:700;margin:0 0 10px;">Título do Email</h1>',
         },
         {
             id: 'text-block',
             label: 'Texto',
             category: 'Texto',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><line x1="3" y1="7" x2="21" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="3" y1="12" x2="18" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="3" y1="17" x2="15" y2="17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
             content: '<p style="color:#555;font-family:Inter,Arial,sans-serif;font-size:16px;line-height:1.6;margin:0 0 15px;">Seu texto aqui. Clique para editar.</p>',
         },
         {
             id: 'image-block',
             label: 'Imagem',
             category: 'Mídia',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15l-5-5L5 21" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>`,
             content: '<img src="https://placehold.co/600x300/6366f1/ffffff?text=Sua+Imagem" style="width:100%;max-width:600px;height:auto;display:block;" alt="Imagem" />',
         },
         {
             id: 'button-cta',
             label: 'Botão CTA',
             category: 'Ação',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><rect x="3" y="7" width="18" height="10" rx="5" fill="currentColor" opacity="0.15"/><rect x="3" y="7" width="18" height="10" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="12" x2="16" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
             content: `<table cellpadding="0" cellspacing="0" style="margin:20px auto;"><tr><td>
                 <a href="#" style="display:inline-block;padding:14px 32px;background:#6366f1;color:#ffffff;font-family:Inter,Arial,sans-serif;font-size:16px;font-weight:600;text-decoration:none;border-radius:8px;">Saiba Mais</a>
             </td></tr></table>`,
@@ -212,18 +222,21 @@ function getDefaultBlocks() {
             id: 'divider',
             label: 'Separador',
             category: 'Layout',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
             content: '<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;" />',
         },
         {
             id: 'spacer',
             label: 'Espaçador',
             category: 'Layout',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><line x1="12" y1="4" x2="12" y2="20" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/><line x1="6" y1="4" x2="18" y2="4" stroke="currentColor" stroke-width="1" opacity="0.5"/><line x1="6" y1="20" x2="18" y2="20" stroke="currentColor" stroke-width="1" opacity="0.5"/></svg>`,
             content: '<div style="height:30px;"></div>',
         },
         {
             id: 'hero-section',
             label: 'Hero',
             category: 'Seções',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><rect x="2" y="3" width="20" height="18" rx="2" fill="currentColor" opacity="0.1"/><rect x="2" y="3" width="20" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="6" y1="8" x2="18" y2="8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="7" y1="12" x2="17" y2="12" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/><rect x="8" y="15" width="8" height="3" rx="1.5" fill="currentColor" opacity="0.3"/></svg>`,
             content: `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#6366f1;border-radius:12px;">
                 <tr><td style="padding:40px;text-align:center;">
                     <h1 style="color:#fff;font-family:Inter,Arial,sans-serif;font-size:32px;margin:0 0 15px;">Título Destaque</h1>
@@ -236,6 +249,7 @@ function getDefaultBlocks() {
             id: 'product-card',
             label: 'Card Produto',
             category: 'E-commerce',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><rect x="4" y="2" width="16" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="4" width="12" height="8" rx="1" fill="currentColor" opacity="0.1"/><line x1="6" y1="15" x2="14" y2="15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="6" y1="18" x2="11" y2="18" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/></svg>`,
             content: `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:280px;margin:10px;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
                 <tr><td><img src="https://placehold.co/280x280/f3f4f6/9ca3af?text=Produto" style="width:100%;display:block;" /></td></tr>
                 <tr><td style="padding:15px;">
@@ -249,6 +263,7 @@ function getDefaultBlocks() {
             id: 'header-block',
             label: 'Cabeçalho',
             category: 'Seções',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><rect x="2" y="4" width="20" height="6" rx="1.5" fill="currentColor" opacity="0.1"/><rect x="2" y="4" width="20" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="8" y="6" width="8" height="2" rx="1" fill="currentColor" opacity="0.4"/></svg>`,
             content: `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#1f2937;"><tr>
                 <td style="padding:20px;text-align:center;">
                     <img src="https://placehold.co/150x50/6366f1/ffffff?text=LOGO" style="height:40px;" alt="Logo" />
@@ -259,6 +274,7 @@ function getDefaultBlocks() {
             id: 'footer-block',
             label: 'Rodapé',
             category: 'Seções',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><rect x="2" y="14" width="20" height="6" rx="1.5" fill="currentColor" opacity="0.1"/><rect x="2" y="14" width="20" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="6" y1="17" x2="18" y2="17" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.4"/></svg>`,
             content: `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#f9fafb;"><tr>
                 <td style="padding:25px;text-align:center;">
                     <p style="color:#9ca3af;font-family:Inter,Arial,sans-serif;font-size:12px;margin:0 0 10px;">© 2026 Sua Empresa. Todos os direitos reservados.</p>
@@ -272,6 +288,7 @@ function getDefaultBlocks() {
             id: 'social-icons',
             label: 'Redes Sociais',
             category: 'Seções',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><circle cx="6" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="18" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
             content: `<table cellpadding="0" cellspacing="0" style="margin:15px auto;"><tr>
                 <td style="padding:0 8px;"><a href="#" style="color:#6366f1;font-size:14px;text-decoration:none;">Instagram</a></td>
                 <td style="padding:0 8px;"><a href="#" style="color:#6366f1;font-size:14px;text-decoration:none;">Facebook</a></td>
@@ -282,18 +299,21 @@ function getDefaultBlocks() {
             id: 'merge-name',
             label: 'Merge: Nome',
             category: 'Merge Tags',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><text x="3" y="16" font-size="11" fill="currentColor" font-family="monospace">{"}</text></svg>`,
             content: '<span>{{first_name}}</span>',
         },
         {
             id: 'merge-email',
             label: 'Merge: Email',
             category: 'Merge Tags',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><path d="M4 6h16v12H4z" fill="none" stroke="currentColor" stroke-width="1.5" rx="1"/><path d="M4 6l8 7 8-7" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
             content: '<span>{{email}}</span>',
         },
         {
             id: 'merge-fullname',
             label: 'Merge: Nome Completo',
             category: 'Merge Tags',
+            media: `<svg viewBox="0 0 24 24" width="38" height="38"><circle cx="12" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 20c0-3.3 2.7-6 6-6s6 2.7 6 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
             content: '<span>{{full_name}}</span>',
         },
     ];
@@ -310,25 +330,229 @@ function emitChanges() {
 }
 
 function applyDarkTheme() {
-    const frame = editorContainer.value;
-    if (!frame) return;
-
     const style = document.createElement('style');
+    style.id = 'gjs-dark-theme';
+    // Remove estilos anteriores se existirem
+    const old = document.getElementById('gjs-dark-theme');
+    if (old) old.remove();
+
     style.textContent = `
+        /* === Base === */
         .gjs-one-bg { background-color: #1f2937 !important; }
         .gjs-two-color { color: #e5e7eb !important; }
         .gjs-three-bg { background-color: #374151 !important; }
         .gjs-four-color, .gjs-four-color-h:hover { color: #6366f1 !important; }
         .gjs-cv-canvas { background-color: #374151 !important; }
-        .gjs-block { color: #e5e7eb; background-color: #1f2937; border: 1px solid #374151; border-radius: 8px; }
-        .gjs-block:hover { border-color: #6366f1; }
-        .gjs-block__media { display: none; }
-        .gjs-category-title, .gjs-layer-title, .gjs-sm-sector-title { background-color: #111827 !important; color: #e5e7eb !important; }
-        .gjs-field, .gjs-field input, .gjs-field select, .gjs-field textarea { background-color: #1f2937 !important; color: #e5e7eb !important; border-color: #374151 !important; }
+
+        /* === Blocos com preview visual === */
+        .gjs-block {
+            color: #d1d5db;
+            background-color: #111827;
+            border: 1px solid #374151;
+            border-radius: 10px;
+            padding: 10px 8px 8px;
+            min-height: 70px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            transition: all 0.2s ease;
+            cursor: grab;
+        }
+        .gjs-block:hover {
+            border-color: #6366f1;
+            background-color: #1e1b4b;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+        }
+        .gjs-block svg {
+            color: #818cf8;
+            opacity: 0.85;
+        }
+        .gjs-block:hover svg {
+            color: #a5b4fc;
+            opacity: 1;
+        }
+        .gjs-block__media {
+            display: flex !important;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 2px;
+        }
+        .gjs-block-label {
+            font-size: 10px !important;
+            font-weight: 500;
+            color: #9ca3af;
+            text-align: center;
+            line-height: 1.2;
+        }
+        .gjs-block:hover .gjs-block-label {
+            color: #e0e7ff;
+        }
+
+        /* === Bloco Grid (2 por linha) === */
+        .gjs-blocks-c {
+            display: grid !important;
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 8px !important;
+            padding: 4px !important;
+        }
+
+        /* === Categorias === */
+        .gjs-block-category {
+            border-bottom: 1px solid #1f2937 !important;
+        }
+        .gjs-title {
+            background-color: #111827 !important;
+            color: #d1d5db !important;
+            border-bottom: 1px solid #1f2937 !important;
+            padding: 8px 12px !important;
+            font-size: 11px !important;
+            font-weight: 600 !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.05em !important;
+        }
+        .gjs-title:hover {
+            background-color: #1f2937 !important;
+        }
+
+        /* === Style Manager === */
+        .gjs-category-title, .gjs-layer-title, .gjs-sm-sector-title {
+            background-color: #111827 !important;
+            color: #e5e7eb !important;
+        }
+        .gjs-sm-sector .gjs-sm-sector-title {
+            border-bottom: 1px solid #1f2937 !important;
+        }
+        .gjs-field, .gjs-field input, .gjs-field select, .gjs-field textarea {
+            background-color: #1f2937 !important;
+            color: #e5e7eb !important;
+            border-color: #374151 !important;
+        }
         .gjs-pn-panel { background-color: #111827 !important; border-color: #1f2937 !important; }
         .gjs-sm-property { color: #9ca3af !important; }
+        .gjs-sm-property .gjs-sm-label { color: #d1d5db !important; }
+
+        /* === Color Picker Fix - Z-INDEX ALTO === */
+        .gjs-field-color-picker,
+        .sp-container,
+        .sp-container.sp-light {
+            z-index: 99999 !important;
+            position: absolute !important;
+        }
+        .sp-container {
+            background-color: #1f2937 !important;
+            border-color: #374151 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5) !important;
+        }
+        .sp-container .sp-input {
+            background: #111827 !important;
+            color: #e5e7eb !important;
+            border-color: #374151 !important;
+        }
+        .sp-container button {
+            background: #6366f1 !important;
+            color: white !important;
+            border: none !important;
+            border-radius: 4px !important;
+        }
+        .sp-container button:hover {
+            background: #4f46e5 !important;
+        }
+        .sp-replacer {
+            border-color: #374151 !important;
+            background: #1f2937 !important;
+            border-radius: 4px !important;
+        }
+        /* Forcar picker a abrir acima quando perto do fundo */
+        .sp-container.sp-hidden { display: none !important; }
+
+        /* === Trait Manager === */
+        .gjs-trt-trait {
+            background: transparent !important;
+            color: #d1d5db !important;
+        }
+        .gjs-trt-trait .gjs-label { color: #9ca3af !important; }
+
+        /* === Layers === */
+        .gjs-layer { background: #111827 !important; }
+        .gjs-layer:hover { background: #1f2937 !important; }
+        .gjs-layer-name { color: #d1d5db !important; }
+
+        /* === Scrollbar customizada === */
+        .gjs-blocks-c::-webkit-scrollbar,
+        #gjs-blocks-container::-webkit-scrollbar,
+        #gjs-styles-container::-webkit-scrollbar {
+            width: 4px;
+        }
+        .gjs-blocks-c::-webkit-scrollbar-track,
+        #gjs-blocks-container::-webkit-scrollbar-track,
+        #gjs-styles-container::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .gjs-blocks-c::-webkit-scrollbar-thumb,
+        #gjs-blocks-container::-webkit-scrollbar-thumb,
+        #gjs-styles-container::-webkit-scrollbar-thumb {
+            background: #374151;
+            border-radius: 2px;
+        }
     `;
     document.head.appendChild(style);
+}
+
+function injectCanvasStyles() {
+    // Injetar CSS dentro do iframe do canvas para mostrar bordas nos componentes
+    if (!editor) return;
+
+    const addFrameStyles = () => {
+        try {
+            const frame = editor.Canvas.getFrameEl();
+            if (!frame || !frame.contentDocument) return;
+            const doc = frame.contentDocument;
+
+            // Verifica se já injetou
+            if (doc.getElementById('gjs-canvas-helpers')) return;
+
+            const style = doc.createElement('style');
+            style.id = 'gjs-canvas-helpers';
+            style.textContent = `
+                /* Mostrar bordas tracejadas em todos os elementos de layout */
+                table[style], td[style], div[style] {
+                    outline: 1px dashed rgba(99, 102, 241, 0.2);
+                    outline-offset: -1px;
+                    transition: outline 0.15s ease;
+                }
+                /* Destacar ao passar mouse */
+                [data-gjs-type]:hover,
+                table[style]:hover,
+                td[style]:hover {
+                    outline: 2px dashed rgba(99, 102, 241, 0.5) !important;
+                    outline-offset: -1px;
+                }
+                /* Componente selecionado */
+                .gjs-selected,
+                [data-gjs-type].gjs-selected {
+                    outline: 2px solid #6366f1 !important;
+                    outline-offset: 0;
+                }
+                /* Background geral do body */
+                body {
+                    background: #f8fafc !important;
+                    padding: 20px !important;
+                }
+            `;
+            doc.head.appendChild(style);
+        } catch (e) {
+            // Frame pode não estar pronto ainda
+        }
+    };
+
+    // Tentar injetar imediatamente e apos carregamento do frame
+    setTimeout(addFrameStyles, 500);
+    setTimeout(addFrameStyles, 1500);
+    editor.on('canvas:frame:load', addFrameStyles);
 }
 
 async function loadExistingAssets() {
@@ -431,9 +655,7 @@ function applyAiResult() {
     if (!editor || !aiResult.value) return;
 
     if (aiType.value === 'full_template') {
-        // Limpar e substituir todo conteudo
         editor.setComponents('');
-        // Extrair body content
         const bodyMatch = aiResult.value.match(/<body[^>]*>([\s\S]*)<\/body>/i);
         const content = bodyMatch ? bodyMatch[1] : aiResult.value;
         editor.setComponents(content);
@@ -469,7 +691,6 @@ async function uploadImage(event) {
 
         if (resp.data?.data?.src && editor) {
             editor.AssetManager.add({ src: resp.data.data.src, name: resp.data.data.name });
-            // Inserir imagem no canvas
             editor.addComponents(`<img src="${resp.data.data.src}" style="max-width:100%;height:auto;" />`);
         }
     } catch (e) {
