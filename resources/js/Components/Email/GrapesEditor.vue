@@ -350,15 +350,17 @@ function applyDarkTheme() {
             background-color: #111827;
             border: 1px solid #374151;
             border-radius: 10px;
-            padding: 10px 8px 8px;
-            min-height: 70px;
+            padding: 12px 8px 10px;
+            min-height: 76px;
+            width: 100% !important;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 4px;
+            gap: 6px;
             transition: all 0.2s ease;
             cursor: grab;
+            box-sizing: border-box;
         }
         .gjs-block:hover {
             border-color: #6366f1;
@@ -378,7 +380,7 @@ function applyDarkTheme() {
             display: flex !important;
             align-items: center;
             justify-content: center;
-            margin-bottom: 2px;
+            margin-bottom: 0;
         }
         .gjs-block-label {
             font-size: 10px !important;
@@ -391,30 +393,35 @@ function applyDarkTheme() {
             color: #e0e7ff;
         }
 
-        /* === Bloco Grid (2 por linha) === */
+        /* === Bloco Grid (2 por linha) com espaçamento adequado === */
         .gjs-blocks-c {
             display: grid !important;
             grid-template-columns: repeat(2, 1fr) !important;
-            gap: 8px !important;
-            padding: 4px !important;
+            gap: 10px !important;
+            padding: 8px !important;
         }
 
         /* === Categorias === */
         .gjs-block-category {
-            border-bottom: 1px solid #1f2937 !important;
+            border-bottom: none !important;
+            margin-bottom: 4px !important;
+        }
+        .gjs-block-category .gjs-blocks-c {
+            padding: 6px 8px 10px !important;
         }
         .gjs-title {
-            background-color: #111827 !important;
+            background-color: #0f172a !important;
             color: #d1d5db !important;
-            border-bottom: 1px solid #1f2937 !important;
-            padding: 8px 12px !important;
-            font-size: 11px !important;
-            font-weight: 600 !important;
+            border-bottom: none !important;
+            border-top: 1px solid #1e293b !important;
+            padding: 10px 14px !important;
+            font-size: 10px !important;
+            font-weight: 700 !important;
             text-transform: uppercase !important;
-            letter-spacing: 0.05em !important;
+            letter-spacing: 0.08em !important;
         }
         .gjs-title:hover {
-            background-color: #1f2937 !important;
+            background-color: #1e293b !important;
         }
 
         /* === Style Manager === */
@@ -518,29 +525,27 @@ function injectCanvasStyles() {
             const style = doc.createElement('style');
             style.id = 'gjs-canvas-helpers';
             style.textContent = `
-                /* Mostrar bordas tracejadas em todos os elementos de layout */
-                table[style], td[style], div[style] {
-                    outline: 1px dashed rgba(99, 102, 241, 0.2);
+                /* Bordas visuais nos elementos de layout — SEM !important para nao sobrescrever estilos do usuario */
+                [data-gjs-type] {
+                    outline: 1px dashed rgba(99, 102, 241, 0.15);
                     outline-offset: -1px;
                     transition: outline 0.15s ease;
                 }
                 /* Destacar ao passar mouse */
-                [data-gjs-type]:hover,
-                table[style]:hover,
-                td[style]:hover {
-                    outline: 2px dashed rgba(99, 102, 241, 0.5) !important;
+                [data-gjs-type]:hover {
+                    outline: 2px dashed rgba(99, 102, 241, 0.45);
                     outline-offset: -1px;
                 }
                 /* Componente selecionado */
-                .gjs-selected,
                 [data-gjs-type].gjs-selected {
                     outline: 2px solid #6366f1 !important;
                     outline-offset: 0;
                 }
-                /* Background geral do body */
+                /* Body do canvas — cor base clara SEM !important para permitir mudancas */
                 body {
-                    background: #f8fafc !important;
-                    padding: 20px !important;
+                    background: #f8fafc;
+                    padding: 20px;
+                    min-height: 100vh;
                 }
             `;
             doc.head.appendChild(style);
