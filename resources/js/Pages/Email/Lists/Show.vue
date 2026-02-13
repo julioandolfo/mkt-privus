@@ -1,7 +1,8 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { useForm, router, usePage } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import axios from 'axios';
 
 const props = defineProps({ list: Object, contacts: Object, sources: Array, wcConnections: Array });
 const flash = usePage().props.flash || {};
@@ -19,8 +20,107 @@ const sourceForm = useForm({
     analytics_connection_id: '',
     min_orders: 0,
     host: '', port: 3306, database: '', table: '', email_column: 'email', username: 'root', password: '', where_clause: '',
+    name_columns: { first_name: '', last_name: '', phone: '', company: '' },
     spreadsheet_id: '', sheet_name: 'Sheet1',
 });
+
+// ===== MySQL dinâmico =====
+const mysqlStep = ref(1); // 1=conexao, 2=tabela, 3=colunas+mapeamento
+const mysqlConnecting = ref(false);
+const mysqlConnected = ref(false);
+const mysqlError = ref('');
+const mysqlTables = ref([]);
+const mysqlLoadingColumns = ref(false);
+const mysqlColumns = ref([]);
+const mysqlTotalRows = ref(0);
+const mysqlSample = ref([]);
+const mysqlSuggestions = ref({});
+const mysqlShowSample = ref(false);
+const mysqlTableSearch = ref('');
+
+const filteredMysqlTables = computed(() => {
+    if (!mysqlTableSearch.value) return mysqlTables.value;
+    const q = mysqlTableSearch.value.toLowerCase();
+    return mysqlTables.value.filter(t => t.toLowerCase().includes(q));
+});
+
+function resetMysqlState() {
+    mysqlStep.value = 1;
+    mysqlConnecting.value = false;
+    mysqlConnected.value = false;
+    mysqlError.value = '';
+    mysqlTables.value = [];
+    mysqlLoadingColumns.value = false;
+    mysqlColumns.value = [];
+    mysqlTotalRows.value = 0;
+    mysqlSample.value = [];
+    mysqlSuggestions.value = {};
+    mysqlShowSample.value = false;
+    mysqlTableSearch.value = '';
+    sourceForm.table = '';
+    sourceForm.email_column = '';
+    sourceForm.name_columns = { first_name: '', last_name: '', phone: '', company: '' };
+    sourceForm.where_clause = '';
+}
+
+async function mysqlConnect() {
+    mysqlConnecting.value = true;
+    mysqlError.value = '';
+    try {
+        const res = await axios.post(route('email.lists.mysql-tables'), {
+            host: sourceForm.host,
+            port: sourceForm.port,
+            database: sourceForm.database,
+            username: sourceForm.username,
+            password: sourceForm.password,
+        });
+        if (res.data.success) {
+            mysqlTables.value = res.data.tables;
+            mysqlConnected.value = true;
+            mysqlStep.value = 2;
+        }
+    } catch (err) {
+        mysqlError.value = err.response?.data?.error || 'Falha ao conectar no banco de dados.';
+    } finally {
+        mysqlConnecting.value = false;
+    }
+}
+
+async function mysqlSelectTable(tableName) {
+    sourceForm.table = tableName;
+    mysqlLoadingColumns.value = true;
+    mysqlError.value = '';
+    try {
+        const res = await axios.post(route('email.lists.mysql-columns'), {
+            host: sourceForm.host,
+            port: sourceForm.port,
+            database: sourceForm.database,
+            username: sourceForm.username,
+            password: sourceForm.password,
+            table: tableName,
+        });
+        if (res.data.success) {
+            mysqlColumns.value = res.data.columns;
+            mysqlTotalRows.value = res.data.total_rows;
+            mysqlSample.value = res.data.sample;
+            mysqlSuggestions.value = res.data.suggestions || {};
+            // Auto-aplicar sugestões
+            if (mysqlSuggestions.value.email) sourceForm.email_column = mysqlSuggestions.value.email;
+            if (mysqlSuggestions.value.first_name) sourceForm.name_columns.first_name = mysqlSuggestions.value.first_name;
+            if (mysqlSuggestions.value.last_name) sourceForm.name_columns.last_name = mysqlSuggestions.value.last_name;
+            if (mysqlSuggestions.value.phone) sourceForm.name_columns.phone = mysqlSuggestions.value.phone;
+            if (mysqlSuggestions.value.company) sourceForm.name_columns.company = mysqlSuggestions.value.company;
+            mysqlStep.value = 3;
+        }
+    } catch (err) {
+        mysqlError.value = err.response?.data?.error || 'Falha ao ler colunas da tabela.';
+    } finally {
+        mysqlLoadingColumns.value = false;
+    }
+}
+
+// Reset MySQL ao trocar tipo de fonte
+watch(() => sourceForm.type, () => { resetMysqlState(); });
 
 function addContact() {
     contactForm.post(route('email.lists.add-contact', props.list.id), {
@@ -42,8 +142,13 @@ function submitImport() {
 
 function addSource() {
     sourceForm.post(route('email.lists.add-source', props.list.id), {
-        onSuccess: () => { showAddSource.value = false; sourceForm.reset(); },
+        onSuccess: () => { showAddSource.value = false; sourceForm.reset(); resetMysqlState(); },
     });
+}
+
+function openAddSource() {
+    showAddSource.value = true;
+    resetMysqlState();
 }
 
 function syncSource(sourceId) {
@@ -58,6 +163,16 @@ function removeSource(sourceId) {
 
 const statusColors = { active: 'text-green-400', unsubscribed: 'text-red-400', bounced: 'text-orange-400', complained: 'text-red-500' };
 const sourceLabels = { woocommerce: 'WooCommerce', mysql: 'MySQL Externo', google_sheets: 'Google Sheets', csv: 'Arquivo CSV' };
+
+function columnTypeIcon(dataType) {
+    const textTypes = ['varchar', 'char', 'text', 'tinytext', 'mediumtext', 'longtext', 'enum', 'set'];
+    const numTypes = ['int', 'bigint', 'smallint', 'tinyint', 'mediumint', 'decimal', 'float', 'double'];
+    const dateTypes = ['date', 'datetime', 'timestamp', 'time', 'year'];
+    if (textTypes.includes(dataType)) return '🔤';
+    if (numTypes.includes(dataType)) return '🔢';
+    if (dateTypes.includes(dataType)) return '📅';
+    return '📎';
+}
 </script>
 
 <template>
@@ -70,7 +185,7 @@ const sourceLabels = { woocommerce: 'WooCommerce', mysql: 'MySQL Externo', googl
                 </div>
                 <div class="flex items-center gap-2">
                     <button @click="showImport = true" class="px-3 py-2 bg-gray-800 text-gray-300 rounded-lg text-sm hover:bg-gray-700">Importar CSV</button>
-                    <button @click="showAddSource = true" class="px-3 py-2 bg-gray-800 text-gray-300 rounded-lg text-sm hover:bg-gray-700">+ Fonte Externa</button>
+                    <button @click="openAddSource()" class="px-3 py-2 bg-gray-800 text-gray-300 rounded-lg text-sm hover:bg-gray-700">+ Fonte Externa</button>
                     <button @click="showAddContact = true" class="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-500">+ Contato</button>
                 </div>
             </div>
@@ -183,58 +298,234 @@ const sourceLabels = { woocommerce: 'WooCommerce', mysql: 'MySQL Externo', googl
 
         <!-- Modal: Add Source -->
         <Teleport to="body">
-            <div v-if="showAddSource" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-                <div class="bg-gray-900 rounded-2xl border border-gray-800 w-full max-w-lg max-h-[85vh] overflow-y-auto p-6">
+            <div v-if="showAddSource" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="showAddSource = false">
+                <div class="bg-gray-900 rounded-2xl border border-gray-800 w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
                     <h2 class="text-lg font-bold text-white mb-4">Adicionar Fonte Externa</h2>
                     <form @submit.prevent="addSource" class="space-y-4">
-                        <div>
-                            <label class="text-sm text-gray-400">Tipo de Fonte</label>
-                            <select v-model="sourceForm.type" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
-                                <option value="woocommerce">WooCommerce</option>
-                                <option value="mysql">MySQL Externo</option>
-                                <option value="google_sheets">Google Sheets</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="text-sm text-gray-400">Frequência de Sincronização</label>
-                            <select v-model="sourceForm.sync_frequency" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
-                                <option value="manual">Manual</option>
-                                <option value="daily">Diária</option>
-                                <option value="weekly">Semanal</option>
-                                <option value="monthly">Mensal</option>
-                            </select>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-sm text-gray-400">Tipo de Fonte</label>
+                                <select v-model="sourceForm.type" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                                    <option value="woocommerce">WooCommerce</option>
+                                    <option value="mysql">MySQL Externo</option>
+                                    <option value="google_sheets">Google Sheets</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-sm text-gray-400">Frequencia de Sincronizacao</label>
+                                <select v-model="sourceForm.sync_frequency" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                                    <option value="manual">Manual</option>
+                                    <option value="daily">Diaria</option>
+                                    <option value="weekly">Semanal</option>
+                                    <option value="monthly">Mensal</option>
+                                </select>
+                            </div>
                         </div>
 
                         <!-- WooCommerce -->
                         <template v-if="sourceForm.type === 'woocommerce'">
                             <div>
-                                <label class="text-sm text-gray-400">Conexão WooCommerce</label>
+                                <label class="text-sm text-gray-400">Conexao WooCommerce</label>
                                 <select v-model="sourceForm.analytics_connection_id" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
                                     <option value="">Selecione...</option>
                                     <option v-for="c in wcConnections" :key="c.id" :value="c.id">{{ c.name }}</option>
                                 </select>
                             </div>
                             <div>
-                                <label class="text-sm text-gray-400">Mínimo de Pedidos</label>
+                                <label class="text-sm text-gray-400">Minimo de Pedidos</label>
                                 <input v-model.number="sourceForm.min_orders" type="number" min="0" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
                             </div>
                         </template>
 
-                        <!-- MySQL -->
+                        <!-- ===== MySQL Dinâmico ===== -->
                         <template v-if="sourceForm.type === 'mysql'">
-                            <div class="grid grid-cols-2 gap-3">
-                                <div><label class="text-sm text-gray-400">Host</label><input v-model="sourceForm.host" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" /></div>
-                                <div><label class="text-sm text-gray-400">Porta</label><input v-model.number="sourceForm.port" type="number" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" /></div>
+                            <!-- Step Indicator -->
+                            <div class="flex items-center gap-2 mb-2">
+                                <div v-for="s in 3" :key="s" :class="['flex items-center gap-1.5', s <= mysqlStep ? 'text-indigo-400' : 'text-gray-600']">
+                                    <span :class="['w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border', s < mysqlStep ? 'bg-indigo-600 border-indigo-500 text-white' : s === mysqlStep ? 'border-indigo-500 text-indigo-400' : 'border-gray-700 text-gray-600']">{{ s }}</span>
+                                    <span class="text-xs font-medium">{{ s === 1 ? 'Conexao' : s === 2 ? 'Tabela' : 'Colunas' }}</span>
+                                    <span v-if="s < 3" class="w-6 h-px" :class="s < mysqlStep ? 'bg-indigo-500' : 'bg-gray-700'"></span>
+                                </div>
                             </div>
-                            <div class="grid grid-cols-2 gap-3">
-                                <div><label class="text-sm text-gray-400">Database</label><input v-model="sourceForm.database" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" /></div>
-                                <div><label class="text-sm text-gray-400">Tabela</label><input v-model="sourceForm.table" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" /></div>
+
+                            <!-- Step 1: Credenciais de conexão -->
+                            <div v-if="mysqlStep >= 1" :class="mysqlStep > 1 ? 'opacity-60 pointer-events-none' : ''">
+                                <div class="bg-gray-800/50 rounded-xl p-4 space-y-3 border border-gray-700/50">
+                                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">Credenciais do Banco</p>
+                                    <div class="grid grid-cols-3 gap-3">
+                                        <div class="col-span-2">
+                                            <label class="text-xs text-gray-500">Host</label>
+                                            <input v-model="sourceForm.host" placeholder="ex: 192.168.1.100" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                        </div>
+                                        <div>
+                                            <label class="text-xs text-gray-500">Porta</label>
+                                            <input v-model.number="sourceForm.port" type="number" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-gray-500">Database</label>
+                                        <input v-model="sourceForm.database" placeholder="nome_do_banco" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="text-xs text-gray-500">Usuario</label>
+                                            <input v-model="sourceForm.username" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                        </div>
+                                        <div>
+                                            <label class="text-xs text-gray-500">Senha</label>
+                                            <input v-model="sourceForm.password" type="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3 mt-3" v-if="mysqlStep === 1">
+                                    <button type="button" @click="mysqlConnect" :disabled="mysqlConnecting || !sourceForm.host || !sourceForm.database || !sourceForm.username"
+                                        class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-500 transition disabled:opacity-50 flex items-center gap-2">
+                                        <svg v-if="mysqlConnecting" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                        {{ mysqlConnecting ? 'Conectando...' : 'Conectar e Listar Tabelas' }}
+                                    </button>
+                                </div>
                             </div>
-                            <div class="grid grid-cols-2 gap-3">
-                                <div><label class="text-sm text-gray-400">Coluna de Email</label><input v-model="sourceForm.email_column" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" /></div>
-                                <div><label class="text-sm text-gray-400">Usuário DB</label><input v-model="sourceForm.username" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" /></div>
+
+                            <!-- Conectado badge -->
+                            <div v-if="mysqlStep > 1" class="flex items-center justify-between">
+                                <div class="flex items-center gap-2 text-sm text-emerald-400">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                    Conectado a <span class="font-mono text-emerald-300">{{ sourceForm.database }}</span> ({{ mysqlTables.length }} tabelas)
+                                </div>
+                                <button type="button" @click="resetMysqlState()" class="text-xs text-gray-500 hover:text-white">Reconectar</button>
                             </div>
-                            <div><label class="text-sm text-gray-400">Senha DB</label><input v-model="sourceForm.password" type="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" /></div>
+
+                            <!-- Step 2: Selecionar tabela -->
+                            <div v-if="mysqlStep >= 2">
+                                <div class="bg-gray-800/50 rounded-xl border border-gray-700/50 p-4">
+                                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Selecione uma Tabela</p>
+                                    <div class="relative">
+                                        <input v-model="mysqlTableSearch" placeholder="Buscar tabela..." class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm mb-2" />
+                                    </div>
+                                    <div class="max-h-48 overflow-y-auto space-y-1 custom-scrollbar">
+                                        <button v-for="t in filteredMysqlTables" :key="t" type="button" @click="mysqlSelectTable(t)"
+                                            :class="['w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center justify-between group',
+                                                sourceForm.table === t ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' : 'text-gray-300 hover:bg-gray-700/50']">
+                                            <span class="flex items-center gap-2">
+                                                <svg class="w-4 h-4 text-gray-500 group-hover:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 0v1.5c0 .621-.504 1.125-1.125 1.125" /></svg>
+                                                <span class="font-mono">{{ t }}</span>
+                                            </span>
+                                            <svg v-if="sourceForm.table === t" class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                                        </button>
+                                    </div>
+                                    <div v-if="mysqlLoadingColumns" class="flex items-center gap-2 mt-3 text-xs text-gray-400">
+                                        <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                        Carregando colunas...
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Step 3: Mapeamento de colunas -->
+                            <div v-if="mysqlStep === 3 && mysqlColumns.length">
+                                <div class="bg-gray-800/50 rounded-xl border border-gray-700/50 p-4 space-y-4">
+                                    <div class="flex items-center justify-between">
+                                        <div>
+                                            <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">Mapeamento de Colunas</p>
+                                            <p class="text-xs text-gray-500 mt-0.5">Tabela <span class="font-mono text-indigo-400">{{ sourceForm.table }}</span> · {{ mysqlTotalRows.toLocaleString('pt-BR') }} registros · {{ mysqlColumns.length }} colunas</p>
+                                        </div>
+                                        <button type="button" @click="mysqlShowSample = !mysqlShowSample" class="text-xs text-indigo-400 hover:text-indigo-300 transition">
+                                            {{ mysqlShowSample ? 'Esconder amostra' : 'Ver amostra' }}
+                                        </button>
+                                    </div>
+
+                                    <!-- Amostra de dados -->
+                                    <div v-if="mysqlShowSample && mysqlSample.length" class="overflow-x-auto">
+                                        <table class="w-full text-xs">
+                                            <thead><tr class="text-gray-500 border-b border-gray-700">
+                                                <th v-for="col in mysqlColumns.slice(0, 8)" :key="col.COLUMN_NAME" class="text-left py-1.5 px-2 font-medium whitespace-nowrap">{{ col.COLUMN_NAME }}</th>
+                                            </tr></thead>
+                                            <tbody>
+                                                <tr v-for="(row, i) in mysqlSample" :key="i" class="border-b border-gray-800/50">
+                                                    <td v-for="col in mysqlColumns.slice(0, 8)" :key="col.COLUMN_NAME" class="py-1.5 px-2 text-gray-400 truncate max-w-[150px]">{{ row[col.COLUMN_NAME] ?? '-' }}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                        <p v-if="mysqlColumns.length > 8" class="text-[10px] text-gray-600 mt-1">Mostrando 8 de {{ mysqlColumns.length }} colunas</p>
+                                    </div>
+
+                                    <!-- Mapeamento -->
+                                    <div class="space-y-3">
+                                        <p class="text-xs text-gray-500">Selecione qual coluna corresponde a cada campo. A IA pre-selecionou colunas provaveis.</p>
+                                        <div class="grid grid-cols-1 gap-2.5">
+                                            <!-- Email (obrigatório) -->
+                                            <div class="flex items-center gap-3 bg-gray-800/80 rounded-lg px-3 py-2.5 border border-gray-700/50">
+                                                <span class="text-xs font-medium text-red-400 w-24 shrink-0">Email *</span>
+                                                <select v-model="sourceForm.email_column" class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-white text-sm">
+                                                    <option value="">-- Selecione --</option>
+                                                    <option v-for="col in mysqlColumns" :key="col.COLUMN_NAME" :value="col.COLUMN_NAME">
+                                                        {{ columnTypeIcon(col.DATA_TYPE) }} {{ col.COLUMN_NAME }} ({{ col.COLUMN_TYPE }})
+                                                    </option>
+                                                </select>
+                                                <span v-if="mysqlSuggestions.email === sourceForm.email_column && sourceForm.email_column" class="text-[10px] text-emerald-400 shrink-0">auto</span>
+                                            </div>
+
+                                            <!-- Nome -->
+                                            <div class="flex items-center gap-3 bg-gray-800/80 rounded-lg px-3 py-2.5 border border-gray-700/50">
+                                                <span class="text-xs font-medium text-gray-400 w-24 shrink-0">Nome</span>
+                                                <select v-model="sourceForm.name_columns.first_name" class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-white text-sm">
+                                                    <option value="">-- Nenhum --</option>
+                                                    <option v-for="col in mysqlColumns" :key="col.COLUMN_NAME" :value="col.COLUMN_NAME">
+                                                        {{ columnTypeIcon(col.DATA_TYPE) }} {{ col.COLUMN_NAME }} ({{ col.COLUMN_TYPE }})
+                                                    </option>
+                                                </select>
+                                                <span v-if="mysqlSuggestions.first_name === sourceForm.name_columns.first_name && sourceForm.name_columns.first_name" class="text-[10px] text-emerald-400 shrink-0">auto</span>
+                                            </div>
+
+                                            <!-- Sobrenome -->
+                                            <div class="flex items-center gap-3 bg-gray-800/80 rounded-lg px-3 py-2.5 border border-gray-700/50">
+                                                <span class="text-xs font-medium text-gray-400 w-24 shrink-0">Sobrenome</span>
+                                                <select v-model="sourceForm.name_columns.last_name" class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-white text-sm">
+                                                    <option value="">-- Nenhum --</option>
+                                                    <option v-for="col in mysqlColumns" :key="col.COLUMN_NAME" :value="col.COLUMN_NAME">
+                                                        {{ columnTypeIcon(col.DATA_TYPE) }} {{ col.COLUMN_NAME }} ({{ col.COLUMN_TYPE }})
+                                                    </option>
+                                                </select>
+                                                <span v-if="mysqlSuggestions.last_name === sourceForm.name_columns.last_name && sourceForm.name_columns.last_name" class="text-[10px] text-emerald-400 shrink-0">auto</span>
+                                            </div>
+
+                                            <!-- Telefone -->
+                                            <div class="flex items-center gap-3 bg-gray-800/80 rounded-lg px-3 py-2.5 border border-gray-700/50">
+                                                <span class="text-xs font-medium text-gray-400 w-24 shrink-0">Telefone</span>
+                                                <select v-model="sourceForm.name_columns.phone" class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-white text-sm">
+                                                    <option value="">-- Nenhum --</option>
+                                                    <option v-for="col in mysqlColumns" :key="col.COLUMN_NAME" :value="col.COLUMN_NAME">
+                                                        {{ columnTypeIcon(col.DATA_TYPE) }} {{ col.COLUMN_NAME }} ({{ col.COLUMN_TYPE }})
+                                                    </option>
+                                                </select>
+                                                <span v-if="mysqlSuggestions.phone === sourceForm.name_columns.phone && sourceForm.name_columns.phone" class="text-[10px] text-emerald-400 shrink-0">auto</span>
+                                            </div>
+
+                                            <!-- Empresa -->
+                                            <div class="flex items-center gap-3 bg-gray-800/80 rounded-lg px-3 py-2.5 border border-gray-700/50">
+                                                <span class="text-xs font-medium text-gray-400 w-24 shrink-0">Empresa</span>
+                                                <select v-model="sourceForm.name_columns.company" class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-white text-sm">
+                                                    <option value="">-- Nenhum --</option>
+                                                    <option v-for="col in mysqlColumns" :key="col.COLUMN_NAME" :value="col.COLUMN_NAME">
+                                                        {{ columnTypeIcon(col.DATA_TYPE) }} {{ col.COLUMN_NAME }} ({{ col.COLUMN_TYPE }})
+                                                    </option>
+                                                </select>
+                                                <span v-if="mysqlSuggestions.company === sourceForm.name_columns.company && sourceForm.name_columns.company" class="text-[10px] text-emerald-400 shrink-0">auto</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Filtro WHERE opcional -->
+                                    <div>
+                                        <label class="text-xs text-gray-500">Filtro WHERE (opcional)</label>
+                                        <input v-model="sourceForm.where_clause" placeholder="ex: status = 'active' AND created_at > '2025-01-01'" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm font-mono text-xs" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Erro MySQL -->
+                            <div v-if="mysqlError" class="px-4 py-3 rounded-lg bg-red-900/30 border border-red-700/50 text-red-300 text-sm">
+                                {{ mysqlError }}
+                            </div>
                         </template>
 
                         <!-- Google Sheets -->
@@ -251,7 +542,11 @@ const sourceLabels = { woocommerce: 'WooCommerce', mysql: 'MySQL Externo', googl
 
                         <div class="flex justify-end gap-3 pt-4 border-t border-gray-800">
                             <button type="button" @click="showAddSource = false" class="text-sm text-gray-400 hover:text-white">Cancelar</button>
-                            <button type="submit" :disabled="sourceForm.processing" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50">Adicionar Fonte</button>
+                            <button v-if="sourceForm.type !== 'mysql' || mysqlStep === 3" type="submit"
+                                :disabled="sourceForm.processing || (sourceForm.type === 'mysql' && !sourceForm.email_column)"
+                                class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-indigo-500 transition">
+                                {{ sourceForm.processing ? 'Salvando...' : 'Adicionar Fonte' }}
+                            </button>
                         </div>
                     </form>
                 </div>

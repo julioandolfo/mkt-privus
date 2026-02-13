@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 
 interface SocialAccountData {
     id: number;
@@ -158,11 +158,11 @@ const props = defineProps<{
 
 const chartMetric = ref<'followers' | 'engagement' | 'reach' | 'impressions'>('followers');
 
-// Brand filter
+// Brand filter - sincroniza com props do server
 const activeBrandFilter = ref(props.brandFilter || 'all');
+watch(() => props.brandFilter, (v) => { if (v !== undefined) activeBrandFilter.value = v || 'all'; });
 
 function changeBrand(brandId: string) {
-    activeBrandFilter.value = brandId;
     const params: Record<string, string> = { brand: brandId, period: activePeriod.value };
     if (activePeriod.value === 'custom' && customStart.value && customEnd.value) {
         params.start = customStart.value;
@@ -171,14 +171,20 @@ function changeBrand(brandId: string) {
     router.get(route('dashboard'), params, {
         preserveState: true,
         preserveScroll: true,
+        onSuccess: () => { activeBrandFilter.value = brandId; },
     });
 }
 
-// Period filter
+// Period filter - sincroniza com props do server
 const activePeriod = ref(props.period || 'this_month');
 const showCustomPicker = ref(false);
 const customStart = ref(props.periodStart || '');
 const customEnd = ref(props.periodEnd || '');
+
+// Manter refs sincronizados quando o server retorna novos dados
+watch(() => props.period, (v) => { if (v) activePeriod.value = v; });
+watch(() => props.periodStart, (v) => { if (v) customStart.value = v; });
+watch(() => props.periodEnd, (v) => { if (v) customEnd.value = v; });
 const loadingPeriod = ref(false);
 
 const periodFilters = [
@@ -198,23 +204,24 @@ function changePeriod(period: string) {
         return;
     }
     showCustomPicker.value = false;
-    activePeriod.value = period;
     loadingPeriod.value = true;
     router.get(route('dashboard'), { period, brand: activeBrandFilter.value }, {
         preserveState: true,
         preserveScroll: true,
+        onSuccess: () => { activePeriod.value = period; },
+        onError: () => { /* manter periodo anterior se requisicao falhar */ },
         onFinish: () => { loadingPeriod.value = false; },
     });
 }
 
 function applyCustomPeriod() {
     if (!customStart.value || !customEnd.value) return;
-    activePeriod.value = 'custom';
     showCustomPicker.value = false;
     loadingPeriod.value = true;
     router.get(route('dashboard'), { period: 'custom', start: customStart.value, end: customEnd.value, brand: activeBrandFilter.value }, {
         preserveState: true,
         preserveScroll: true,
+        onSuccess: () => { activePeriod.value = 'custom'; },
         onFinish: () => { loadingPeriod.value = false; },
     });
 }

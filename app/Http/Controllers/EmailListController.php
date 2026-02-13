@@ -249,6 +249,7 @@ class EmailListController extends Controller
             'password' => 'nullable|string',
             'where_clause' => 'nullable|string',
             'name_columns' => 'nullable|array',
+            'name_columns.*' => 'nullable|string|max:255',
             // Google Sheets
             'spreadsheet_id' => 'nullable|string',
             'sheet_name' => 'nullable|string',
@@ -261,17 +262,17 @@ class EmailListController extends Controller
                     'min_orders' => $validated['min_orders'] ?? 0,
                 ],
             ],
-            'mysql' => array_filter([
+            'mysql' => [
                 'host' => $validated['host'],
                 'port' => $validated['port'] ?? 3306,
                 'database' => $validated['database'],
                 'table' => $validated['table'],
                 'email_column' => $validated['email_column'],
                 'username' => $validated['username'],
-                'password' => $validated['password'],
+                'password' => $validated['password'] ?? '',
                 'where_clause' => $validated['where_clause'] ?? null,
-                'name_columns' => $validated['name_columns'] ?? [],
-            ]),
+                'name_columns' => array_filter($validated['name_columns'] ?? []),
+            ],
             'google_sheets' => [
                 'spreadsheet_id' => $validated['spreadsheet_id'],
                 'sheet_name' => $validated['sheet_name'] ?? 'Sheet1',
@@ -306,6 +307,188 @@ class EmailListController extends Controller
     {
         $source->delete();
         return back()->with('success', 'Fonte removida.');
+    }
+
+    /**
+     * Testa conexão MySQL e retorna lista de tabelas
+     */
+    public function mysqlTables(Request $request)
+    {
+        $request->validate([
+            'host' => 'required|string',
+            'port' => 'nullable|integer',
+            'database' => 'required|string',
+            'username' => 'required|string',
+            'password' => 'nullable|string',
+        ]);
+
+        try {
+            $dsn = sprintf(
+                'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
+                $request->host,
+                $request->port ?: 3306,
+                $request->database
+            );
+
+            $pdo = new \PDO($dsn, $request->username, $request->password ?? '', [
+                \PDO::ATTR_TIMEOUT => 5,
+                \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+            ]);
+
+            $stmt = $pdo->query('SHOW TABLES');
+            $tables = $stmt->fetchAll(\PDO::FETCH_COLUMN, 0);
+
+            return response()->json([
+                'success' => true,
+                'tables' => $tables,
+            ]);
+        } catch (\PDOException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Falha na conexão: ' . $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    /**
+     * Retorna colunas de uma tabela MySQL e amostra de dados
+     */
+    public function mysqlColumns(Request $request)
+    {
+        $request->validate([
+            'host' => 'required|string',
+            'port' => 'nullable|integer',
+            'database' => 'required|string',
+            'username' => 'required|string',
+            'password' => 'nullable|string',
+            'table' => 'required|string',
+        ]);
+
+        try {
+            $dsn = sprintf(
+                'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
+                $request->host,
+                $request->port ?: 3306,
+                $request->database
+            );
+
+            $pdo = new \PDO($dsn, $request->username, $request->password ?? '', [
+                \PDO::ATTR_TIMEOUT => 5,
+                \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+            ]);
+
+            // Buscar colunas com tipos
+            $table = $request->table;
+            $stmt = $pdo->prepare('SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                ORDER BY ORDINAL_POSITION');
+            $stmt->execute([$request->database, $table]);
+            $columns = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            // Contar registros
+            $countStmt = $pdo->query("SELECT COUNT(*) FROM `{$table}`");
+            $totalRows = (int) $countStmt->fetchColumn();
+
+            // Amostra das primeiras 5 linhas
+            $sampleStmt = $pdo->query("SELECT * FROM `{$table}` LIMIT 5");
+            $sample = $sampleStmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            // Auto-detectar colunas prováveis
+            $suggestions = $this->autoDetectColumnMapping($columns);
+
+            return response()->json([
+                'success' => true,
+                'columns' => $columns,
+                'total_rows' => $totalRows,
+                'sample' => $sample,
+                'suggestions' => $suggestions,
+            ]);
+        } catch (\PDOException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Erro ao ler tabela: ' . $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    /**
+     * Auto-detecta mapeamento provável de colunas
+     */
+    private function autoDetectColumnMapping(array $columns): array
+    {
+        $mapping = [
+            'email' => null,
+            'first_name' => null,
+            'last_name' => null,
+            'phone' => null,
+            'company' => null,
+        ];
+
+        $columnNames = array_map(fn($c) => strtolower($c['COLUMN_NAME']), $columns);
+
+        // Email
+        $emailPatterns = ['email', 'e_mail', 'email_address', 'user_email', 'mail', 'correio'];
+        foreach ($emailPatterns as $pattern) {
+            if (($idx = array_search($pattern, $columnNames)) !== false) {
+                $mapping['email'] = $columns[$idx]['COLUMN_NAME'];
+                break;
+            }
+        }
+        if (!$mapping['email']) {
+            foreach ($columnNames as $i => $name) {
+                if (str_contains($name, 'email') || str_contains($name, 'mail')) {
+                    $mapping['email'] = $columns[$i]['COLUMN_NAME'];
+                    break;
+                }
+            }
+        }
+
+        // First name
+        $firstNamePatterns = ['first_name', 'firstname', 'nome', 'name', 'primeiro_nome', 'given_name'];
+        foreach ($firstNamePatterns as $pattern) {
+            if (($idx = array_search($pattern, $columnNames)) !== false) {
+                $mapping['first_name'] = $columns[$idx]['COLUMN_NAME'];
+                break;
+            }
+        }
+
+        // Last name
+        $lastNamePatterns = ['last_name', 'lastname', 'sobrenome', 'surname', 'family_name', 'ultimo_nome'];
+        foreach ($lastNamePatterns as $pattern) {
+            if (($idx = array_search($pattern, $columnNames)) !== false) {
+                $mapping['last_name'] = $columns[$idx]['COLUMN_NAME'];
+                break;
+            }
+        }
+
+        // Phone
+        $phonePatterns = ['phone', 'telefone', 'celular', 'mobile', 'phone_number', 'tel', 'whatsapp', 'fone'];
+        foreach ($phonePatterns as $pattern) {
+            if (($idx = array_search($pattern, $columnNames)) !== false) {
+                $mapping['phone'] = $columns[$idx]['COLUMN_NAME'];
+                break;
+            }
+        }
+        if (!$mapping['phone']) {
+            foreach ($columnNames as $i => $name) {
+                if (str_contains($name, 'phone') || str_contains($name, 'tel') || str_contains($name, 'celular')) {
+                    $mapping['phone'] = $columns[$i]['COLUMN_NAME'];
+                    break;
+                }
+            }
+        }
+
+        // Company
+        $companyPatterns = ['company', 'empresa', 'company_name', 'razao_social', 'organization', 'org'];
+        foreach ($companyPatterns as $pattern) {
+            if (($idx = array_search($pattern, $columnNames)) !== false) {
+                $mapping['company'] = $columns[$idx]['COLUMN_NAME'];
+                break;
+            }
+        }
+
+        return $mapping;
     }
 
     private function getSourceConfigSummary(EmailListSource $source): array

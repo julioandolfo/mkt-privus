@@ -402,16 +402,26 @@ class DashboardController extends Controller
 
         // ===== EMAIL MARKETING RESUMO =====
         $emailSummary = null;
-        {
+        try {
+            // Verifica se as tabelas existem antes de consultar
+            if (!\Illuminate\Support\Facades\Schema::hasTable('email_providers')) {
+                throw new \RuntimeException('Email tables not migrated');
+            }
+
             $hasProviders = EmailProvider::when($brandId, fn($q) => $q->where('brand_id', $brandId))->exists();
             $hasCampaigns = EmailCampaign::when($brandId, fn($q) => $q->where('brand_id', $brandId))->exists();
             $hasContacts = EmailContact::when($brandId, fn($q) => $q->where('brand_id', $brandId))->exists();
 
             if ($hasProviders || $hasCampaigns || $hasContacts) {
-                // Campanhas no periodo
+                // Campanhas no periodo (usar copias de datas para seguranca)
+                $pStart = $periodStart->copy();
+                $pEnd = $periodEnd->copy();
+                $prStart = $prevStart->copy();
+                $prEnd = $prevEnd->copy();
+
                 $emailCampaignsQuery = EmailCampaign::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                     ->whereIn('status', ['sent', 'sending'])
-                    ->whereBetween('started_at', [$periodStart, $periodEnd]);
+                    ->whereBetween('started_at', [$pStart, $pEnd]);
 
                 $emailAgg = (clone $emailCampaignsQuery)->selectRaw('
                     COUNT(*) as campaigns_sent,
@@ -433,7 +443,7 @@ class DashboardController extends Controller
                 // Periodo anterior
                 $prevEmailAgg = EmailCampaign::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                     ->whereIn('status', ['sent', 'sending'])
-                    ->whereBetween('started_at', [$prevStart, $prevEnd])
+                    ->whereBetween('started_at', [$prStart, $prEnd])
                     ->selectRaw('
                         COALESCE(SUM(total_sent), 0) as total_sent,
                         COALESCE(SUM(total_delivered), 0) as total_delivered,
@@ -472,6 +482,9 @@ class DashboardController extends Controller
                         ->where('status', 'pending')->count(),
                 ];
             }
+        } catch (\Throwable $e) {
+            // Se as tabelas de email nao existem ainda, ignorar silenciosamente
+            $emailSummary = null;
         }
 
         return Inertia::render('Dashboard/Index', [

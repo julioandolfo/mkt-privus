@@ -295,6 +295,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{list}/sources', [EmailListController::class, 'addSource'])->name('add-source');
             Route::post('/{list}/sources/{source}/sync', [EmailListController::class, 'syncSource'])->name('sync-source');
             Route::delete('/{list}/sources/{source}', [EmailListController::class, 'removeSource'])->name('remove-source');
+            // MySQL dinâmico
+            Route::post('/mysql/tables', [EmailListController::class, 'mysqlTables'])->name('mysql-tables');
+            Route::post('/mysql/columns', [EmailListController::class, 'mysqlColumns'])->name('mysql-columns');
         });
 
         // Templates
