@@ -154,7 +154,6 @@ const props = defineProps<{
     periodEnd?: string;
     brandFilter?: string;
     allBrands?: { id: number; name: string }[];
-    _debug?: Record<string, any>;
 }>();
 
 const chartMetric = ref<'followers' | 'engagement' | 'reach' | 'impressions'>('followers');
@@ -344,37 +343,6 @@ const periodOptions = [
                 </div>
             </div>
         </template>
-
-        <!-- DEBUG: diagnostico de duplicatas - remover depois -->
-        <div v-if="_debug" class="mb-4 rounded-xl bg-red-900/30 border border-red-700/50 p-4 text-xs font-mono text-red-200 space-y-1.5">
-            <p class="font-bold text-red-400 text-sm mb-2">DIAGNOSTICO - Duplicatas analytics_daily_summaries</p>
-            <template v-if="_debug.error">
-                <p class="text-red-400">Erro: {{ _debug.error }} (linha {{ _debug.line }})</p>
-            </template>
-            <template v-else>
-                <p>Total linhas no periodo: <span class="text-white font-bold">{{ _debug.total_rows_periodo }}</span></p>
-                <p>Linhas com brand_id NULL: <span class="text-white font-bold">{{ _debug.rows_brand_null }}</span></p>
-                <p>Linhas com brand_id especifico: <span class="text-white font-bold">{{ _debug.rows_brand_especifico }}</span></p>
-                <p>Dashboard brand filter: <span class="text-white">{{ _debug.dashboard_brand_filter }}</span></p>
-                <p>Dashboard rows usadas na soma: <span class="text-white font-bold">{{ _debug.dashboard_rows_usadas }}</span></p>
-                <p>Dashboard receita calculada: <span class="text-yellow-400 font-bold">{{ _debug.dashboard_revenue_calculada }}</span></p>
-                <p>Dashboard ad_spend calculada: <span class="text-yellow-400 font-bold">{{ _debug.dashboard_ad_spend_calculada }}</span></p>
-                <div class="border-t border-red-700/50 pt-1.5 mt-1.5">
-                    <p class="text-red-400 font-medium">Distinct brand_ids: <span class="text-white">{{ _debug.distinct_brand_ids?.join(', ') }}</span></p>
-                </div>
-                <div v-if="_debug.datas_com_multiplas_linhas?.length" class="border-t border-red-700/50 pt-1.5 mt-1.5">
-                    <p class="text-red-400 font-medium mb-1">Datas com MULTIPLAS linhas (DUPLICATAS!):</p>
-                    <p v-for="(d, i) in _debug.datas_com_multiplas_linhas" :key="i" class="text-yellow-300 ml-2">{{ d }}</p>
-                </div>
-                <div v-else class="border-t border-red-700/50 pt-1.5 mt-1.5">
-                    <p class="text-green-400">Nenhuma data com multiplas linhas (sem duplicata por data)</p>
-                </div>
-                <div class="border-t border-red-700/50 pt-1.5 mt-1.5">
-                    <p class="text-red-400 font-medium mb-1">Receita por brand_id:</p>
-                    <p v-for="(r, i) in _debug.receita_por_brand" :key="i" class="text-yellow-300 ml-2">{{ r }}</p>
-                </div>
-            </template>
-        </div>
 
         <!-- Brand + Period Filter Bar -->
         <div class="mb-6 flex items-center gap-3 flex-wrap">

@@ -290,12 +290,23 @@ class DashboardController extends Controller
         // ===== ANALYTICS RESUMO (periodo selecionado) =====
         $analyticsSummary = null;
         {
-            $last30 = AnalyticsDailySummary::when($brandId, fn($q) => $q->where('brand_id', $brandId))
+            // Filtro de marca para summaries: se brand especifico, filtra por ele.
+            // Se "todas", pega apenas linhas com brand_id preenchido (evita duplicar com brand_id NULL).
+            $scopeSummary = function ($query) use ($brandId) {
+                if ($brandId) {
+                    $query->where('brand_id', $brandId);
+                } else {
+                    $query->whereNotNull('brand_id');
+                }
+                return $query;
+            };
+
+            $last30 = $scopeSummary(AnalyticsDailySummary::query())
                 ->whereBetween('date', [$periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d')])
                 ->get();
 
             // Periodo anterior para comparacao
-            $prev30 = AnalyticsDailySummary::when($brandId, fn($q) => $q->where('brand_id', $brandId))
+            $prev30 = $scopeSummary(AnalyticsDailySummary::query())
                 ->whereBetween('date', [$prevStart->format('Y-m-d'), $prevEnd->format('Y-m-d')])
                 ->get();
 
@@ -503,85 +514,7 @@ class DashboardController extends Controller
             'periodEnd' => $periodEnd->format('Y-m-d'),
             'brandFilter' => $brandFilter,
             'allBrands' => $allBrands,
-            // DEBUG: diagnostico de duplicatas - remover depois
-            '_debug' => $this->diagnoseDuplicates($brandId, $periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d')),
         ]);
-    }
-
-    /**
-     * DEBUG: Diagnosticar duplicatas na tabela analytics_daily_summaries
-     */
-    private function diagnoseDuplicates(?int $brandId, string $startDate, string $endDate): array
-    {
-        try {
-            $DB = \Illuminate\Support\Facades\DB::getFacadeRoot();
-
-            // 1. Total de linhas no periodo (sem filtro de marca)
-            $allRows = $DB->table('analytics_daily_summaries')
-                ->whereBetween('date', [$startDate, $endDate])
-                ->count();
-
-            // 2. Linhas com brand_id NULL
-            $nullBrandRows = $DB->table('analytics_daily_summaries')
-                ->whereBetween('date', [$startDate, $endDate])
-                ->whereNull('brand_id')
-                ->count();
-
-            // 3. Linhas com brand_id especifico
-            $brandRows = $DB->table('analytics_daily_summaries')
-                ->whereBetween('date', [$startDate, $endDate])
-                ->whereNotNull('brand_id')
-                ->count();
-
-            // 4. Datas com multiplas linhas
-            $datesWithMultiple = $DB->table('analytics_daily_summaries')
-                ->selectRaw("date, COUNT(*) as cnt, GROUP_CONCAT(IFNULL(brand_id, 'NULL')) as brand_ids")
-                ->whereBetween('date', [$startDate, $endDate])
-                ->groupBy('date')
-                ->havingRaw('COUNT(*) > 1')
-                ->limit(10)
-                ->get()
-                ->map(fn($r) => $r->date . " (" . $r->cnt . " linhas, brands: " . $r->brand_ids . ")")
-                ->toArray();
-
-            // 5. Receita por brand_id
-            $revenueByBrand = $DB->table('analytics_daily_summaries')
-                ->selectRaw("IFNULL(brand_id, 'NULL') as bid, SUM(wc_revenue) as revenue, SUM(ad_spend) as ad_spend, COUNT(*) as cnt")
-                ->whereBetween('date', [$startDate, $endDate])
-                ->groupBy('brand_id')
-                ->get()
-                ->map(fn($r) => "brand=" . $r->bid . ": receita=R$" . number_format((float)$r->revenue, 2, ',', '.') . ", ads=R$" . number_format((float)$r->ad_spend, 2, ',', '.') . ", linhas=" . $r->cnt)
-                ->toArray();
-
-            // 6. Receita que o dashboard calcularia
-            $dashboardQuery = AnalyticsDailySummary::when($brandId, fn($q) => $q->where('brand_id', $brandId))
-                ->whereBetween('date', [$startDate, $endDate])
-                ->get();
-            $dashboardRevenue = (float) $dashboardQuery->sum('wc_revenue');
-            $dashboardAdSpend = (float) $dashboardQuery->sum('ad_spend');
-            $dashboardRowCount = $dashboardQuery->count();
-
-            // 7. Distinct brand_ids na tabela
-            $distinctBrands = $DB->table('analytics_daily_summaries')
-                ->selectRaw("DISTINCT IFNULL(brand_id, 'NULL') as bid")
-                ->pluck('bid')
-                ->toArray();
-
-            return [
-                'total_rows_periodo' => $allRows,
-                'rows_brand_null' => $nullBrandRows,
-                'rows_brand_especifico' => $brandRows,
-                'datas_com_multiplas_linhas' => $datesWithMultiple,
-                'receita_por_brand' => $revenueByBrand,
-                'dashboard_brand_filter' => $brandId ?? 'NULL (todas)',
-                'dashboard_revenue_calculada' => 'R$ ' . number_format($dashboardRevenue, 2, ',', '.'),
-                'dashboard_ad_spend_calculada' => 'R$ ' . number_format($dashboardAdSpend, 2, ',', '.'),
-                'dashboard_rows_usadas' => $dashboardRowCount,
-                'distinct_brand_ids' => $distinctBrands,
-            ];
-        } catch (\Throwable $e) {
-            return ['error' => $e->getMessage(), 'line' => $e->getLine()];
-        }
     }
 
     /**

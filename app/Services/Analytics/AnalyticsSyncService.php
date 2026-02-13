@@ -46,8 +46,19 @@ class AnalyticsSyncService
             $results[$connection->platform] = $this->syncConnection($connection, $startDate, $endDate);
         }
 
-        // Recalcular sumários diários
-        $this->rebuildDailySummaries($brandId, $startDate ?? now()->subDays(30)->format('Y-m-d'), $endDate ?? now()->format('Y-m-d'));
+        $start = $startDate ?? now()->subDays(30)->format('Y-m-d');
+        $end = $endDate ?? now()->format('Y-m-d');
+
+        // Recalcular sumários diários — sempre por marca para evitar duplicatas com brand_id NULL
+        if ($brandId) {
+            $this->rebuildDailySummaries($brandId, $start, $end);
+        } else {
+            // Quando global, recalcular para cada marca individualmente
+            $brandIds = $connections->pluck('brand_id')->filter()->unique();
+            foreach ($brandIds as $bId) {
+                $this->rebuildDailySummaries($bId, $start, $end);
+            }
+        }
 
         return $results;
     }
