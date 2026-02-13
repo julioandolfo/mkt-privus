@@ -24,6 +24,10 @@ use App\Http\Controllers\EmailEditorController;
 use App\Http\Controllers\EmailTrackingController;
 use App\Http\Controllers\EmailAnalyticsController;
 use App\Http\Controllers\EmailAiSuggestionController;
+use App\Http\Controllers\SmsCampaignController;
+use App\Http\Controllers\SmsTemplateController;
+use App\Http\Controllers\SmsDashboardController;
+use App\Http\Controllers\SmsWebhookController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -56,6 +60,7 @@ Route::get('/email/t/open/{token}', [EmailTrackingController::class, 'open'])->n
 Route::get('/email/t/click/{token}', [EmailTrackingController::class, 'click'])->name('email.track.click');
 Route::get('/email/unsubscribe/{token}', [EmailTrackingController::class, 'unsubscribe'])->name('email.unsubscribe');
 Route::post('/email/webhook/sendpulse', [EmailTrackingController::class, 'sendpulseWebhook'])->name('email.webhook.sendpulse');
+Route::post('/sms/webhook/sendpulse', [SmsWebhookController::class, 'sendpulseWebhook'])->name('sms.webhook.sendpulse');
 
 /*
 |--------------------------------------------------------------------------
@@ -349,6 +354,39 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{suggestion}/create-campaign', [EmailAiSuggestionController::class, 'createCampaign'])->name('create-campaign');
             Route::post('/generate', [EmailAiSuggestionController::class, 'generate'])->name('generate');
         });
+    });
+
+    // ===== SMS MARKETING =====
+    Route::prefix('sms')->name('sms.')->group(function () {
+        // Dashboard
+        Route::get('/', [SmsDashboardController::class, 'index'])->name('dashboard');
+
+        // Templates
+        Route::prefix('templates')->name('templates.')->group(function () {
+            Route::get('/', [SmsTemplateController::class, 'index'])->name('index');
+            Route::get('/create', [SmsTemplateController::class, 'create'])->name('create');
+            Route::post('/', [SmsTemplateController::class, 'store'])->name('store');
+            Route::put('/{template}', [SmsTemplateController::class, 'update'])->name('update');
+            Route::delete('/{template}', [SmsTemplateController::class, 'destroy'])->name('destroy');
+        });
+
+        // Campanhas
+        Route::prefix('campaigns')->name('campaigns.')->group(function () {
+            Route::get('/', [SmsCampaignController::class, 'index'])->name('index');
+            Route::get('/create', [SmsCampaignController::class, 'create'])->name('create');
+            Route::post('/', [SmsCampaignController::class, 'store'])->name('store');
+            Route::get('/{campaign}', [SmsCampaignController::class, 'show'])->name('show');
+            Route::delete('/{campaign}', [SmsCampaignController::class, 'destroy'])->name('destroy');
+            Route::post('/{campaign}/send', [SmsCampaignController::class, 'send'])->name('send');
+            Route::post('/{campaign}/schedule', [SmsCampaignController::class, 'schedule'])->name('schedule');
+            Route::post('/{campaign}/pause', [SmsCampaignController::class, 'pause'])->name('pause');
+            Route::post('/{campaign}/cancel', [SmsCampaignController::class, 'cancel'])->name('cancel');
+            Route::post('/{campaign}/duplicate', [SmsCampaignController::class, 'duplicate'])->name('duplicate');
+        });
+
+        // API (JSON)
+        Route::post('/calculate-segments', [SmsCampaignController::class, 'calculateSegments'])->name('calculate-segments');
+        Route::get('/campaigns/{campaign}/estimate-cost', [SmsCampaignController::class, 'estimateCost'])->name('estimate-cost');
     });
 
     // ===== MODULOS FUTUROS =====

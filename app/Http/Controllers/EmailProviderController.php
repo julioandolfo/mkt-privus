@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\EmailProvider;
 use App\Services\Email\EmailProviderService;
+use App\Services\Sms\SmsProviderService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
@@ -47,7 +48,7 @@ class EmailProviderController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'type' => 'required|in:smtp,sendpulse',
+            'type' => 'required|in:smtp,sendpulse,sms_sendpulse',
             'brand_id' => 'nullable|exists:brands,id',
             'is_default' => 'boolean',
             'daily_limit' => 'nullable|integer|min:0',
@@ -60,9 +61,11 @@ class EmailProviderController extends Controller
             'from_address' => 'nullable|email',
             'from_name' => 'nullable|string|max:255',
             // SendPulse fields
-            'api_user_id' => 'required_if:type,sendpulse|string|nullable',
-            'api_secret' => 'required_if:type,sendpulse|string|nullable',
+            'api_user_id' => 'required_if:type,sendpulse|required_if:type,sms_sendpulse|string|nullable',
+            'api_secret' => 'required_if:type,sendpulse|required_if:type,sms_sendpulse|string|nullable',
             'from_email' => 'nullable|email',
+            // SMS SendPulse fields
+            'sender_name' => 'nullable|string|max:11',
         ]);
 
         $config = match ($validated['type']) {
@@ -80,6 +83,11 @@ class EmailProviderController extends Controller
                 'api_secret' => $validated['api_secret'],
                 'from_email' => $validated['from_email'] ?? '',
                 'from_name' => $validated['from_name'] ?? config('app.name'),
+            ],
+            'sms_sendpulse' => [
+                'api_user_id' => $validated['api_user_id'],
+                'api_secret' => $validated['api_secret'],
+                'sender_name' => $validated['sender_name'] ?? config('app.name'),
             ],
         };
 
@@ -128,9 +136,11 @@ class EmailProviderController extends Controller
 
         // Atualizar config mesclando com existente
         $config = $provider->config;
-        $configFields = $provider->type === 'smtp'
-            ? ['host', 'port', 'encryption', 'username', 'password', 'from_address', 'from_name']
-            : ['api_user_id', 'api_secret', 'from_email', 'from_name'];
+        $configFields = match ($provider->type) {
+            'smtp' => ['host', 'port', 'encryption', 'username', 'password', 'from_address', 'from_name'],
+            'sms_sendpulse' => ['api_user_id', 'api_secret', 'sender_name'],
+            default => ['api_user_id', 'api_secret', 'from_email', 'from_name'],
+        };
 
         foreach ($configFields as $field) {
             if (isset($validated[$field]) && $validated[$field] !== '') {
@@ -169,9 +179,13 @@ class EmailProviderController extends Controller
 
     public function test(Request $request, EmailProvider $provider, EmailProviderService $service)
     {
-        $email = $request->input('test_email', Auth::user()->email);
-        $result = $service->testConnection($provider);
+        if ($provider->type === 'sms_sendpulse') {
+            $smsService = app(SmsProviderService::class);
+            $result = $smsService->testConnection($provider);
+            return response()->json($result);
+        }
 
+        $result = $service->testConnection($provider);
         return response()->json($result);
     }
 
@@ -194,6 +208,10 @@ class EmailProviderController extends Controller
             ],
             'sendpulse' => [
                 'from' => $config['from_email'] ?? '-',
+                'api_user_id' => substr($config['api_user_id'] ?? '', 0, 8) . '...',
+            ],
+            'sms_sendpulse' => [
+                'sender_name' => $config['sender_name'] ?? '-',
                 'api_user_id' => substr($config['api_user_id'] ?? '', 0, 8) . '...',
             ],
             default => [],

@@ -127,3 +127,25 @@ Schedule::call(function () {
 Schedule::call(function () {
     \App\Models\EmailCampaign::where('status', 'sending')->each(fn($c) => $c->refreshStats());
 })->name('email.refresh-stats')->everyFiveMinutes()->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| SMS Marketing - Tarefas Agendadas
+|--------------------------------------------------------------------------
+*/
+
+// Processar campanhas SMS agendadas - a cada minuto
+Schedule::call(function () {
+    $campaigns = \App\Models\SmsCampaign::readyToSend()->get();
+    foreach ($campaigns as $campaign) {
+        app(\App\Services\Sms\SmsCampaignService::class)->startCampaign($campaign);
+    }
+})->name('sms.process-scheduled')->everyMinute()->withoutOverlapping();
+
+// Atualizar estatísticas de campanhas SMS em andamento - a cada 5 minutos
+Schedule::call(function () {
+    \App\Models\SmsCampaign::where('status', 'sending')->each(fn($c) => $c->refreshStats());
+})->name('sms.refresh-stats')->everyFiveMinutes()->withoutOverlapping();
+
+// Gerar sugestões de SMS marketing com IA - 1x por dia às 8h
+Schedule::job(new \App\Jobs\GenerateSmsAiSuggestionsJob)->dailyAt('08:00')->withoutOverlapping(15);

@@ -23,10 +23,12 @@ const form = useForm({
     password: '',
     from_address: '',
     from_name: '',
-    // SendPulse
+    // SendPulse (Email)
     api_user_id: '',
     api_secret: '',
     from_email: '',
+    // SMS SendPulse
+    sender_name: '',
 });
 
 function openCreate() {
@@ -74,14 +76,14 @@ function testConnection(provider) {
         .catch(e => alert('Erro: ' + (e.response?.data?.error || e.message)));
 }
 
-const typeLabels = { smtp: 'SMTP', sendpulse: 'SendPulse' };
+const typeLabels = { smtp: 'SMTP', sendpulse: 'SendPulse', sms_sendpulse: 'SMS SendPulse' };
 </script>
 
 <template>
     <AuthenticatedLayout>
         <template #header>
             <div class="flex items-center justify-between">
-                <h1 class="text-2xl font-bold text-white">Provedores de Email</h1>
+                <h1 class="text-2xl font-bold text-white">Provedores de Email & SMS</h1>
                 <button @click="openCreate" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-500 transition">
                     + Novo Provedor
                 </button>
@@ -102,8 +104,9 @@ const typeLabels = { smtp: 'SMTP', sendpulse: 'SendPulse' };
 
             <div v-for="p in providers" :key="p.id" class="bg-gray-900 rounded-xl border border-gray-800 p-5 flex items-center justify-between">
                 <div class="flex items-center gap-4">
-                    <div class="flex h-12 w-12 items-center justify-center rounded-xl" :class="p.type === 'sendpulse' ? 'bg-blue-600/20 text-blue-400' : 'bg-gray-800 text-gray-400'">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                    <div class="flex h-12 w-12 items-center justify-center rounded-xl" :class="p.type === 'sms_sendpulse' ? 'bg-green-600/20 text-green-400' : p.type === 'sendpulse' ? 'bg-blue-600/20 text-blue-400' : 'bg-gray-800 text-gray-400'">
+                        <svg v-if="p.type === 'sms_sendpulse'" class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        <svg v-else class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
                     </div>
                     <div>
                         <div class="flex items-center gap-2">
@@ -114,7 +117,7 @@ const typeLabels = { smtp: 'SMTP', sendpulse: 'SendPulse' };
                             <span v-if="p.is_default" class="px-2 py-0.5 text-xs rounded-full bg-indigo-900/30 text-indigo-400">Padrão</span>
                         </div>
                         <p class="text-xs text-gray-500 mt-0.5">
-                            {{ typeLabels[p.type] || p.type }} · {{ p.config_summary?.host || p.config_summary?.from || '-' }}
+                            {{ typeLabels[p.type] || p.type }} · {{ p.config_summary?.host || p.config_summary?.from || p.config_summary?.sender_name || '-' }}
                             <span v-if="p.daily_limit"> · Limite: {{ p.sends_today }}/{{ p.daily_limit }}</span>
                         </p>
                     </div>
@@ -142,8 +145,9 @@ const typeLabels = { smtp: 'SMTP', sendpulse: 'SendPulse' };
                         <div v-if="!editingProvider">
                             <label class="text-sm text-gray-400">Tipo</label>
                             <select v-model="form.type" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
-                                <option value="smtp">SMTP</option>
-                                <option value="sendpulse">SendPulse</option>
+                                <option value="smtp">SMTP (Email)</option>
+                                <option value="sendpulse">SendPulse (Email)</option>
+                                <option value="sms_sendpulse">SendPulse (SMS)</option>
                             </select>
                         </div>
 
@@ -189,7 +193,7 @@ const typeLabels = { smtp: 'SMTP', sendpulse: 'SendPulse' };
                             </div>
                         </template>
 
-                        <!-- SendPulse fields -->
+                        <!-- SendPulse Email fields -->
                         <template v-if="form.type === 'sendpulse'">
                             <div>
                                 <label class="text-sm text-gray-400">API User ID</label>
@@ -208,6 +212,26 @@ const typeLabels = { smtp: 'SMTP', sendpulse: 'SendPulse' };
                                     <label class="text-sm text-gray-400">Nome Remetente</label>
                                     <input v-model="form.from_name" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
                                 </div>
+                            </div>
+                        </template>
+
+                        <!-- SMS SendPulse fields -->
+                        <template v-if="form.type === 'sms_sendpulse'">
+                            <div class="bg-green-900/20 border border-green-800/30 rounded-lg p-3 mb-2">
+                                <p class="text-xs text-green-400">Provedor SMS via SendPulse. Usa as mesmas credenciais da API SendPulse.</p>
+                            </div>
+                            <div>
+                                <label class="text-sm text-gray-400">API User ID</label>
+                                <input v-model="form.api_user_id" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                            </div>
+                            <div>
+                                <label class="text-sm text-gray-400">API Secret</label>
+                                <input v-model="form.api_secret" type="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                            </div>
+                            <div>
+                                <label class="text-sm text-gray-400">Nome do Remetente (max 11 chars)</label>
+                                <input v-model="form.sender_name" maxlength="11" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" placeholder="MinhaMarca" />
+                                <p class="text-xs text-gray-500 mt-1">Alfanumérico, sem espaços. Ex: MinhaMarca</p>
                             </div>
                         </template>
 

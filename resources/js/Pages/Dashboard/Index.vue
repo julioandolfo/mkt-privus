@@ -148,6 +148,18 @@ const props = defineProps<{
     recentActivity: any[];
     analyticsSummary?: AnalyticsSummary | null;
     emailSummary?: EmailSummary | null;
+    smsSummary?: {
+        has_sms: boolean;
+        campaigns_sent: number;
+        total_sent: number;
+        total_delivered: number;
+        total_failed: number;
+        total_clicked: number;
+        delivery_rate: number;
+        click_rate: number;
+        prev_total_sent: number;
+        pending_suggestions: number;
+    } | null;
     period?: string;
     periodLabel?: string;
     periodStart?: string;
@@ -591,6 +603,55 @@ const periodOptions = [
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
                             </svg>
                             {{ emailSummary.pending_suggestions }} sugestoes IA
+                        </Link>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== SMS MARKETING ===== -->
+            <div v-if="smsSummary?.has_sms">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider">SMS Marketing — {{ periodLabel || 'Este Mes' }}</h2>
+                    <Link :href="route('sms.dashboard')" class="text-xs text-indigo-400 hover:text-indigo-300 transition">Ver Dashboard SMS</Link>
+                </div>
+
+                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Campanhas SMS</p>
+                        <p class="text-xl font-bold text-green-400">{{ smsSummary.campaigns_sent }}</p>
+                        <p class="text-[10px] text-gray-600 mt-0.5">no período</p>
+                    </div>
+
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">SMS Enviados</p>
+                        <p class="text-xl font-bold text-blue-400">{{ formatNumber(smsSummary.total_sent) }}</p>
+                        <p v-if="deltaPercent(smsSummary.total_sent, smsSummary.prev_total_sent) !== null"
+                            :class="['text-[10px] font-medium mt-0.5', deltaPercent(smsSummary.total_sent, smsSummary.prev_total_sent)! >= 0 ? 'text-emerald-400' : 'text-red-400']">
+                            {{ deltaPercent(smsSummary.total_sent, smsSummary.prev_total_sent)! >= 0 ? '+' : '' }}{{ deltaPercent(smsSummary.total_sent, smsSummary.prev_total_sent) }}%
+                        </p>
+                    </div>
+
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Entregues</p>
+                        <p class="text-xl font-bold text-emerald-400">{{ formatNumber(smsSummary.total_delivered) }}</p>
+                        <p class="text-[10px] text-gray-600 mt-0.5">{{ smsSummary.delivery_rate }}% entrega</p>
+                    </div>
+
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Taxa Cliques</p>
+                        <p class="text-xl font-bold text-indigo-400">{{ smsSummary.click_rate }}%</p>
+                        <p class="text-[10px] text-gray-600 mt-0.5">{{ formatNumber(smsSummary.total_clicked) }} cliques</p>
+                    </div>
+
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Falhas</p>
+                        <p class="text-xl font-bold" :class="smsSummary.total_failed > 0 ? 'text-red-400' : 'text-emerald-400'">{{ formatNumber(smsSummary.total_failed) }}</p>
+                        <Link v-if="smsSummary.pending_suggestions > 0" :href="route('sms.dashboard')"
+                            class="inline-flex items-center gap-1 mt-1 text-[10px] font-medium text-amber-400 hover:text-amber-300 transition">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                            </svg>
+                            {{ smsSummary.pending_suggestions }} sugestoes IA
                         </Link>
                     </div>
                 </div>

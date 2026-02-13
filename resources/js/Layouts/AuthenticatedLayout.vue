@@ -52,6 +52,14 @@ const navigation: NavItem[] = [
             { name: 'Provedores', href: 'email.providers.index', routeMatch: 'email.providers.*' },
         ],
     },
+    {
+        name: 'SMS Marketing', href: 'sms.dashboard', icon: 'smartphone', routeMatch: 'sms.*', enabled: true,
+        children: [
+            { name: 'Dashboard', href: 'sms.dashboard', routeMatch: 'sms.dashboard' },
+            { name: 'Campanhas', href: 'sms.campaigns.index', routeMatch: 'sms.campaigns.*' },
+            { name: 'Templates', href: 'sms.templates.index', routeMatch: 'sms.templates.*' },
+        ],
+    },
     { name: 'Chat IA', href: 'chat.index', icon: 'message-circle', routeMatch: 'chat.*', enabled: true },
     { name: 'Blog', href: null, icon: 'file-text', routeMatch: 'blog.*', enabled: false, badge: 'Em breve' },
     { name: 'Links', href: null, icon: 'link', routeMatch: 'links.*', enabled: false, badge: 'Em breve' },
@@ -228,6 +236,9 @@ function toggleSidebar() {
                             <template v-else-if="item.icon === 'terminal'">
                                 <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
                             </template>
+                            <template v-else-if="item.icon === 'smartphone'">
+                                <rect x="5" y="2" width="14" height="20" rx="2" ry="2" /><line x1="12" y1="18" x2="12.01" y2="18" />
+                            </template>
                             <template v-else-if="item.icon === 'settings'">
                                 <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
                             </template>
@@ -261,6 +272,9 @@ function toggleSidebar() {
                                 </template>
                                 <template v-else-if="item.icon === 'mail'">
                                     <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" />
+                                </template>
+                                <template v-else-if="item.icon === 'smartphone'">
+                                    <rect x="5" y="2" width="14" height="20" rx="2" ry="2" /><line x1="12" y1="18" x2="12.01" y2="18" />
                                 </template>
                             </svg>
                             <span v-if="sidebarOpen" class="flex-1 text-left">{{ item.name }}</span>

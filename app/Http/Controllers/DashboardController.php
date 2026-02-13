@@ -498,6 +498,62 @@ class DashboardController extends Controller
             $emailSummary = null;
         }
 
+        // ===== SMS MARKETING SUMMARY =====
+        $smsSummary = null;
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('sms_campaigns')) {
+                $hasSms = \App\Models\SmsCampaign::when($brandId, fn($q) => $q->where('brand_id', $brandId))->exists();
+
+                if ($hasSms) {
+                    $smsStart = $periodStart->copy();
+                    $smsEnd = $periodEnd->copy();
+                    $smsPrevStart = $prevStart->copy();
+                    $smsPrevEnd = $prevEnd->copy();
+
+                    $smsAgg = \App\Models\SmsCampaign::when($brandId, fn($q) => $q->where('brand_id', $brandId))
+                        ->whereIn('status', ['sent', 'sending'])
+                        ->whereBetween('started_at', [$smsStart, $smsEnd])
+                        ->selectRaw('
+                            COUNT(*) as campaigns_sent,
+                            COALESCE(SUM(total_sent), 0) as total_sent,
+                            COALESCE(SUM(total_delivered), 0) as total_delivered,
+                            COALESCE(SUM(total_failed), 0) as total_failed,
+                            COALESCE(SUM(total_clicked), 0) as total_clicked
+                        ')->first();
+
+                    $sSent = (int) ($smsAgg->total_sent ?? 0);
+                    $sDelivered = (int) ($smsAgg->total_delivered ?? 0);
+                    $sClicked = (int) ($smsAgg->total_clicked ?? 0);
+
+                    $prevSmsAgg = \App\Models\SmsCampaign::when($brandId, fn($q) => $q->where('brand_id', $brandId))
+                        ->whereIn('status', ['sent', 'sending'])
+                        ->whereBetween('started_at', [$smsPrevStart, $smsPrevEnd])
+                        ->selectRaw('
+                            COALESCE(SUM(total_sent), 0) as total_sent,
+                            COALESCE(SUM(total_delivered), 0) as total_delivered
+                        ')->first();
+
+                    $smsSummary = [
+                        'has_sms' => true,
+                        'campaigns_sent' => (int) ($smsAgg->campaigns_sent ?? 0),
+                        'total_sent' => $sSent,
+                        'total_delivered' => $sDelivered,
+                        'total_failed' => (int) ($smsAgg->total_failed ?? 0),
+                        'total_clicked' => $sClicked,
+                        'delivery_rate' => $sSent > 0 ? round(($sDelivered / $sSent) * 100, 2) : 0,
+                        'click_rate' => $sDelivered > 0 ? round(($sClicked / $sDelivered) * 100, 2) : 0,
+                        'prev_total_sent' => (int) ($prevSmsAgg->total_sent ?? 0),
+                        'pending_suggestions' => \App\Models\EmailAiSuggestion::when($brandId, fn($q) => $q->where('brand_id', $brandId))
+                            ->where('content_type', 'sms')
+                            ->where('status', 'pending')
+                            ->count(),
+                    ];
+                }
+            }
+        } catch (\Throwable $e) {
+            $smsSummary = null;
+        }
+
         return Inertia::render('Dashboard/Index', [
             'stats' => $stats,
             'socialAccounts' => $socialAccounts,
@@ -508,6 +564,7 @@ class DashboardController extends Controller
             'recentActivity' => $recentActivity,
             'analyticsSummary' => $analyticsSummary,
             'emailSummary' => $emailSummary,
+            'smsSummary' => $smsSummary,
             'period' => $period,
             'periodLabel' => $periodLabel,
             'periodStart' => $periodStart->format('Y-m-d'),
