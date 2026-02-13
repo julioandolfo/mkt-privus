@@ -154,6 +154,7 @@ const props = defineProps<{
     periodEnd?: string;
     brandFilter?: string;
     allBrands?: { id: number; name: string }[];
+    _debug?: Record<string, any>;
 }>();
 
 const chartMetric = ref<'followers' | 'engagement' | 'reach' | 'impressions'>('followers');
@@ -343,6 +344,22 @@ const periodOptions = [
                 </div>
             </div>
         </template>
+
+        <!-- DEBUG: remover depois de resolver o bug -->
+        <div v-if="_debug" class="mb-4 rounded-xl bg-yellow-900/30 border border-yellow-700/50 p-4 text-xs font-mono text-yellow-200 space-y-1">
+            <p class="font-bold text-yellow-400 text-sm mb-2">DEBUG - Periodo do Server</p>
+            <p>request_period: <span class="text-white">{{ _debug.request_period }}</span></p>
+            <p>resolved_period: <span class="text-white">{{ _debug.resolved_period }}</span></p>
+            <p>period_start: <span class="text-white">{{ _debug.period_start }}</span></p>
+            <p>period_end: <span class="text-white">{{ _debug.period_end }}</span></p>
+            <p>prev_start: <span class="text-white">{{ _debug.prev_start }}</span></p>
+            <p>prev_end: <span class="text-white">{{ _debug.prev_end }}</span></p>
+            <p>period_label: <span class="text-white">{{ _debug.period_label }}</span></p>
+            <p>wc_query_dates: <span class="text-white">{{ _debug.wc_query_dates }}</span></p>
+            <p>wc_revenue: <span class="text-white">{{ _debug.wc_revenue }}</span></p>
+            <p>url_query_string: <span class="text-white">{{ _debug.url_query_string || '(vazio - primeiro load)' }}</span></p>
+            <p class="border-t border-yellow-700/50 pt-1 mt-1">Vue activePeriod: <span class="text-white">{{ activePeriod }}</span> | props.period: <span class="text-white">{{ period }}</span> | props.periodStart: <span class="text-white">{{ periodStart }}</span> | props.periodEnd: <span class="text-white">{{ periodEnd }}</span></p>
+        </div>
 
         <!-- Brand + Period Filter Bar -->
         <div class="mb-6 flex items-center gap-3 flex-wrap">

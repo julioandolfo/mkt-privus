@@ -503,6 +503,20 @@ class DashboardController extends Controller
             'periodEnd' => $periodEnd->format('Y-m-d'),
             'brandFilter' => $brandFilter,
             'allBrands' => $allBrands,
+            // DEBUG: remover depois de resolver o bug
+            '_debug' => [
+                'request_period' => $request->get('period', '(nenhum, default this_month)'),
+                'resolved_period' => $period,
+                'period_start' => $periodStart->format('Y-m-d H:i:s'),
+                'period_end' => $periodEnd->format('Y-m-d H:i:s'),
+                'prev_start' => $prevStart->format('Y-m-d H:i:s'),
+                'prev_end' => $prevEnd->format('Y-m-d H:i:s'),
+                'period_label' => $periodLabel,
+                'wc_query_dates' => $periodStart->format('Y-m-d') . ' ate ' . $periodEnd->format('Y-m-d'),
+                'analytics_rows_count' => $analyticsSummary ? 'has_data' : 'null',
+                'wc_revenue' => $analyticsSummary['wc_revenue'] ?? 0,
+                'url_query_string' => $request->getQueryString(),
+            ],
         ]);
     }
 
