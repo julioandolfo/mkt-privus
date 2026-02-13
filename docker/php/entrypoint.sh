@@ -38,6 +38,13 @@ touch /var/www/html/storage/logs/php-errors.log
 chown www:www /var/www/html/storage/logs/laravel.log /var/www/html/storage/logs/php-errors.log
 chmod 664 /var/www/html/storage/logs/laravel.log /var/www/html/storage/logs/php-errors.log
 
+# Criar diretorios de upload que o app precisa
+mkdir -p /var/www/html/storage/app/public/brands
+mkdir -p /var/www/html/storage/app/public/ai-generated
+mkdir -p /var/www/html/storage/app/public/email-templates
+chown -R www:www /var/www/html/storage/app
+chmod -R 775 /var/www/html/storage/app
+
 # Verificar se o storage realmente ficou gravavel
 TEST_FILE="/var/www/html/storage/logs/.perm-test"
 if su-exec www:www touch "$TEST_FILE" 2>/dev/null; then
