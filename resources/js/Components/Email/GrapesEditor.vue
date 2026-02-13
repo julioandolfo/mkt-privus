@@ -55,6 +55,12 @@ async function initEditor() {
         storageManager: false,
         noticeOnUnload: false,
 
+        // CRUCIAL: Forçar estilos inline (não CSS classes).
+        // Em GrapesJS 0.22+ o default mudou para true (usa classes).
+        // Para email marketing, PRECISA ser inline pois clientes de email
+        // não suportam <style> tags.
+        avoidInlineStyle: false,
+
         // Canvas
         canvas: {
             styles: [
@@ -97,7 +103,13 @@ async function initEditor() {
                 {
                     name: 'Fundo',
                     open: false,
-                    properties: ['background-color', 'background-image', 'background-repeat', 'background-position', 'background-size'],
+                    properties: [
+                        'background-color',
+                        'background-image',
+                        'background-repeat',
+                        'background-position',
+                        'background-size',
+                    ],
                 },
                 {
                     name: 'Borda',
@@ -144,6 +156,23 @@ async function initEditor() {
     editor.on('component:update', emitChanges);
     editor.on('component:add', emitChanges);
     editor.on('component:remove', emitChanges);
+
+    // Garantir que mudanças de estilo atualizem o componente visualmente.
+    // Quando o Style Manager altera uma propriedade, forçar a sincronização
+    // do estilo inline no elemento real do canvas.
+    editor.on('style:property:update', ({ property }) => {
+        const selected = editor.getSelected();
+        if (!selected) return;
+        const el = selected.getEl();
+        if (!el) return;
+        // Pegar todos os estilos do modelo e aplicar inline diretamente
+        const styles = selected.getStyle();
+        for (const [prop, val] of Object.entries(styles)) {
+            // Converter camelCase do CSS para kebab-case
+            const cssProp = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+            el.style.setProperty(cssProp, val);
+        }
+    });
 
     // Customizar tema escuro do editor + correcoes
     applyDarkTheme();
