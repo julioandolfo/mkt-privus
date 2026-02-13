@@ -403,4 +403,22 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // Route::prefix('links')->name('links.')->group(function () { ... });
 });
 
+// ===== STORAGE FILE SERVING =====
+// Em Docker, Nginx e PHP-FPM são containers separados.
+// Nginx não tem acesso ao volume de storage, então servimos via PHP.
+Route::get('/storage/{path}', function (string $path) {
+    $fullPath = storage_path('app/public/' . $path);
+
+    if (!file_exists($fullPath)) {
+        abort(404);
+    }
+
+    $mimeType = mime_content_type($fullPath) ?: 'application/octet-stream';
+
+    return response()->file($fullPath, [
+        'Content-Type' => $mimeType,
+        'Cache-Control' => 'public, max-age=31536000, immutable',
+    ]);
+})->where('path', '.*')->name('storage.serve');
+
 require __DIR__.'/auth.php';
