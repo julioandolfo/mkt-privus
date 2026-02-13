@@ -136,6 +136,7 @@ Schedule::call(function () {
 
 // Processar campanhas SMS agendadas - a cada minuto
 Schedule::call(function () {
+    if (!\Illuminate\Support\Facades\Schema::hasTable('sms_campaigns')) return;
     $campaigns = \App\Models\SmsCampaign::readyToSend()->get();
     foreach ($campaigns as $campaign) {
         app(\App\Services\Sms\SmsCampaignService::class)->startCampaign($campaign);
@@ -144,8 +145,12 @@ Schedule::call(function () {
 
 // Atualizar estatísticas de campanhas SMS em andamento - a cada 5 minutos
 Schedule::call(function () {
+    if (!\Illuminate\Support\Facades\Schema::hasTable('sms_campaigns')) return;
     \App\Models\SmsCampaign::where('status', 'sending')->each(fn($c) => $c->refreshStats());
 })->name('sms.refresh-stats')->everyFiveMinutes()->withoutOverlapping();
 
 // Gerar sugestões de SMS marketing com IA - 1x por dia às 8h
-Schedule::job(new \App\Jobs\GenerateSmsAiSuggestionsJob)->dailyAt('08:00')->withoutOverlapping(15);
+Schedule::call(function () {
+    if (!\Illuminate\Support\Facades\Schema::hasTable('sms_campaigns')) return;
+    dispatch(new \App\Jobs\GenerateSmsAiSuggestionsJob);
+})->name('sms.ai-suggestions')->dailyAt('08:00')->withoutOverlapping(15);

@@ -271,6 +271,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // Logs do Sistema
     Route::prefix('logs')->name('logs.')->group(function () {
         Route::get('/', [LogsController::class, 'index'])->name('index');
+        Route::get('/laravel', [LogsController::class, 'laravelLog'])->name('laravel');
+        Route::post('/laravel/clear', [LogsController::class, 'clearLaravelLog'])->name('laravel.clear');
+        Route::get('/laravel/download', [LogsController::class, 'downloadLaravelLog'])->name('laravel.download');
         Route::get('/{log}', [LogsController::class, 'show'])->name('show');
         Route::post('/cleanup', [LogsController::class, 'cleanup'])->name('cleanup');
         Route::post('/clear', [LogsController::class, 'clear'])->name('clear');
