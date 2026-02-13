@@ -25,6 +25,7 @@ services:
       - "80"
     volumes:
       - public_build:/var/www/html/public/build
+      - app_storage:/var/www/html/storage
     depends_on:
       - app
 
