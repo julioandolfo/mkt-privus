@@ -48,11 +48,19 @@ class SyncSingleSocialAccountJob implements ShouldQueue
             $result = $service->syncAccount($account);
 
             if ($result) {
-                SystemLog::info('social', 'auto_sync.success', "Auto-sync concluido: @{$account->username} - Seguidores: {$result->followers_count}, Engajamento: {$result->engagement}, Alcance: {$result->reach}", [
+                $engRate = $result->engagement_rate ? " ({$result->engagement_rate}%)" : '';
+                SystemLog::info('social', 'auto_sync.success', "Auto-sync concluido: @{$account->username} - Seguidores: {$result->followers_count}, Engajamento: {$result->engagement}{$engRate}, Alcance: {$result->reach}, Impressoes: {$result->impressions}", [
                     'account_id' => $account->id,
                     'followers' => $result->followers_count,
                     'engagement' => $result->engagement,
+                    'engagement_rate' => $result->engagement_rate,
                     'reach' => $result->reach,
+                    'impressions' => $result->impressions,
+                    'likes' => $result->likes,
+                    'comments' => $result->comments,
+                    'saves' => $result->saves,
+                    'shares' => $result->shares,
+                    'clicks' => $result->clicks,
                 ]);
             } else {
                 SystemLog::warning('social', 'auto_sync.no_result', "Auto-sync sem resultado: @{$account->username} ({$platform})", [

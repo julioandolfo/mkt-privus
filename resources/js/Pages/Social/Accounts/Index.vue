@@ -21,6 +21,8 @@ interface SocialAccountInsight {
     saves: number | null;
     clicks: number | null;
     video_views: number | null;
+    story_views: number | null;
+    reel_views: number | null;
     net_followers: number | null;
     audience_gender: Record<string, number> | null;
     audience_age: Record<string, number> | null;
@@ -565,6 +567,8 @@ function formatNumber(num: number | null | undefined): string {
 
                             <!-- Insights expandidos -->
                             <div v-if="expandedAccount === account.id && account.insights" class="px-5 pb-4">
+                                <!-- Metricas Principais -->
+                                <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2 font-semibold">Visao Geral (28 dias)</p>
                                 <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
                                     <div v-if="account.insights.followers_count !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
                                         <p class="text-[10px] text-gray-500 uppercase tracking-wider">Seguidores</p>
@@ -572,10 +576,12 @@ function formatNumber(num: number | null | undefined): string {
                                         <p v-if="account.insights.net_followers !== null" :class="['text-[10px] font-medium', account.insights.net_followers >= 0 ? 'text-emerald-400' : 'text-red-400']">
                                             {{ account.insights.net_followers >= 0 ? '+' : '' }}{{ formatNumber(account.insights.net_followers) }} hoje
                                         </p>
+                                        <p v-if="account.insights.following_count" class="text-[10px] text-gray-600">Seguindo: {{ formatNumber(account.insights.following_count) }}</p>
                                     </div>
                                     <div v-if="account.insights.reach !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
                                         <p class="text-[10px] text-gray-500 uppercase tracking-wider">Alcance</p>
                                         <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.reach) }}</p>
+                                        <p v-if="account.insights.platform_data?.reach_source === 'posts_sum'" class="text-[10px] text-amber-500/70">via posts</p>
                                     </div>
                                     <div v-if="account.insights.impressions !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
                                         <p class="text-[10px] text-gray-500 uppercase tracking-wider">Impressoes</p>
@@ -584,64 +590,135 @@ function formatNumber(num: number | null | undefined): string {
                                     <div v-if="account.insights.engagement !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
                                         <p class="text-[10px] text-gray-500 uppercase tracking-wider">Engajamento</p>
                                         <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.engagement) }}</p>
-                                        <p v-if="account.insights.engagement_rate" class="text-[10px] text-indigo-400">{{ account.insights.engagement_rate }}%</p>
+                                        <p v-if="account.insights.engagement_rate" class="text-[10px] text-indigo-400 font-medium">{{ account.insights.engagement_rate }}% taxa</p>
                                     </div>
+                                    <div v-if="account.insights.platform_data?.profile_views" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Visitas Perfil</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.platform_data.profile_views) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.clicks !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Cliques Site</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.clicks) }}</p>
+                                    </div>
+                                </div>
+
+                                <!-- Interacoes com Conteudo -->
+                                <p class="text-[10px] text-gray-500 uppercase tracking-wider mt-4 mb-2 font-semibold">Interacoes (30 dias)</p>
+                                <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
                                     <div v-if="account.insights.likes !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
                                         <p class="text-[10px] text-gray-500 uppercase tracking-wider">Curtidas</p>
                                         <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.likes) }}</p>
+                                        <p v-if="account.insights.platform_data?.avg_likes_per_post" class="text-[10px] text-gray-500">~{{ account.insights.platform_data.avg_likes_per_post }}/post</p>
                                     </div>
                                     <div v-if="account.insights.comments !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
                                         <p class="text-[10px] text-gray-500 uppercase tracking-wider">Comentarios</p>
                                         <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.comments) }}</p>
+                                        <p v-if="account.insights.platform_data?.avg_comments_per_post" class="text-[10px] text-gray-500">~{{ account.insights.platform_data.avg_comments_per_post }}/post</p>
                                     </div>
-                                    <div v-if="account.insights.shares !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                    <div v-if="account.insights.shares !== null && account.insights.shares > 0" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
                                         <p class="text-[10px] text-gray-500 uppercase tracking-wider">Compartilhamentos</p>
                                         <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.shares) }}</p>
                                     </div>
-                                    <div v-if="account.insights.saves !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                    <div v-if="account.insights.saves !== null && account.insights.saves > 0" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
                                         <p class="text-[10px] text-gray-500 uppercase tracking-wider">Salvamentos</p>
                                         <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.saves) }}</p>
-                                    </div>
-                                    <div v-if="account.insights.clicks !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
-                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Cliques</p>
-                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.clicks) }}</p>
                                     </div>
                                     <div v-if="account.insights.video_views !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
                                         <p class="text-[10px] text-gray-500 uppercase tracking-wider">Views Video</p>
                                         <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.video_views) }}</p>
                                     </div>
+                                    <div v-if="account.insights.platform_data?.accounts_engaged" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Contas Engajadas</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.platform_data.accounts_engaged) }}</p>
+                                    </div>
+                                </div>
+
+                                <!-- Conteudo -->
+                                <p class="text-[10px] text-gray-500 uppercase tracking-wider mt-4 mb-2 font-semibold">Conteudo</p>
+                                <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
                                     <div v-if="account.insights.posts_count !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
-                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Posts</p>
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Total Posts</p>
                                         <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.posts_count) }}</p>
+                                        <p v-if="account.insights.platform_data?.posts_total_30d" class="text-[10px] text-gray-500">{{ account.insights.platform_data.posts_total_30d }} nos ultimos 30d</p>
+                                    </div>
+                                    <div v-if="account.insights.platform_data?.stories_count" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Stories (30d)</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.platform_data.stories_count) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.platform_data?.reels_count" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Reels (30d)</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.platform_data.reels_count) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.platform_data?.avg_reach_per_post" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Alcance/Post</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.platform_data.avg_reach_per_post) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.platform_data?.avg_impressions_per_post" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Impressoes/Post</p>
+                                        <p class="text-lg font-bold text-white">{{ formatNumber(account.insights.platform_data.avg_impressions_per_post) }}</p>
+                                    </div>
+                                    <div v-if="account.insights.platform_data?.net_followers !== undefined && account.insights.platform_data?.net_followers !== null" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider">Saldo Seguidores</p>
+                                        <p class="text-lg font-bold" :class="account.insights.platform_data.net_followers >= 0 ? 'text-emerald-400' : 'text-red-400'">
+                                            {{ account.insights.platform_data.net_followers >= 0 ? '+' : '' }}{{ formatNumber(account.insights.platform_data.net_followers) }}
+                                        </p>
+                                        <p class="text-[10px] text-gray-600">ultimos 28 dias</p>
                                     </div>
                                 </div>
 
                                 <!-- Audiencia (se disponivel) -->
-                                <div v-if="account.insights.audience_gender || account.insights.audience_cities" class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                    <div v-if="account.insights.audience_gender" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
-                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Genero da Audiencia</p>
-                                        <div class="space-y-1.5">
-                                            <div v-for="(pct, gender) in account.insights.audience_gender" :key="gender" class="flex items-center gap-2">
-                                                <span class="text-xs text-gray-400 w-16">{{ gender === 'male' ? 'Masc.' : gender === 'female' ? 'Fem.' : 'Outro' }}</span>
-                                                <div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
-                                                    <div class="h-full rounded-full" :class="gender === 'male' ? 'bg-blue-500' : gender === 'female' ? 'bg-pink-500' : 'bg-gray-500'" :style="{ width: pct + '%' }"></div>
+                                <div v-if="account.insights.audience_gender || account.insights.audience_cities || account.insights.audience_age || account.insights.audience_countries" class="mt-4">
+                                    <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2 font-semibold">Audiencia</p>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div v-if="account.insights.audience_gender" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                            <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Genero</p>
+                                            <div class="space-y-1.5">
+                                                <div v-for="(pct, gender) in account.insights.audience_gender" :key="gender" class="flex items-center gap-2">
+                                                    <span class="text-xs text-gray-400 w-16">{{ gender === 'male' ? 'Masc.' : gender === 'female' ? 'Fem.' : 'Outro' }}</span>
+                                                    <div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                                        <div class="h-full rounded-full" :class="gender === 'male' ? 'bg-blue-500' : gender === 'female' ? 'bg-pink-500' : 'bg-gray-500'" :style="{ width: pct + '%' }"></div>
+                                                    </div>
+                                                    <span class="text-xs text-gray-400 w-10 text-right">{{ pct }}%</span>
                                                 </div>
-                                                <span class="text-xs text-gray-400 w-10 text-right">{{ pct }}%</span>
                                             </div>
                                         </div>
-                                    </div>
-                                    <div v-if="account.insights.audience_cities" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
-                                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Top Cidades</p>
-                                        <div class="space-y-1">
-                                            <div v-for="(pct, city) in account.insights.audience_cities" :key="city" class="flex items-center justify-between">
-                                                <span class="text-xs text-gray-300 truncate">{{ city }}</span>
-                                                <span class="text-xs text-gray-500">{{ pct }}%</span>
+                                        <div v-if="account.insights.audience_age" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                            <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Faixa Etaria</p>
+                                            <div class="space-y-1">
+                                                <div v-for="(pct, age) in account.insights.audience_age" :key="age" class="flex items-center gap-2">
+                                                    <span class="text-xs text-gray-400 w-14">{{ age }}</span>
+                                                    <div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                                        <div class="h-full bg-violet-500 rounded-full" :style="{ width: Math.min(pct, 100) + '%' }"></div>
+                                                    </div>
+                                                    <span class="text-xs text-gray-400 w-10 text-right">{{ pct }}%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div v-if="account.insights.audience_cities" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                            <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Top Cidades</p>
+                                            <div class="space-y-1">
+                                                <div v-for="(pct, city) in account.insights.audience_cities" :key="city" class="flex items-center justify-between">
+                                                    <span class="text-xs text-gray-300 truncate">{{ city }}</span>
+                                                    <span class="text-xs text-gray-500">{{ pct }}%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div v-if="account.insights.audience_countries" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3">
+                                            <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Top Paises</p>
+                                            <div class="space-y-1">
+                                                <div v-for="(pct, country) in account.insights.audience_countries" :key="country" class="flex items-center justify-between">
+                                                    <span class="text-xs text-gray-300 truncate">{{ country }}</span>
+                                                    <span class="text-xs text-gray-500">{{ pct }}%</span>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
 
-                                <p class="text-[10px] text-gray-600 mt-2">Ultima atualizacao: {{ account.insights.date }}</p>
+                                <div class="flex items-center justify-between mt-3">
+                                    <p class="text-[10px] text-gray-600">Ultima atualizacao: {{ account.insights.date }}</p>
+                                    <p v-if="account.insights.platform_data?.posts_analyzed" class="text-[10px] text-gray-600">{{ account.insights.platform_data.posts_analyzed }} posts analisados</p>
+                                </div>
                             </div>
 
                             <!-- Sem insights -->

@@ -196,21 +196,47 @@ class SocialOAuthController extends Controller
         // Verificar erro
         if ($request->has('error')) {
             $errorDesc = $request->get('error_description', $request->get('error'));
-            SystemLog::warning('oauth', 'oauth.callback.denied', "Autorizacao negada pelo usuario: {$errorDesc}", [
+
+            // Detectar erro de escopo não autorizado e dar mensagem mais clara
+            $friendlyMessage = $errorDesc;
+            if (str_contains($errorDesc, 'Scope') && str_contains($errorDesc, 'not authorized')) {
+                $platformNames = [
+                    'facebook' => 'Meta',
+                    'instagram' => 'Meta',
+                    'linkedin' => 'LinkedIn',
+                    'youtube' => 'Google',
+                    'tiktok' => 'TikTok',
+                    'pinterest' => 'Pinterest',
+                ];
+                $name = $platformNames[$originalPlatform ?? $platform] ?? $platform;
+
+                $scopeHints = [
+                    'linkedin' => 'Para gerenciar Company Pages, solicite o produto "Community Management API" no LinkedIn Developer Portal (linkedin.com/developers/apps). Após aprovação, tente conectar novamente.',
+                    'facebook' => 'Verifique as permissões do app no Meta Developer Portal (developers.facebook.com). Algumas permissões requerem revisão do app.',
+                ];
+
+                $hint = $scopeHints[$originalPlatform ?? $platform] ?? "Verifique as permissões do app no painel de desenvolvedor da plataforma.";
+                $friendlyMessage = "Permissões insuficientes no {$name}. {$hint}";
+            }
+
+            SystemLog::warning('oauth', 'oauth.callback.denied', "Autorizacao negada: {$errorDesc}", [
                 'error_code' => $request->get('error'),
                 'error_reason' => $request->get('error_reason'),
+                'error_description' => $errorDesc,
+                'platform' => $originalPlatform ?? $platform,
             ]);
+
             if ($isPopup) {
                 return view('oauth.callback-popup', [
                     'status' => 'error',
-                    'message' => 'Autorização negada: ' . $errorDesc,
+                    'message' => $friendlyMessage,
                     'platform' => $platform,
                     'accountsCount' => 0,
                     'discoveryToken' => null,
                 ]);
             }
             return redirect()->route('social.accounts.index')
-                ->with('error', 'Autorização negada: ' . $errorDesc);
+                ->with('error', $friendlyMessage);
         }
 
         $code = $request->get('code');

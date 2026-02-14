@@ -13,6 +13,10 @@ const emit = defineEmits(['update:htmlContent', 'update:mjmlContent', 'update:js
 const editorContainer = ref(null);
 let editor = null;
 
+// Guard contra loop infinito de eventos
+let isEmitting = false;
+let emitTimer = null;
+
 // State
 const activePanel = ref('blocks');
 const savedBlocks = ref([]);
@@ -30,6 +34,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+    if (emitTimer) clearTimeout(emitTimer);
     if (editor) {
         editor.destroy();
     }
@@ -152,27 +157,11 @@ async function initEditor() {
         editor.setComponents(props.htmlContent);
     }
 
-    // Emitir mudanças
-    editor.on('component:update', emitChanges);
-    editor.on('component:add', emitChanges);
-    editor.on('component:remove', emitChanges);
-
-    // Garantir que mudanças de estilo atualizem o componente visualmente.
-    // Quando o Style Manager altera uma propriedade, forçar a sincronização
-    // do estilo inline no elemento real do canvas.
-    editor.on('style:property:update', ({ property }) => {
-        const selected = editor.getSelected();
-        if (!selected) return;
-        const el = selected.getEl();
-        if (!el) return;
-        // Pegar todos os estilos do modelo e aplicar inline diretamente
-        const styles = selected.getStyle();
-        for (const [prop, val] of Object.entries(styles)) {
-            // Converter camelCase do CSS para kebab-case
-            const cssProp = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
-            el.style.setProperty(cssProp, val);
-        }
-    });
+    // Emitir mudanças com debounce para evitar loops e travamentos
+    editor.on('component:update', debouncedEmitChanges);
+    editor.on('component:add', debouncedEmitChanges);
+    editor.on('component:remove', debouncedEmitChanges);
+    editor.on('component:styleUpdate', debouncedEmitChanges);
 
     // Customizar tema escuro do editor + correcoes
     applyDarkTheme();
@@ -348,14 +337,30 @@ function getDefaultBlocks() {
     ];
 }
 
-function emitChanges() {
-    if (!editor) return;
-    const html = editor.getHtml();
-    const css = editor.getCss();
-    const fullHtml = `<!DOCTYPE html><html><head><style>${css}</style></head><body>${html}</body></html>`;
+function debouncedEmitChanges() {
+    // Não re-entrar se já estamos emitindo (evita loop infinito)
+    if (isEmitting) return;
+    // Debounce de 500ms — agrupar mudanças rápidas
+    if (emitTimer) clearTimeout(emitTimer);
+    emitTimer = setTimeout(emitChanges, 500);
+}
 
-    emit('update:htmlContent', fullHtml);
-    emit('update:jsonContent', editor.getProjectData());
+function emitChanges() {
+    if (!editor || isEmitting) return;
+    isEmitting = true;
+    try {
+        const html = editor.getHtml();
+        const css = editor.getCss();
+        const fullHtml = `<!DOCTYPE html><html><head><style>${css}</style></head><body>${html}</body></html>`;
+
+        emit('update:htmlContent', fullHtml);
+        emit('update:jsonContent', editor.getProjectData());
+    } catch (e) {
+        console.warn('[GrapesEditor] Erro ao emitir mudanças:', e);
+    } finally {
+        // Liberar guard apos microtask para evitar re-trigger sincrono
+        setTimeout(() => { isEmitting = false; }, 100);
+    }
 }
 
 function applyDarkTheme() {
@@ -688,17 +693,26 @@ async function generateWithAI() {
 function applyAiResult() {
     if (!editor || !aiResult.value) return;
 
-    if (aiType.value === 'full_template') {
-        editor.setComponents('');
-        const bodyMatch = aiResult.value.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-        const content = bodyMatch ? bodyMatch[1] : aiResult.value;
-        editor.setComponents(content);
-    } else {
-        editor.addComponents(aiResult.value);
+    // Suspender listeners durante operação em lote
+    isEmitting = true;
+    try {
+        if (aiType.value === 'full_template') {
+            editor.setComponents('');
+            const bodyMatch = aiResult.value.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+            const content = bodyMatch ? bodyMatch[1] : aiResult.value;
+            editor.setComponents(content);
+        } else {
+            editor.addComponents(aiResult.value);
+        }
+        aiResult.value = null;
+        aiPrompt.value = '';
+    } finally {
+        // Emitir uma única vez após operação completa
+        setTimeout(() => {
+            isEmitting = false;
+            emitChanges();
+        }, 300);
     }
-    aiResult.value = null;
-    aiPrompt.value = '';
-    emitChanges();
 }
 
 function discardAiResult() {
@@ -706,8 +720,12 @@ function discardAiResult() {
 }
 
 function triggerSave() {
+    // Forçar coleta de dados antes de salvar (bypass debounce)
+    if (emitTimer) clearTimeout(emitTimer);
+    isEmitting = false; // Reset guard
     emitChanges();
-    emit('save');
+    // Pequeno delay para garantir que os dados foram emitidos
+    setTimeout(() => emit('save'), 200);
 }
 
 // Upload via asset manager

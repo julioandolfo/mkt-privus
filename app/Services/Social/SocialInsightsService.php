@@ -69,8 +69,12 @@ class SocialInsightsService
                 'reach' => $data['reach'] ?? null,
                 'impressions' => $data['impressions'] ?? null,
                 'engagement' => $data['engagement'] ?? null,
+                'engagement_rate' => $data['engagement_rate'] ?? null,
                 'likes' => $data['likes'] ?? null,
                 'comments' => $data['comments'] ?? null,
+                'saves' => $data['saves'] ?? null,
+                'shares' => $data['shares'] ?? null,
+                'clicks' => $data['clicks'] ?? null,
             ]);
 
             return $insight;
@@ -149,6 +153,7 @@ class SocialInsightsService
             'impressions' => null,
             'reach' => null,
             'engagement' => null,
+            'engagement_rate' => null,
             'likes' => null,
             'comments' => null,
             'shares' => null,
@@ -169,15 +174,16 @@ class SocialInsightsService
             $data['followers_count'] = $p['followers_count'] ?? null;
             $data['following_count'] = $p['follows_count'] ?? null;
             $data['posts_count'] = $p['media_count'] ?? null;
+            $data['platform_data']['username'] = $p['username'] ?? null;
+            $data['platform_data']['biography'] = $p['biography'] ?? null;
         }
 
         // 2. Insights do perfil (ultimos 28 dias)
-        // Metricas de conta Instagram Business/Creator
-        // Tentativa 1: metric_type=total_value (API v18+) — retorna total do periodo
-        $insightMetrics = 'impressions,reach,profile_views,website_clicks,email_contacts,phone_call_clicks,text_message_clicks,get_directions_clicks';
-
+        // Tentativa 1: metric_type=total_value (API v18+)
         $since28 = now()->subDays(28)->startOfDay()->timestamp;
-        $untilNow = now()->startOfDay()->timestamp;
+        $untilNow = now()->endOfDay()->timestamp;
+
+        $insightMetrics = 'impressions,reach,profile_views,website_clicks,accounts_engaged,follows_and_unfollows';
 
         $insights = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
             'access_token' => $token,
@@ -188,36 +194,61 @@ class SocialInsightsService
             'until' => $untilNow,
         ]);
 
-        $insightsData = $insights->json('data', []);
         $insightsParsed = false;
 
-        // Extrair total_value (API nova)
-        if ($insights->successful() && !empty($insightsData)) {
-            foreach ($insightsData as $metric) {
-                // API nova: total_value dentro do metric
+        if ($insights->successful() && !empty($insights->json('data'))) {
+            foreach ($insights->json('data', []) as $metric) {
                 $value = $metric['total_value']['value']
                     ?? $metric['values'][0]['value']
                     ?? null;
 
                 if ($value === null) continue;
                 $insightsParsed = true;
-                $name = $metric['name'];
 
-                match ($name) {
+                match ($metric['name']) {
                     'impressions' => $data['impressions'] = $value,
                     'reach' => $data['reach'] = $value,
                     'profile_views' => $data['platform_data']['profile_views'] = $value,
                     'website_clicks' => $data['clicks'] = $value,
-                    'email_contacts' => $data['platform_data']['email_contacts'] = $value,
-                    'phone_call_clicks' => $data['platform_data']['phone_calls'] = $value,
-                    'text_message_clicks' => $data['platform_data']['text_messages'] = $value,
-                    'get_directions_clicks' => $data['platform_data']['directions_clicks'] = $value,
+                    'accounts_engaged' => $data['platform_data']['accounts_engaged'] = $value,
+                    'follows_and_unfollows' => $data['platform_data']['net_followers'] = $value,
                     default => null,
                 };
             }
         }
 
-        // Fallback: se total_value nao retornou dados, tentar period=day e somar valores diarios
+        // Tentativa 2: sem metric_type (API antiga) — buscar metricas individuais
+        if (!$insightsParsed) {
+            $insightsLegacy = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+                'access_token' => $token,
+                'metric' => 'impressions,reach,profile_views,website_clicks',
+                'period' => 'day',
+                'since' => $since28,
+                'until' => $untilNow,
+            ]);
+
+            if ($insightsLegacy->successful() && !empty($insightsLegacy->json('data'))) {
+                foreach ($insightsLegacy->json('data', []) as $metric) {
+                    // Somar valores diarios do periodo
+                    $sum = 0;
+                    foreach ($metric['values'] ?? [] as $dayValue) {
+                        $sum += $dayValue['value'] ?? 0;
+                    }
+                    if ($sum > 0) {
+                        $insightsParsed = true;
+                        match ($metric['name']) {
+                            'impressions' => $data['impressions'] = $sum,
+                            'reach' => $data['reach'] = $sum,
+                            'profile_views' => $data['platform_data']['profile_views'] = $sum,
+                            'website_clicks' => $data['clicks'] = $sum,
+                            default => null,
+                        };
+                    }
+                }
+            }
+        }
+
+        // Tentativa 3: periodo mais curto (7 dias) se 28 dias falhou
         if (!$insightsParsed) {
             $insightsFallback = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
                 'access_token' => $token,
@@ -227,9 +258,8 @@ class SocialInsightsService
                 'until' => $untilNow,
             ]);
 
-            if ($insightsFallback->successful()) {
+            if ($insightsFallback->successful() && !empty($insightsFallback->json('data'))) {
                 foreach ($insightsFallback->json('data', []) as $metric) {
-                    // Somar todos os valores diarios do periodo
                     $sum = 0;
                     foreach ($metric['values'] ?? [] as $dayValue) {
                         $sum += $dayValue['value'] ?? 0;
@@ -245,61 +275,93 @@ class SocialInsightsService
                 }
             }
 
+            // Log detalhado de todas as tentativas para debug
             if (!$insightsParsed) {
-                SystemLog::warning('social', 'insights.ig.reach_empty', "Instagram insights API retornou vazio para reach/impressions", [
+                SystemLog::warning('social', 'insights.ig.reach_empty', "Instagram insights API: todas as tentativas falharam", [
                     'account_id' => $account->id,
                     'username' => $account->username,
-                    'api_response_status' => $insights->status(),
-                    'api_response_error' => $insights->json('error') ?? null,
-                    'fallback_status' => $insightsFallback->status(),
-                    'fallback_error' => $insightsFallback->json('error') ?? null,
+                    'attempt1_status' => $insights->status(),
+                    'attempt1_error' => $insights->json('error') ?? null,
+                    'attempt1_data_count' => count($insights->json('data', [])),
+                    'attempt2_exists' => isset($insightsLegacy),
+                    'attempt2_status' => isset($insightsLegacy) ? $insightsLegacy->status() : null,
+                    'attempt2_error' => isset($insightsLegacy) ? ($insightsLegacy->json('error') ?? null) : null,
+                    'attempt3_status' => $insightsFallback->status(),
+                    'attempt3_error' => $insightsFallback->json('error') ?? null,
+                    'since_28' => date('Y-m-d', $since28),
+                    'until' => date('Y-m-d', $untilNow),
                 ]);
             }
         }
 
-        // 3. Engajamento dos posts recentes (ultimos 25 posts)
+        // 3. Engajamento dos posts recentes (ultimos 50 posts, filtrar por 30 dias)
         $media = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/media", [
             'access_token' => $token,
-            'fields' => 'id,timestamp,like_count,comments_count',
-            'limit' => 25,
+            'fields' => 'id,timestamp,like_count,comments_count,media_type,media_product_type',
+            'limit' => 50,
         ]);
 
         $totalLikes = 0;
         $totalComments = 0;
         $recentPostIds = [];
+        $recentPostCount = 0;
+        $storiesCount = 0;
+        $reelsCount = 0;
 
         if ($media->successful()) {
             foreach ($media->json('data', []) as $post) {
-                // Considerar apenas posts do ultimo mes
                 $postDate = Carbon::parse($post['timestamp']);
                 if ($postDate->gte(now()->subDays(30))) {
                     $totalLikes += $post['like_count'] ?? 0;
                     $totalComments += $post['comments_count'] ?? 0;
                     $recentPostIds[] = $post['id'];
+                    $recentPostCount++;
+
+                    // Contar tipos de conteudo
+                    $productType = $post['media_product_type'] ?? '';
+                    $mediaType = $post['media_type'] ?? '';
+                    if ($productType === 'STORY' || $mediaType === 'STORY') {
+                        $storiesCount++;
+                    } elseif ($productType === 'REELS' || $mediaType === 'VIDEO') {
+                        $reelsCount++;
+                    }
                 }
             }
         }
 
         $data['likes'] = $totalLikes;
         $data['comments'] = $totalComments;
+        $data['platform_data']['stories_count'] = $storiesCount;
+        $data['platform_data']['reels_count'] = $reelsCount;
 
-        // 4. Insights detalhados dos posts (saves, shares, video_views)
+        // Medias por post
+        if ($recentPostCount > 0) {
+            $data['platform_data']['avg_likes_per_post'] = round($totalLikes / $recentPostCount, 1);
+            $data['platform_data']['avg_comments_per_post'] = round($totalComments / $recentPostCount, 1);
+        }
+
+        // 4. Insights detalhados dos posts (saves, shares, video_views, reach por post)
         $totalSaves = 0;
         $totalShares = 0;
         $totalVideoViews = 0;
+        $totalPostReach = 0;
+        $totalPostImpressions = 0;
 
-        foreach (array_slice($recentPostIds, 0, 10) as $mediaId) {
+        foreach (array_slice($recentPostIds, 0, 15) as $mediaId) {
             $mediaInsights = Http::get("https://graph.facebook.com/{$apiVersion}/{$mediaId}/insights", [
                 'access_token' => $token,
-                'metric' => 'saved,shares,video_views,reach,impressions',
+                'metric' => 'saved,shares,video_views,reach,impressions,total_interactions',
             ]);
 
             if ($mediaInsights->successful()) {
                 foreach ($mediaInsights->json('data', []) as $mi) {
+                    $val = $mi['values'][0]['value'] ?? 0;
                     match ($mi['name']) {
-                        'saved' => $totalSaves += $mi['values'][0]['value'] ?? 0,
-                        'shares' => $totalShares += $mi['values'][0]['value'] ?? 0,
-                        'video_views' => $totalVideoViews += $mi['values'][0]['value'] ?? 0,
+                        'saved' => $totalSaves += $val,
+                        'shares' => $totalShares += $val,
+                        'video_views' => $totalVideoViews += $val,
+                        'reach' => $totalPostReach += $val,
+                        'impressions' => $totalPostImpressions += $val,
                         default => null,
                     };
                 }
@@ -311,55 +373,181 @@ class SocialInsightsService
         $data['video_views'] = $totalVideoViews > 0 ? $totalVideoViews : null;
         $data['engagement'] = $totalLikes + $totalComments + $totalSaves + $totalShares;
 
-        // 5. Audience demographics (se disponivel)
-        $audienceInsights = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+        // Se reach da conta veio vazio, usar soma de reach dos posts como fallback
+        if (!$data['reach'] && $totalPostReach > 0) {
+            $data['reach'] = $totalPostReach;
+            $data['platform_data']['reach_source'] = 'posts_sum';
+        }
+        if (!$data['impressions'] && $totalPostImpressions > 0) {
+            $data['impressions'] = $totalPostImpressions;
+            $data['platform_data']['impressions_source'] = 'posts_sum';
+        }
+
+        // Engagement rate = (likes + comments + saves + shares) / followers * 100
+        if ($data['followers_count'] && $data['followers_count'] > 0) {
+            $data['engagement_rate'] = round($data['engagement'] / $data['followers_count'] * 100, 2);
+        }
+
+        // Posts insights summary
+        $data['platform_data']['posts_analyzed'] = min(count($recentPostIds), 15);
+        $data['platform_data']['posts_total_30d'] = $recentPostCount;
+        $data['platform_data']['avg_reach_per_post'] = count($recentPostIds) > 0 ? round($totalPostReach / min(count($recentPostIds), 15)) : null;
+        $data['platform_data']['avg_impressions_per_post'] = count($recentPostIds) > 0 ? round($totalPostImpressions / min(count($recentPostIds), 15)) : null;
+
+        // 5. Audience demographics
+        // Tentativa com API nova (v18+): engaged_audience_demographics
+        $audienceParsed = false;
+
+        $audienceNew = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
             'access_token' => $token,
-            'metric' => 'audience_gender_age,audience_city,audience_country',
+            'metric' => 'engaged_audience_demographics',
             'period' => 'lifetime',
+            'metric_type' => 'total_value',
+            'breakdown' => 'age,gender,city,country',
         ]);
 
-        if ($audienceInsights->successful()) {
-            foreach ($audienceInsights->json('data', []) as $metric) {
-                $values = $metric['values'][0]['value'] ?? [];
+        if ($audienceNew->successful() && !empty($audienceNew->json('data'))) {
+            $audienceParsed = true;
+            foreach ($audienceNew->json('data', []) as $metric) {
+                $results = $metric['total_value']['breakdowns'][0]['results'] ?? [];
+                $this->parseAudienceBreakdowns($data, $results);
+            }
+        }
 
-                if ($metric['name'] === 'audience_gender_age' && is_array($values)) {
-                    $genders = ['male' => 0, 'female' => 0, 'other' => 0];
-                    $ages = [];
-                    foreach ($values as $key => $count) {
-                        [$gender, $age] = explode('.', $key) + ['', ''];
-                        match ($gender) {
-                            'M' => $genders['male'] += $count,
-                            'F' => $genders['female'] += $count,
-                            default => $genders['other'] += $count,
-                        };
-                        $ages[$age] = ($ages[$age] ?? 0) + $count;
-                    }
-                    $total = array_sum($genders);
-                    if ($total > 0) {
-                        $data['audience_gender'] = [
-                            'male' => round($genders['male'] / $total * 100, 1),
-                            'female' => round($genders['female'] / $total * 100, 1),
-                            'other' => round($genders['other'] / $total * 100, 1),
-                        ];
-                        $data['audience_age'] = collect($ages)->mapWithKeys(fn($v, $k) => [$k => round($v / $total * 100, 1)])->toArray();
-                    }
+        // Fallback: API legada (lifetime audience)
+        if (!$audienceParsed) {
+            $audienceInsights = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+                'access_token' => $token,
+                'metric' => 'follower_demographics',
+                'period' => 'lifetime',
+                'metric_type' => 'total_value',
+                'breakdown' => 'age,gender,city,country',
+            ]);
+
+            if ($audienceInsights->successful() && !empty($audienceInsights->json('data'))) {
+                $audienceParsed = true;
+                foreach ($audienceInsights->json('data', []) as $metric) {
+                    $results = $metric['total_value']['breakdowns'][0]['results'] ?? [];
+                    $this->parseAudienceBreakdowns($data, $results);
                 }
+            }
+        }
 
-                if ($metric['name'] === 'audience_city' && is_array($values)) {
-                    $total = array_sum($values);
-                    $data['audience_cities'] = collect($values)->sortDesc()->take(10)
-                        ->mapWithKeys(fn($v, $k) => [$k => round($v / max($total, 1) * 100, 1)])->toArray();
-                }
+        // Fallback final: API antiga (audience_gender_age, audience_city, audience_country)
+        if (!$audienceParsed) {
+            $audienceLegacy = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+                'access_token' => $token,
+                'metric' => 'audience_gender_age,audience_city,audience_country',
+                'period' => 'lifetime',
+            ]);
 
-                if ($metric['name'] === 'audience_country' && is_array($values)) {
-                    $total = array_sum($values);
-                    $data['audience_countries'] = collect($values)->sortDesc()->take(10)
-                        ->mapWithKeys(fn($v, $k) => [$k => round($v / max($total, 1) * 100, 1)])->toArray();
+            if ($audienceLegacy->successful()) {
+                foreach ($audienceLegacy->json('data', []) as $metric) {
+                    $values = $metric['values'][0]['value'] ?? [];
+
+                    if ($metric['name'] === 'audience_gender_age' && is_array($values)) {
+                        $genders = ['male' => 0, 'female' => 0, 'other' => 0];
+                        $ages = [];
+                        foreach ($values as $key => $count) {
+                            [$gender, $age] = explode('.', $key) + ['', ''];
+                            match ($gender) {
+                                'M' => $genders['male'] += $count,
+                                'F' => $genders['female'] += $count,
+                                default => $genders['other'] += $count,
+                            };
+                            $ages[$age] = ($ages[$age] ?? 0) + $count;
+                        }
+                        $total = array_sum($genders);
+                        if ($total > 0) {
+                            $data['audience_gender'] = [
+                                'male' => round($genders['male'] / $total * 100, 1),
+                                'female' => round($genders['female'] / $total * 100, 1),
+                                'other' => round($genders['other'] / $total * 100, 1),
+                            ];
+                            $data['audience_age'] = collect($ages)->mapWithKeys(fn($v, $k) => [$k => round($v / $total * 100, 1)])->toArray();
+                        }
+                    }
+
+                    if ($metric['name'] === 'audience_city' && is_array($values)) {
+                        $total = array_sum($values);
+                        $data['audience_cities'] = collect($values)->sortDesc()->take(10)
+                            ->mapWithKeys(fn($v, $k) => [$k => round($v / max($total, 1) * 100, 1)])->toArray();
+                    }
+
+                    if ($metric['name'] === 'audience_country' && is_array($values)) {
+                        $total = array_sum($values);
+                        $data['audience_countries'] = collect($values)->sortDesc()->take(10)
+                            ->mapWithKeys(fn($v, $k) => [$k => round($v / max($total, 1) * 100, 1)])->toArray();
+                    }
                 }
             }
         }
 
         return $data;
+    }
+
+    /**
+     * Parse audience breakdowns da API nova do Instagram (v18+).
+     */
+    private function parseAudienceBreakdowns(array &$data, array $results): void
+    {
+        $genders = ['male' => 0, 'female' => 0, 'other' => 0];
+        $ages = [];
+        $cities = [];
+        $countries = [];
+
+        foreach ($results as $result) {
+            $dims = $result['dimension_values'] ?? [];
+            $value = $result['value'] ?? 0;
+
+            // Gender + Age breakdown
+            if (count($dims) >= 2) {
+                $gender = strtolower($dims[1] ?? '');
+                $age = $dims[0] ?? '';
+
+                match ($gender) {
+                    'm', 'male' => $genders['male'] += $value,
+                    'f', 'female' => $genders['female'] += $value,
+                    default => $genders['other'] += $value,
+                };
+                if ($age) {
+                    $ages[$age] = ($ages[$age] ?? 0) + $value;
+                }
+            }
+
+            // City breakdown
+            if (count($dims) >= 3 && !empty($dims[2])) {
+                $cities[$dims[2]] = ($cities[$dims[2]] ?? 0) + $value;
+            }
+
+            // Country breakdown
+            if (count($dims) >= 4 && !empty($dims[3])) {
+                $countries[$dims[3]] = ($countries[$dims[3]] ?? 0) + $value;
+            }
+        }
+
+        $totalGender = array_sum($genders);
+        if ($totalGender > 0) {
+            $data['audience_gender'] = [
+                'male' => round($genders['male'] / $totalGender * 100, 1),
+                'female' => round($genders['female'] / $totalGender * 100, 1),
+                'other' => round($genders['other'] / $totalGender * 100, 1),
+            ];
+        }
+        if (!empty($ages)) {
+            $totalAge = array_sum($ages);
+            $data['audience_age'] = collect($ages)->mapWithKeys(fn($v, $k) => [$k => round($v / max($totalAge, 1) * 100, 1)])->toArray();
+        }
+        if (!empty($cities)) {
+            $totalCities = array_sum($cities);
+            $data['audience_cities'] = collect($cities)->sortDesc()->take(10)
+                ->mapWithKeys(fn($v, $k) => [$k => round($v / max($totalCities, 1) * 100, 1)])->toArray();
+        }
+        if (!empty($countries)) {
+            $totalCountries = array_sum($countries);
+            $data['audience_countries'] = collect($countries)->sortDesc()->take(10)
+                ->mapWithKeys(fn($v, $k) => [$k => round($v / max($totalCountries, 1) * 100, 1)])->toArray();
+        }
     }
 
     // ================================================================
