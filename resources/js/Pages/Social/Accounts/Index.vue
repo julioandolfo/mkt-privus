@@ -347,6 +347,29 @@ function reconnectOAuth(account: SocialAccount) {
     connectOAuth(account.platform);
 }
 
+// Sincronizar insights de uma conta
+const syncingAccount = ref<number | null>(null);
+
+async function syncAccountInsights(account: SocialAccount) {
+    if (syncingAccount.value === account.id) return;
+    syncingAccount.value = account.id;
+
+    try {
+        const resp = await axios.post(route('social.accounts.sync', account.id));
+        if (resp.data?.success) {
+            showToast(resp.data.message || `Insights de @${account.username} sincronizados!`, 'success');
+            // Recarregar pagina para atualizar dados
+            router.reload({ preserveScroll: true });
+        } else {
+            showToast(resp.data?.message || 'Falha ao sincronizar.', 'error');
+        }
+    } catch (e: any) {
+        showToast(e.response?.data?.message || 'Erro ao sincronizar insights.', 'error');
+    } finally {
+        syncingAccount.value = null;
+    }
+}
+
 const tokenStatusLabels: Record<string, { label: string; color: string; bg: string; icon: string }> = {
     ativo: { label: 'Conectado', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/30', icon: '●' },
     expirado: { label: 'Token expirado', color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/30', icon: '!' },
@@ -549,6 +572,16 @@ function formatNumber(num: number | null | undefined): string {
                                     <button v-if="account.token_status === 'expirado' || account.token_status === 'renovar'" @click="reconnectOAuth(account)"
                                         class="rounded-lg bg-indigo-600/20 border border-indigo-500/30 px-2.5 py-1 text-[11px] font-medium text-indigo-400 hover:bg-indigo-600/30 transition" title="Reconectar OAuth">
                                         ↻ Reconectar
+                                    </button>
+                                    <button @click="syncAccountInsights(account)"
+                                        :disabled="syncingAccount === account.id || account.token_status === 'sem_token'"
+                                        class="rounded-lg bg-cyan-600/20 border border-cyan-500/30 px-2.5 py-1 text-[11px] font-medium text-cyan-400 hover:bg-cyan-600/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                                        title="Sincronizar insights agora">
+                                        <span v-if="syncingAccount === account.id" class="inline-flex items-center gap-1">
+                                            <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                            Sincronizando...
+                                        </span>
+                                        <span v-else>↻ Sincronizar</span>
                                     </button>
                                     <button @click="expandedAccount = expandedAccount === account.id ? null : account.id"
                                         class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:bg-gray-700/50 border border-gray-700 transition" title="Ver insights">

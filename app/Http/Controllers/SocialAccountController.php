@@ -327,6 +327,55 @@ class SocialAccountController extends Controller
         }
     }
 
+    /**
+     * Sincronizar insights de uma conta social manualmente
+     */
+    public function syncAccount(Request $request, SocialAccount $account): JsonResponse
+    {
+        try {
+            if (!$account->access_token) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Esta conta não possui token de acesso. Reconecte via OAuth.',
+                ]);
+            }
+
+            $service = app(\App\Services\Social\SocialInsightsService::class);
+            $result = $service->syncAccount($account);
+
+            if ($result) {
+                // Recarregar insight mais recente para retornar dados atualizados
+                $latestInsight = SocialInsight::where('social_account_id', $account->id)
+                    ->where('sync_status', 'success')
+                    ->orderByDesc('date')
+                    ->first();
+
+                return response()->json([
+                    'success' => true,
+                    'message' => "Insights de @{$account->username} sincronizados com sucesso!",
+                    'followers_count' => $latestInsight?->followers_count,
+                    'reach' => $latestInsight?->reach,
+                    'engagement' => $latestInsight?->engagement,
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Não foi possível sincronizar. Verifique os logs para detalhes.',
+            ]);
+        } catch (\Throwable $e) {
+            SystemLog::error('social', 'account.sync.error', "Erro ao sincronizar conta #{$account->id}: {$e->getMessage()}", [
+                'account_id' => $account->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao sincronizar: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
     // ===== PRIVATE =====
 
     private function authorizeAccount(Request $request, SocialAccount $account): void

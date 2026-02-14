@@ -200,6 +200,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/{account}', [SocialAccountController::class, 'destroy'])->name('destroy');
             Route::post('/{account}/toggle', [SocialAccountController::class, 'toggle'])->name('toggle');
             Route::post('/{account}/link-brand', [SocialAccountController::class, 'linkBrand'])->name('link-brand');
+            Route::post('/{account}/sync', [SocialAccountController::class, 'syncAccount'])->name('sync');
         });
 
         // OAuth Social (callback está fora do auth - ver acima)
