@@ -154,3 +154,22 @@ Schedule::call(function () {
     if (!\Illuminate\Support\Facades\Schema::hasTable('sms_campaigns')) return;
     dispatch(new \App\Jobs\GenerateSmsAiSuggestionsJob);
 })->name('sms.ai-suggestions')->dailyAt('08:00')->withoutOverlapping(15);
+
+/*
+|--------------------------------------------------------------------------
+| Blog - Geração Automática de Artigos
+|--------------------------------------------------------------------------
+*/
+
+// Gerar artigos de blog com IA - 1x por dia às 9h
+Schedule::job(new \App\Jobs\GenerateBlogArticlesJob)->dailyAt('09:00')->withoutOverlapping(30);
+
+// Publicar artigos agendados - a cada 5 minutos
+Schedule::call(function () {
+    if (!\Illuminate\Support\Facades\Schema::hasTable('blog_articles')) return;
+    $articles = \App\Models\BlogArticle::readyToPublish()->get();
+    $wpService = app(\App\Services\Blog\WordPressPublishService::class);
+    foreach ($articles as $article) {
+        $wpService->publish($article);
+    }
+})->name('blog.publish-scheduled')->everyFiveMinutes()->withoutOverlapping();

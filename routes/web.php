@@ -29,6 +29,9 @@ use App\Http\Controllers\SmsTemplateController;
 use App\Http\Controllers\SmsDashboardController;
 use App\Http\Controllers\SmsWebhookController;
 use App\Http\Controllers\SendPulseWebhookController;
+use App\Http\Controllers\BlogController;
+use App\Http\Controllers\LinkPageController;
+use App\Http\Controllers\LinkPagePublicController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -400,9 +403,57 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/campaigns/{campaign}/estimate-cost', [SmsCampaignController::class, 'estimateCost'])->name('estimate-cost');
     });
 
-    // ===== MODULOS FUTUROS =====
-    // Route::prefix('blog')->name('blog.')->group(function () { ... });
-    // Route::prefix('links')->name('links.')->group(function () { ... });
+    // ===== BLOG =====
+    Route::prefix('blog')->name('blog.')->group(function () {
+        // Listagem e criação
+        Route::get('/', [BlogController::class, 'index'])->name('index');
+        Route::get('/create', [BlogController::class, 'create'])->name('create');
+        Route::post('/', [BlogController::class, 'store'])->name('store');
+
+        // Geração com IA (AJAX) — ANTES das rotas com {article}
+        Route::post('/generate', [BlogController::class, 'generate'])->name('generate');
+        Route::post('/generate-cover', [BlogController::class, 'generateCover'])->name('generate-cover');
+        Route::post('/generate-topics', [BlogController::class, 'generateTopics'])->name('generate-topics');
+        Route::post('/upload-cover', [BlogController::class, 'uploadCover'])->name('upload-cover');
+
+        // Categorias — ANTES das rotas com {article}
+        Route::get('/categories', [BlogController::class, 'categories'])->name('categories');
+        Route::post('/categories', [BlogController::class, 'storeCategory'])->name('categories.store');
+        Route::put('/categories/{category}', [BlogController::class, 'updateCategory'])->name('categories.update');
+        Route::delete('/categories/{category}', [BlogController::class, 'destroyCategory'])->name('categories.destroy');
+        Route::post('/categories/sync', [BlogController::class, 'syncCategories'])->name('categories.sync');
+
+        // Conexões WordPress — ANTES das rotas com {article}
+        Route::post('/connections', [BlogController::class, 'storeConnection'])->name('connections.store');
+        Route::post('/connections/test', [BlogController::class, 'testConnection'])->name('connections.test');
+        Route::delete('/connections/{connection}', [BlogController::class, 'destroyConnection'])->name('connections.destroy');
+        Route::get('/connections/{connection}/categories', [BlogController::class, 'connectionCategories'])->name('connections.categories');
+
+        // Artigos individuais (com {article})
+        Route::get('/{article}', [BlogController::class, 'show'])->name('show');
+        Route::get('/{article}/edit', [BlogController::class, 'edit'])->name('edit');
+        Route::put('/{article}', [BlogController::class, 'update'])->name('update');
+        Route::delete('/{article}', [BlogController::class, 'destroy'])->name('destroy');
+        Route::post('/{article}/publish', [BlogController::class, 'publish'])->name('publish');
+        Route::post('/{article}/approve', [BlogController::class, 'approve'])->name('approve');
+        Route::post('/{article}/generate-seo', [BlogController::class, 'generateSeo'])->name('generate-seo');
+    });
+
+    // ===== LINKS (BIO LINK PAGES) =====
+    Route::prefix('links')->name('links.')->group(function () {
+        Route::get('/', [LinkPageController::class, 'index'])->name('index');
+        Route::post('/', [LinkPageController::class, 'store'])->name('store');
+        Route::get('/{page}/editor', [LinkPageController::class, 'editor'])->name('editor');
+        Route::put('/{page}/save', [LinkPageController::class, 'save'])->name('save');
+        Route::get('/{page}/analytics', [LinkPageController::class, 'analytics'])->name('analytics');
+        Route::post('/{page}/upload-avatar', [LinkPageController::class, 'uploadAvatar'])->name('upload-avatar');
+        Route::post('/{page}/duplicate', [LinkPageController::class, 'duplicate'])->name('duplicate');
+        Route::delete('/{page}', [LinkPageController::class, 'destroy'])->name('destroy');
+    });
 });
+
+// Rotas públicas - Link Pages (fora do middleware auth)
+Route::get('/l/{slug}', [LinkPagePublicController::class, 'show'])->name('links.public');
+Route::post('/l/{slug}/click', [LinkPagePublicController::class, 'click'])->name('links.public.click');
 
 require __DIR__.'/auth.php';

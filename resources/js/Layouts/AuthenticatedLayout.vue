@@ -61,8 +61,20 @@ const navigation: NavItem[] = [
         ],
     },
     { name: 'Chat IA', href: 'chat.index', icon: 'message-circle', routeMatch: 'chat.*', enabled: true },
-    { name: 'Blog', href: null, icon: 'file-text', routeMatch: 'blog.*', enabled: false, badge: 'Em breve' },
-    { name: 'Links', href: null, icon: 'link', routeMatch: 'links.*', enabled: false, badge: 'Em breve' },
+    {
+        name: 'Blog', href: 'blog.index', icon: 'file-text', routeMatch: 'blog.*', enabled: true,
+        children: [
+            { name: 'Artigos', href: 'blog.index', routeMatch: 'blog.index' },
+            { name: 'Novo Artigo', href: 'blog.create', routeMatch: 'blog.create' },
+            { name: 'Categorias', href: 'blog.categories', routeMatch: 'blog.categories*' },
+        ],
+    },
+    {
+        name: 'Links', href: 'links.index', icon: 'link', routeMatch: 'links.*', enabled: true,
+        children: [
+            { name: 'Páginas', href: 'links.index', routeMatch: 'links.index' },
+        ],
+    },
     {
         name: 'Analytics', href: 'analytics.index', icon: 'bar-chart-2', routeMatch: 'analytics.*', enabled: true,
         children: [
