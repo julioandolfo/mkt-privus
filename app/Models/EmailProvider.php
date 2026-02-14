@@ -60,12 +60,20 @@ class EmailProvider extends Model
 
     public function getFromAddress(): string
     {
-        return $this->config['from_address'] ?? $this->config['from_email'] ?? config('mail.from.address');
+        return $this->config['from_email'] ?? $this->config['from_address'] ?? config('mail.from.address');
+    }
+
+    /**
+     * Alias para getFromAddress() — mantém compatibilidade
+     */
+    public function getFromEmail(): string
+    {
+        return $this->getFromAddress();
     }
 
     public function getFromName(): string
     {
-        return $this->config['from_name'] ?? config('mail.from.name');
+        return $this->config['from_name'] ?? $this->config['sender_name'] ?? config('mail.from.name');
     }
 
     public function hasQuotaRemaining(): bool

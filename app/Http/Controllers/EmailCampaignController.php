@@ -412,30 +412,46 @@ class EmailCampaignController extends Controller
      */
     public function sendTestPreview(Request $request)
     {
-        $request->validate([
-            'test_email' => 'required|email',
-            'subject' => 'required|string|max:255',
-            'html_content' => 'required|string',
-            'email_provider_id' => 'required|exists:email_providers,id',
-            'from_name' => 'nullable|string|max:255',
-            'from_email' => 'nullable|email|max:255',
-        ]);
+        try {
+            $request->validate([
+                'test_email' => 'required|email',
+                'subject' => 'required|string|max:255',
+                'html_content' => 'required|string',
+                'email_provider_id' => 'required',
+                'from_name' => 'nullable|string|max:255',
+                'from_email' => 'nullable|email|max:255',
+            ]);
 
-        $provider = \App\Models\EmailProvider::find($request->input('email_provider_id'));
-        if (!$provider) {
-            return response()->json(['success' => false, 'error' => 'Provedor não encontrado.']);
+            $provider = EmailProvider::find($request->input('email_provider_id'));
+            if (!$provider) {
+                return response()->json(['success' => false, 'error' => 'Provedor não encontrado. ID: ' . $request->input('email_provider_id')]);
+            }
+
+            $providerService = app(\App\Services\Email\EmailProviderService::class);
+            $result = $providerService->send(
+                $provider,
+                $request->input('test_email'),
+                '[TESTE] ' . $request->input('subject'),
+                $request->input('html_content'),
+                $request->input('from_name') ?: $provider->getFromName(),
+                $request->input('from_email') ?: $provider->getFromEmail(),
+            );
+
+            return response()->json($result);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Validação: ' . collect($e->errors())->flatten()->implode(', '),
+            ], 422);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('sendTestPreview error', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'error' => 'Erro interno: ' . $e->getMessage(),
+            ], 500);
         }
-
-        $providerService = app(\App\Services\Email\EmailProviderService::class);
-        $result = $providerService->send(
-            $provider,
-            $request->input('test_email'),
-            '[TESTE] ' . $request->input('subject'),
-            $request->input('html_content'),
-            $request->input('from_name') ?: $provider->getFromName(),
-            $request->input('from_email') ?: $provider->getFromEmail(),
-        );
-
-        return response()->json($result);
     }
 }
