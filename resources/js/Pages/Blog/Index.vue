@@ -2,6 +2,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
+import axios from 'axios';
 
 interface Article {
     id: number;
@@ -23,6 +24,9 @@ interface Article {
     scheduled_publish_at: string | null;
     created_at: string;
     user_name: string | null;
+    can_approve: boolean;
+    can_publish: boolean;
+    has_wordpress: boolean;
 }
 
 const props = defineProps<{
@@ -71,9 +75,37 @@ function seoScoreColor(score: number): string {
     return 'text-red-400';
 }
 
+const processingId = ref<number | null>(null);
+
 function deleteArticle(id: number) {
     if (confirm('Tem certeza que deseja excluir este artigo?')) {
         router.delete(route('blog.destroy', id));
+    }
+}
+
+function approveArticle(id: number) {
+    if (!confirm('Aprovar este artigo para publicação?')) return;
+    processingId.value = id;
+    router.post(route('blog.approve', id), {}, {
+        preserveScroll: true,
+        onFinish: () => { processingId.value = null; },
+    });
+}
+
+async function publishArticle(id: number) {
+    if (!confirm('Publicar este artigo no WordPress agora?')) return;
+    processingId.value = id;
+    try {
+        const resp = await axios.post(route('blog.publish', id));
+        if (resp.data.success) {
+            router.reload({ preserveScroll: true });
+        } else {
+            alert(resp.data.error || 'Erro ao publicar.');
+        }
+    } catch (e: any) {
+        alert(e.response?.data?.error || 'Erro de conexão ao publicar.');
+    } finally {
+        processingId.value = null;
     }
 }
 </script>
@@ -188,14 +220,29 @@ function deleteArticle(id: number) {
 
                     <!-- Actions -->
                     <div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition">
+                        <!-- Aprovar -->
+                        <button v-if="article.can_approve" @click="approveArticle(article.id)"
+                            :disabled="processingId === article.id"
+                            class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-blue-400 hover:bg-blue-500/10 border border-blue-500/30 transition disabled:opacity-50">
+                            {{ processingId === article.id ? '...' : 'Aprovar' }}
+                        </button>
+                        <!-- Publicar -->
+                        <button v-if="article.can_publish" @click="publishArticle(article.id)"
+                            :disabled="processingId === article.id"
+                            class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-emerald-400 hover:bg-emerald-500/10 border border-emerald-500/30 transition disabled:opacity-50">
+                            {{ processingId === article.id ? 'Publicando...' : 'Publicar' }}
+                        </button>
+                        <!-- Editar -->
                         <Link :href="route('blog.edit', article.id)"
                             class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:bg-gray-700/50 border border-gray-700 transition">
                             Editar
                         </Link>
+                        <!-- Ver no site -->
                         <a v-if="article.wp_post_url" :href="article.wp_post_url" target="_blank"
                             class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-emerald-400 hover:bg-emerald-500/10 border border-emerald-500/30 transition">
                             Ver no site
                         </a>
+                        <!-- Excluir -->
                         <button @click="deleteArticle(article.id)"
                             class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/10 border border-red-500/30 transition">
                             Excluir

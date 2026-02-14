@@ -22,6 +22,8 @@ const form = useForm({
     meta_keywords: '',
     status: 'draft',
     ai_model_used: '',
+    cover_width: 1750,
+    cover_height: 650,
     tokens_used: 0,
     ai_metadata: null as any,
 });
@@ -93,6 +95,8 @@ async function generateCoverImage() {
         const resp = await axios.post(route('blog.generate-cover'), {
             title: form.title,
             excerpt: form.excerpt || '',
+            cover_width: form.cover_width || 1750,
+            cover_height: form.cover_height || 650,
         });
 
         if (resp.data.success) {
@@ -355,7 +359,7 @@ const seoScore = computed(() => {
                 <!-- Cover image -->
                 <div class="mb-4">
                     <label class="text-sm text-gray-400 mb-2 block">Imagem de Capa</label>
-                    <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-3 flex-wrap">
                         <div v-if="form.cover_image_path" class="shrink-0">
                             <img :src="'/storage/' + form.cover_image_path" class="h-20 rounded-xl object-cover" />
                         </div>
@@ -369,6 +373,17 @@ const seoScore = computed(() => {
                         </label>
                         <button v-if="form.cover_image_path" @click="form.cover_image_path = ''" type="button"
                             class="text-xs text-red-400 hover:text-red-300">Remover</button>
+                    </div>
+
+                    <!-- Cover dimensions -->
+                    <div class="mt-3 flex items-center gap-2">
+                        <span class="text-xs text-gray-500">Dimensões:</span>
+                        <input v-model.number="form.cover_width" type="number" min="100" max="4000" placeholder="Largura"
+                            class="w-20 rounded-lg bg-gray-800 border-gray-700 text-white text-xs text-center py-1 px-2 focus:border-indigo-500 focus:ring-indigo-500" />
+                        <span class="text-gray-600 text-xs">x</span>
+                        <input v-model.number="form.cover_height" type="number" min="100" max="4000" placeholder="Altura"
+                            class="w-20 rounded-lg bg-gray-800 border-gray-700 text-white text-xs text-center py-1 px-2 focus:border-indigo-500 focus:ring-indigo-500" />
+                        <span class="text-[10px] text-gray-600">px</span>
                     </div>
                 </div>
             </div>

@@ -55,6 +55,8 @@ const generateForm = ref({
     wordpress_connection_id: null as number | null,
     blog_category_id: null as number | null,
     ai_model: 'gpt-4o-mini',
+    cover_width: 1750,
+    cover_height: 650,
 });
 
 // Item detail panel
@@ -585,6 +587,24 @@ const pendingCount = computed(() => calendarItems.value.filter(i => i.status ===
                                 <label class="text-sm text-gray-400 mb-1 block">Instruções adicionais</label>
                                 <textarea v-model="generateForm.instructions" rows="3" placeholder="Ex: Focar em temas sazonais, incluir tendências do mercado..."
                                     class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                            </div>
+
+                            <div>
+                                <label class="text-sm text-gray-400 mb-1 block">Dimensões da Capa (px)</label>
+                                <div class="flex items-center gap-2">
+                                    <div class="flex-1">
+                                        <input v-model.number="generateForm.cover_width" type="number" min="100" max="4000" placeholder="Largura"
+                                            class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                        <p class="text-[10px] text-gray-600 mt-0.5 text-center">Largura</p>
+                                    </div>
+                                    <span class="text-gray-500 text-sm font-bold mt-[-14px]">x</span>
+                                    <div class="flex-1">
+                                        <input v-model.number="generateForm.cover_height" type="number" min="100" max="4000" placeholder="Altura"
+                                            class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                        <p class="text-[10px] text-gray-600 mt-0.5 text-center">Altura</p>
+                                    </div>
+                                </div>
+                                <p class="text-[10px] text-gray-600 mt-1">Padrão: 1750x650. A imagem é gerada via DALL-E 3 e redimensionada automaticamente.</p>
                             </div>
                         </div>
 

@@ -60,6 +60,9 @@ class BlogController extends Controller
                 'scheduled_publish_at' => $a->scheduled_publish_at?->format('d/m/Y H:i'),
                 'created_at' => $a->created_at->format('d/m/Y'),
                 'user_name' => $a->user?->name,
+                'can_approve' => $a->canApprove(),
+                'can_publish' => $a->canPublish(),
+                'has_wordpress' => (bool) $a->wordpress_connection_id,
             ]);
 
         // Métricas resumidas
@@ -169,6 +172,10 @@ class BlogController extends Controller
                 'user_name' => $article->user?->name,
                 'ai_model_used' => $article->ai_model_used,
                 'tokens_used' => $article->tokens_used,
+                'can_approve' => $article->canApprove(),
+                'can_publish' => $article->canPublish(),
+                'can_edit' => $article->canEdit(),
+                'has_wordpress' => (bool) $article->wordpress_connection_id,
             ],
         ]);
     }
@@ -205,6 +212,7 @@ class BlogController extends Controller
                 'seo_score' => $article->seoScore(),
                 'can_publish' => $article->canPublish(),
                 'can_edit' => $article->canEdit(),
+                'can_approve' => $article->canApprove(),
             ],
             'categories' => $categories,
             'connections' => $connections,
@@ -672,6 +680,8 @@ class BlogController extends Controller
             'wordpress_connection_id' => 'nullable|integer',
             'blog_category_id' => 'nullable|integer',
             'ai_model' => 'nullable|string',
+            'cover_width' => 'nullable|integer|min:100|max:4000',
+            'cover_height' => 'nullable|integer|min:100|max:4000',
         ]);
 
         $brand = Auth::user()->getActiveBrand();
@@ -691,6 +701,8 @@ class BlogController extends Controller
                 'wordpress_connection_id' => $request->input('wordpress_connection_id'),
                 'blog_category_id' => $request->input('blog_category_id'),
                 'ai_model' => $request->input('ai_model', 'gpt-4o-mini'),
+                'cover_width' => $request->input('cover_width', 1750),
+                'cover_height' => $request->input('cover_height', 650),
                 'batch_status' => 'draft',
             ],
         );

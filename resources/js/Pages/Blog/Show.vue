@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, router } from '@inertiajs/vue3';
+import { ref } from 'vue';
+import axios from 'axios';
 
 const props = defineProps<{
     article: {
@@ -12,8 +14,49 @@ const props = defineProps<{
         word_count: number; reading_time: number; seo_score: number;
         published_at: string | null; created_at: string; user_name: string | null;
         ai_model_used: string | null; tokens_used: number | null;
+        can_approve: boolean; can_publish: boolean; can_edit: boolean; has_wordpress: boolean;
     };
 }>();
+
+const approving = ref(false);
+const publishing = ref(false);
+const actionResult = ref<{ type: 'success' | 'error'; message: string } | null>(null);
+
+function approveArticle() {
+    if (!confirm('Aprovar este artigo para publicação?')) return;
+    approving.value = true;
+    actionResult.value = null;
+    router.post(route('blog.approve', props.article.id), {}, {
+        preserveScroll: true,
+        onSuccess: () => {
+            actionResult.value = { type: 'success', message: 'Artigo aprovado com sucesso! Agora pode ser publicado.' };
+        },
+        onError: () => {
+            actionResult.value = { type: 'error', message: 'Erro ao aprovar artigo.' };
+        },
+        onFinish: () => { approving.value = false; },
+    });
+}
+
+async function publishToWP() {
+    if (!confirm('Publicar este artigo no WordPress agora?')) return;
+    publishing.value = true;
+    actionResult.value = null;
+
+    try {
+        const resp = await axios.post(route('blog.publish', props.article.id));
+        if (resp.data.success) {
+            actionResult.value = { type: 'success', message: 'Artigo publicado no WordPress!' };
+            window.location.reload();
+        } else {
+            actionResult.value = { type: 'error', message: resp.data.error || 'Falha ao publicar.' };
+        }
+    } catch (e: any) {
+        actionResult.value = { type: 'error', message: e.response?.data?.error || 'Erro de conexão.' };
+    } finally {
+        publishing.value = false;
+    }
+}
 </script>
 
 <template>
@@ -29,10 +72,22 @@ const props = defineProps<{
                     <h1 class="text-xl font-semibold text-white truncate">{{ article.title }}</h1>
                 </div>
                 <div class="flex items-center gap-2">
+                    <!-- Aprovar -->
+                    <button v-if="article.can_approve" @click="approveArticle" :disabled="approving"
+                        class="rounded-xl bg-blue-600/20 border border-blue-500/30 px-4 py-2 text-sm font-semibold text-blue-400 hover:bg-blue-600/30 disabled:opacity-50 transition">
+                        {{ approving ? 'Aprovando...' : 'Aprovar' }}
+                    </button>
+                    <!-- Publicar no WordPress -->
+                    <button v-if="article.can_publish" @click="publishToWP" :disabled="publishing"
+                        class="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 transition">
+                        {{ publishing ? 'Publicando...' : 'Publicar no WordPress' }}
+                    </button>
+                    <!-- Ver no site -->
                     <a v-if="article.wp_post_url" :href="article.wp_post_url" target="_blank"
                         class="rounded-xl bg-emerald-600/20 border border-emerald-500/30 px-4 py-2 text-sm text-emerald-400 hover:bg-emerald-600/30 transition">
                         Ver no site
                     </a>
+                    <!-- Editar -->
                     <Link :href="route('blog.edit', article.id)" class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition">
                         Editar
                     </Link>
@@ -41,10 +96,30 @@ const props = defineProps<{
         </template>
 
         <div class="max-w-4xl mx-auto">
+            <!-- Action result banner -->
+            <div v-if="actionResult" :class="['rounded-xl border p-3 mb-4 text-sm',
+                actionResult.type === 'success' ? 'bg-emerald-900/30 border-emerald-700/50 text-emerald-300' : 'bg-red-900/30 border-red-700/50 text-red-300']">
+                {{ actionResult.message }}
+            </div>
+
+            <!-- Workflow guidance -->
+            <div v-if="article.status === 'pending_review' && !article.has_wordpress"
+                class="rounded-xl bg-amber-900/20 border border-amber-700/30 p-3 mb-4 text-sm text-amber-300 flex items-center gap-2">
+                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+                Para publicar no WordPress, configure um destino WordPress em <Link :href="route('blog.edit', article.id)" class="underline font-medium">Editar > Configurações</Link>.
+            </div>
+
+            <div v-if="article.status === 'approved' && article.has_wordpress && !article.wp_post_url"
+                class="rounded-xl bg-emerald-900/20 border border-emerald-700/30 p-3 mb-4 text-sm text-emerald-300 flex items-center gap-2">
+                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                Artigo aprovado e pronto para publicar no WordPress. Clique em "Publicar no WordPress" para enviar.
+            </div>
+
             <!-- Meta info -->
             <div class="flex flex-wrap items-center gap-3 mb-6 text-sm text-gray-500">
                 <span :class="['rounded-full border px-2.5 py-0.5 text-[10px] font-medium',
                     article.status === 'published' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                    article.status === 'approved' ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' :
                     article.status === 'draft' ? 'bg-gray-500/10 text-gray-400 border-gray-500/30' :
                     'bg-yellow-500/10 text-yellow-400 border-yellow-500/30']">
                     {{ article.status_label }}

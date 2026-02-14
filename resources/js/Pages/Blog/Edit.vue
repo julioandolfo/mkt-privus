@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, useForm, Link } from '@inertiajs/vue3';
+import { Head, useForm, Link, router } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 import axios from 'axios';
 
@@ -12,7 +12,7 @@ const props = defineProps<{
         tags: string[]; meta_title: string | null; meta_description: string | null; meta_keywords: string | null;
         wp_post_id: number | null; wp_post_url: string | null;
         scheduled_publish_at: string | null; word_count: number; seo_score: number;
-        can_publish: boolean; can_edit: boolean;
+        can_publish: boolean; can_edit: boolean; can_approve: boolean;
     };
     categories: { id: number; name: string; wordpress_connection_id: number | null }[];
     connections: { id: number; name: string; platform: string; platform_label: string; site_url: string }[];
@@ -31,14 +31,33 @@ const form = useForm({
     meta_keywords: props.article.meta_keywords || '',
     status: props.article.status,
     scheduled_publish_at: props.article.scheduled_publish_at || '',
+    cover_width: 1750,
+    cover_height: 650,
 });
 
 const activeTab = ref<'content' | 'seo' | 'settings'>('content');
 const publishing = ref(false);
+const approving = ref(false);
 const publishResult = ref<{ success: boolean; message: string; url?: string } | null>(null);
 const generatingCover = ref(false);
 const generatingSeo = ref(false);
 const tagInput = ref('');
+
+function approveArticle() {
+    if (!confirm('Aprovar este artigo para publicação?')) return;
+    approving.value = true;
+    publishResult.value = null;
+    router.post(route('blog.approve', props.article.id), {}, {
+        preserveScroll: true,
+        onSuccess: () => {
+            publishResult.value = { success: true, message: 'Artigo aprovado! Agora pode ser publicado no WordPress.' };
+        },
+        onError: () => {
+            publishResult.value = { success: false, message: 'Erro ao aprovar artigo.' };
+        },
+        onFinish: () => { approving.value = false; },
+    });
+}
 
 const wordCount = computed(() => {
     if (!form.content) return 0;
@@ -90,7 +109,12 @@ async function publishToWP() {
 async function generateCoverImage() {
     generatingCover.value = true;
     try {
-        const resp = await axios.post(route('blog.generate-cover'), { title: form.title, excerpt: form.excerpt });
+        const resp = await axios.post(route('blog.generate-cover'), {
+            title: form.title,
+            excerpt: form.excerpt,
+            cover_width: form.cover_width || 1750,
+            cover_height: form.cover_height || 650,
+        });
         if (resp.data.success) form.cover_image_path = resp.data.path;
     } catch { } finally { generatingCover.value = false; }
 }
@@ -151,6 +175,10 @@ async function uploadCover(event: Event) {
                     <span class="text-xs" :class="seoScore >= 80 ? 'text-emerald-400' : seoScore >= 50 ? 'text-yellow-400' : 'text-red-400'">
                         SEO {{ seoScore }}%
                     </span>
+                    <button v-if="article.can_approve" @click="approveArticle" :disabled="approving"
+                        class="rounded-xl bg-blue-600/20 border border-blue-500/30 px-4 py-2 text-sm font-semibold text-blue-400 hover:bg-blue-600/30 disabled:opacity-50 transition">
+                        {{ approving ? 'Aprovando...' : 'Aprovar' }}
+                    </button>
                     <button v-if="article.can_publish" @click="publishToWP" :disabled="publishing"
                         class="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 transition">
                         {{ publishing ? 'Publicando...' : 'Publicar no WordPress' }}
@@ -214,7 +242,7 @@ async function uploadCover(event: Event) {
 
                 <div>
                     <label class="text-sm text-gray-400 mb-2 block">Imagem de Capa</label>
-                    <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-3 flex-wrap">
                         <img v-if="form.cover_image_path" :src="'/storage/' + form.cover_image_path" class="h-20 rounded-xl object-cover" />
                         <button v-if="article.can_edit" @click="generateCoverImage" :disabled="generatingCover" type="button"
                             class="rounded-xl bg-gray-800 border border-gray-700 px-3 py-2 text-xs text-gray-300 hover:text-white transition disabled:opacity-50">
@@ -223,6 +251,15 @@ async function uploadCover(event: Event) {
                         <label v-if="article.can_edit" class="rounded-xl bg-gray-800 border border-gray-700 px-3 py-2 text-xs text-gray-300 cursor-pointer hover:text-white transition">
                             Upload <input type="file" accept="image/*" @change="uploadCover" class="hidden" />
                         </label>
+                    </div>
+                    <div v-if="article.can_edit" class="mt-2 flex items-center gap-2">
+                        <span class="text-xs text-gray-500">Dimensões:</span>
+                        <input v-model.number="form.cover_width" type="number" min="100" max="4000"
+                            class="w-20 rounded-lg bg-gray-800 border-gray-700 text-white text-xs text-center py-1 px-2 focus:border-indigo-500 focus:ring-indigo-500" />
+                        <span class="text-gray-600 text-xs">x</span>
+                        <input v-model.number="form.cover_height" type="number" min="100" max="4000"
+                            class="w-20 rounded-lg bg-gray-800 border-gray-700 text-white text-xs text-center py-1 px-2 focus:border-indigo-500 focus:ring-indigo-500" />
+                        <span class="text-[10px] text-gray-600">px</span>
                     </div>
                 </div>
             </div>
