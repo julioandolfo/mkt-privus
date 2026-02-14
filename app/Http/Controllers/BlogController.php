@@ -321,6 +321,8 @@ class BlogController extends Controller
         $request->validate([
             'title' => 'required|string|max:255',
             'excerpt' => 'nullable|string|max:500',
+            'cover_width' => 'nullable|integer|min:100|max:4000',
+            'cover_height' => 'nullable|integer|min:100|max:4000',
         ]);
 
         $brand = Auth::user()->getActiveBrand();
@@ -332,6 +334,8 @@ class BlogController extends Controller
             brand: $brand,
             title: $request->input('title'),
             excerpt: $request->input('excerpt', ''),
+            width: $request->input('cover_width', 1750),
+            height: $request->input('cover_height', 650),
         );
 
         if ($result) {

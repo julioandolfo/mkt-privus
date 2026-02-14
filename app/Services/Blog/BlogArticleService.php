@@ -88,34 +88,53 @@ class BlogArticleService
 
     /**
      * Gera imagem de capa para um artigo com DALL-E 3
+     *
+     * @param int $width  Largura desejada (default 1750)
+     * @param int $height Altura desejada (default 650)
      */
-    public function generateCoverImage(Brand $brand, string $title, string $excerpt = ''): ?array
-    {
+    public function generateCoverImage(
+        Brand $brand,
+        string $title,
+        string $excerpt = '',
+        int $width = 1750,
+        int $height = 650,
+    ): ?array {
         try {
             $prompt = $this->buildCoverImagePrompt($brand, $title, $excerpt);
+
+            // DALL-E 3 só suporta 1024x1024, 1792x1024, 1024x1792
+            // Escolher o mais próximo do aspect ratio desejado
+            $dalleSize = ($width >= $height) ? '1792x1024' : '1024x1792';
 
             $result = $this->aiGateway->generateImage(
                 prompt: $prompt,
                 brand: $brand,
-                size: '1792x1024', // Landscape para blog
+                size: $dalleSize,
                 quality: 'standard',
             );
 
             if (!empty($result['url'])) {
                 $imageContent = @file_get_contents($result['url']);
                 if ($imageContent) {
-                    $filename = 'blog-covers/' . uniqid('cover_') . '.png';
-                    Storage::disk('public')->put($filename, $imageContent);
+                    // Redimensionar para as dimensões exatas desejadas
+                    $resized = $this->resizeImage($imageContent, $width, $height);
 
-                    SystemLog::info('blog', 'cover.generated', "Capa gerada para artigo: {$title}", [
+                    $filename = 'blog-covers/' . uniqid('cover_') . '.png';
+                    Storage::disk('public')->put($filename, $resized ?? $imageContent);
+
+                    SystemLog::info('blog', 'cover.generated', "Capa gerada para artigo: {$title} ({$width}x{$height})", [
                         'brand_id' => $brand->id,
                         'path' => $filename,
+                        'dimensions' => "{$width}x{$height}",
+                        'resized' => $resized !== null,
                     ]);
 
                     return [
                         'path' => $filename,
                         'url' => Storage::disk('public')->url($filename),
                         'prompt' => $prompt,
+                        'width' => $width,
+                        'height' => $height,
                     ];
                 }
             }
@@ -126,6 +145,62 @@ class BlogArticleService
                 'brand_id' => $brand->id,
                 'title' => $title,
             ]);
+            return null;
+        }
+    }
+
+    /**
+     * Redimensiona uma imagem para as dimensões exatas (crop central)
+     */
+    private function resizeImage(string $imageData, int $targetWidth, int $targetHeight): ?string
+    {
+        try {
+            $src = @imagecreatefromstring($imageData);
+            if (!$src) return null;
+
+            $srcW = imagesx($src);
+            $srcH = imagesy($src);
+
+            // Calcular crop para manter aspect ratio desejado (crop central)
+            $targetRatio = $targetWidth / $targetHeight;
+            $srcRatio = $srcW / $srcH;
+
+            if ($srcRatio > $targetRatio) {
+                // Imagem mais larga — cortar laterais
+                $cropH = $srcH;
+                $cropW = (int) round($srcH * $targetRatio);
+                $cropX = (int) round(($srcW - $cropW) / 2);
+                $cropY = 0;
+            } else {
+                // Imagem mais alta — cortar topo/base
+                $cropW = $srcW;
+                $cropH = (int) round($srcW / $targetRatio);
+                $cropX = 0;
+                $cropY = (int) round(($srcH - $cropH) / 2);
+            }
+
+            // Crop + resize
+            $dst = imagecreatetruecolor($targetWidth, $targetHeight);
+
+            // Preservar transparência
+            imagealphablending($dst, false);
+            imagesavealpha($dst, true);
+
+            imagecopyresampled(
+                $dst, $src,
+                0, 0, $cropX, $cropY,
+                $targetWidth, $targetHeight, $cropW, $cropH
+            );
+
+            ob_start();
+            imagepng($dst, null, 8);
+            $output = ob_get_clean();
+
+            imagedestroy($src);
+            imagedestroy($dst);
+
+            return $output ?: null;
+        } catch (\Throwable $e) {
             return null;
         }
     }

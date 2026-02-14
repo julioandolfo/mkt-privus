@@ -35,6 +35,8 @@ class BlogCalendarService
         $batchStatus = $options['batch_status'] ?? 'draft';
         $connectionId = $options['wordpress_connection_id'] ?? null;
         $categoryId = $options['blog_category_id'] ?? null;
+        $coverWidth = $options['cover_width'] ?? 1750;
+        $coverHeight = $options['cover_height'] ?? 650;
 
         $start = Carbon::parse($startDate);
         $end = Carbon::parse($endDate);
@@ -120,6 +122,8 @@ class BlogCalendarService
                     'metadata' => [
                         'generated_at' => now()->toISOString(),
                         'tokens_used' => $totalTokens,
+                        'cover_width' => $coverWidth,
+                        'cover_height' => $coverHeight,
                     ],
                 ]);
 
@@ -207,11 +211,14 @@ class BlogCalendarService
                 ],
             ]);
 
-            // 3. Tentar gerar imagem de capa
+            // 3. Tentar gerar imagem de capa (dimensões do metadata ou default)
+            $meta = $item->metadata ?? [];
             $coverResult = $this->articleService->generateCoverImage(
                 brand: $brand,
                 title: $result['title'],
                 excerpt: $result['excerpt'] ?? '',
+                width: $meta['cover_width'] ?? 1750,
+                height: $meta['cover_height'] ?? 650,
             );
 
             if ($coverResult) {
