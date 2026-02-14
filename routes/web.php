@@ -429,6 +429,19 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/connections/{connection}', [BlogController::class, 'destroyConnection'])->name('connections.destroy');
         Route::get('/connections/{connection}/categories', [BlogController::class, 'connectionCategories'])->name('connections.categories');
 
+        // Calendário editorial — ANTES das rotas com {article}
+        Route::get('/calendar', [BlogController::class, 'calendar'])->name('calendar');
+        Route::get('/calendar/items', [BlogController::class, 'calendarItems'])->name('calendar.items');
+        Route::post('/calendar/generate', [BlogController::class, 'generateCalendar'])->name('calendar.generate');
+        Route::post('/calendar/generate-article/{item}', [BlogController::class, 'generateArticleFromItem'])->name('calendar.generate-article');
+        Route::post('/calendar/generate-all-articles', [BlogController::class, 'generateAllArticles'])->name('calendar.generate-all-articles');
+        Route::put('/calendar/items/{item}', [BlogController::class, 'updateCalendarItem'])->name('calendar.items.update');
+        Route::delete('/calendar/items/{item}', [BlogController::class, 'destroyCalendarItem'])->name('calendar.items.destroy');
+        Route::post('/calendar/approve-batch', [BlogController::class, 'approveCalendarBatch'])->name('calendar.approve-batch');
+        Route::post('/calendar/reject-batch', [BlogController::class, 'rejectCalendarBatch'])->name('calendar.reject-batch');
+        Route::post('/calendar/approve-item/{item}', [BlogController::class, 'approveCalendarItem'])->name('calendar.approve-item');
+        Route::post('/calendar/clear-period', [BlogController::class, 'clearCalendarPeriod'])->name('calendar.clear-period');
+
         // Artigos individuais (com {article})
         Route::get('/{article}', [BlogController::class, 'show'])->name('show');
         Route::get('/{article}/edit', [BlogController::class, 'edit'])->name('edit');

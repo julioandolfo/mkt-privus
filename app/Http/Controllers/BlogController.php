@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\AnalyticsConnection;
 use App\Models\BlogArticle;
+use App\Models\BlogCalendarItem;
 use App\Models\BlogCategory;
 use App\Models\SystemLog;
 use App\Services\Blog\BlogArticleService;
+use App\Services\Blog\BlogCalendarService;
 use App\Services\Blog\WordPressPublishService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -20,6 +22,7 @@ class BlogController extends Controller
     public function __construct(
         private BlogArticleService $articleService,
         private WordPressPublishService $wpService,
+        private BlogCalendarService $calendarService,
     ) {}
 
     /**
@@ -576,6 +579,241 @@ class BlogController extends Controller
     {
         $categories = $this->wpService->fetchCategories($connection);
         return response()->json(['success' => true, 'categories' => $categories]);
+    }
+
+    // ===== CALENDÁRIO EDITORIAL =====
+
+    /**
+     * Página do calendário editorial
+     */
+    public function calendar(): Response
+    {
+        $brandId = session('current_brand_id');
+        $categories = BlogCategory::forBrand($brandId)->orderBy('name')->get(['id', 'name']);
+        $connections = $this->getWordPressConnections($brandId);
+
+        return Inertia::render('Blog/Calendar', [
+            'categories' => $categories,
+            'connections' => $connections,
+        ]);
+    }
+
+    /**
+     * Listar itens do calendário (JSON)
+     */
+    public function calendarItems(Request $request): JsonResponse
+    {
+        $brandId = session('current_brand_id');
+        $start = $request->input('start', now()->startOfMonth()->format('Y-m-d'));
+        $end = $request->input('end', now()->endOfMonth()->format('Y-m-d'));
+
+        $items = BlogCalendarItem::forBrand($brandId)
+            ->forDateRange($start, $end)
+            ->with(['article:id,title,status,slug', 'category:id,name'])
+            ->orderBy('scheduled_date')
+            ->get()
+            ->map(fn($item) => [
+                'id' => $item->id,
+                'date' => $item->scheduled_date->format('Y-m-d'),
+                'title' => $item->title,
+                'description' => $item->description,
+                'keywords' => $item->keywords,
+                'tone' => $item->tone,
+                'instructions' => $item->instructions,
+                'estimated_word_count' => $item->estimated_word_count,
+                'category' => $item->category?->name,
+                'category_id' => $item->blog_category_id,
+                'connection_id' => $item->wordpress_connection_id,
+                'status' => $item->status,
+                'status_label' => $item->status_label,
+                'status_color' => $item->status_color,
+                'article_id' => $item->article_id,
+                'article_title' => $item->article?->title,
+                'article_status' => $item->article?->status,
+                'batch_id' => $item->batch_id,
+                'batch_status' => $item->batch_status,
+            ]);
+
+        // Batches em draft (para aprovação)
+        $draftBatches = BlogCalendarItem::forBrand($brandId)
+            ->where('batch_status', 'draft')
+            ->forDateRange($start, $end)
+            ->selectRaw('batch_id, COUNT(*) as total, MIN(scheduled_date) as start_date, MAX(scheduled_date) as end_date')
+            ->groupBy('batch_id')
+            ->get()
+            ->map(fn($b) => [
+                'batch_id' => $b->batch_id,
+                'total' => $b->total,
+                'start_date' => $b->start_date,
+                'end_date' => $b->end_date,
+            ]);
+
+        return response()->json([
+            'items' => $items,
+            'draft_batches' => $draftBatches,
+        ]);
+    }
+
+    /**
+     * Gerar calendário de pautas com IA
+     */
+    public function generateCalendar(Request $request): JsonResponse
+    {
+        $request->validate([
+            'start_date' => 'required|date',
+            'end_date' => 'required|date|after_or_equal:start_date',
+            'posts_per_week' => 'nullable|integer|min:1|max:7',
+            'tone' => 'nullable|string|max:100',
+            'instructions' => 'nullable|string|max:2000',
+            'wordpress_connection_id' => 'nullable|integer',
+            'blog_category_id' => 'nullable|integer',
+            'ai_model' => 'nullable|string',
+        ]);
+
+        $brand = Auth::user()->getActiveBrand();
+        if (!$brand) {
+            return response()->json(['success' => false, 'error' => 'Nenhuma marca ativa.']);
+        }
+
+        $result = $this->calendarService->generateCalendar(
+            brand: $brand,
+            userId: Auth::id(),
+            startDate: $request->input('start_date'),
+            endDate: $request->input('end_date'),
+            options: [
+                'posts_per_week' => $request->input('posts_per_week', 2),
+                'tone' => $request->input('tone'),
+                'instructions' => $request->input('instructions'),
+                'wordpress_connection_id' => $request->input('wordpress_connection_id'),
+                'blog_category_id' => $request->input('blog_category_id'),
+                'ai_model' => $request->input('ai_model', 'gpt-4o-mini'),
+                'batch_status' => 'draft',
+            ],
+        );
+
+        return response()->json($result);
+    }
+
+    /**
+     * Gerar artigo completo a partir de uma pauta
+     */
+    public function generateArticleFromItem(BlogCalendarItem $item): JsonResponse
+    {
+        $result = $this->calendarService->generateArticleFromItem($item);
+        return response()->json($result);
+    }
+
+    /**
+     * Gerar artigos para todas as pautas pendentes no período
+     */
+    public function generateAllArticles(Request $request): JsonResponse
+    {
+        $request->validate([
+            'start_date' => 'required|date',
+            'end_date' => 'required|date',
+            'limit' => 'nullable|integer|min:1|max:20',
+        ]);
+
+        $brandId = session('current_brand_id');
+        $result = $this->calendarService->generateArticlesForPendingItems(
+            brandId: $brandId,
+            startDate: $request->input('start_date'),
+            endDate: $request->input('end_date'),
+            limit: $request->input('limit', 10),
+        );
+
+        return response()->json(['success' => true, ...$result]);
+    }
+
+    /**
+     * Atualizar pauta do calendário
+     */
+    public function updateCalendarItem(Request $request, BlogCalendarItem $item): JsonResponse
+    {
+        $validated = $request->validate([
+            'scheduled_date' => 'nullable|date',
+            'title' => 'nullable|string|max:255',
+            'description' => 'nullable|string|max:2000',
+            'keywords' => 'nullable|string|max:500',
+            'tone' => 'nullable|string|max:100',
+            'instructions' => 'nullable|string|max:2000',
+            'estimated_word_count' => 'nullable|integer|min:200|max:5000',
+            'wordpress_connection_id' => 'nullable|integer',
+            'blog_category_id' => 'nullable|integer',
+        ]);
+
+        $item->update(array_filter($validated, fn($v) => $v !== null));
+
+        return response()->json(['success' => true, 'message' => 'Pauta atualizada.']);
+    }
+
+    /**
+     * Excluir pauta do calendário
+     */
+    public function destroyCalendarItem(BlogCalendarItem $item): JsonResponse
+    {
+        $item->delete();
+        return response()->json(['success' => true, 'message' => 'Pauta removida.']);
+    }
+
+    /**
+     * Aprovar batch de pautas
+     */
+    public function approveCalendarBatch(Request $request): JsonResponse
+    {
+        $request->validate(['batch_id' => 'required|string']);
+
+        $updated = BlogCalendarItem::where('batch_id', $request->input('batch_id'))
+            ->where('batch_status', 'draft')
+            ->update(['batch_status' => 'approved']);
+
+        return response()->json(['success' => true, 'updated' => $updated, 'message' => "{$updated} pauta(s) aprovada(s)."]);
+    }
+
+    /**
+     * Rejeitar batch de pautas (remove todas)
+     */
+    public function rejectCalendarBatch(Request $request): JsonResponse
+    {
+        $request->validate(['batch_id' => 'required|string']);
+
+        $deleted = BlogCalendarItem::where('batch_id', $request->input('batch_id'))
+            ->where('batch_status', 'draft')
+            ->delete();
+
+        return response()->json(['success' => true, 'deleted' => $deleted, 'message' => "{$deleted} pauta(s) removida(s)."]);
+    }
+
+    /**
+     * Aprovar pauta individual
+     */
+    public function approveCalendarItem(BlogCalendarItem $item): JsonResponse
+    {
+        if ($item->batch_status === 'draft') {
+            $item->update(['batch_status' => 'approved']);
+        }
+
+        return response()->json(['success' => true, 'message' => 'Pauta aprovada.']);
+    }
+
+    /**
+     * Limpar pautas pendentes de um período
+     */
+    public function clearCalendarPeriod(Request $request): JsonResponse
+    {
+        $request->validate([
+            'start_date' => 'required|date',
+            'end_date' => 'required|date',
+        ]);
+
+        $brandId = session('current_brand_id');
+
+        $deleted = BlogCalendarItem::forBrand($brandId)
+            ->pending()
+            ->forDateRange($request->input('start_date'), $request->input('end_date'))
+            ->delete();
+
+        return response()->json(['success' => true, 'deleted' => $deleted, 'message' => "{$deleted} pauta(s) removida(s)."]);
     }
 
     // ===== PRIVATE =====

@@ -65,6 +65,7 @@ const navigation: NavItem[] = [
         name: 'Blog', href: 'blog.index', icon: 'file-text', routeMatch: 'blog.*', enabled: true,
         children: [
             { name: 'Artigos', href: 'blog.index', routeMatch: 'blog.index' },
+            { name: 'Calendário', href: 'blog.calendar', routeMatch: 'blog.calendar*' },
             { name: 'Novo Artigo', href: 'blog.create', routeMatch: 'blog.create' },
             { name: 'Categorias', href: 'blog.categories', routeMatch: 'blog.categories*' },
         ],
