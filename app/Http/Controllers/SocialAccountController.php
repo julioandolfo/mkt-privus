@@ -366,6 +366,10 @@ class SocialAccountController extends Controller
                     'followers_count' => $latestInsight?->followers_count,
                     'reach' => $latestInsight?->reach,
                     'engagement' => $latestInsight?->engagement,
+                    'engagement_rate' => $latestInsight?->engagement_rate,
+                    'likes' => $latestInsight?->likes,
+                    'comments' => $latestInsight?->comments,
+                    'platform_data' => $latestInsight?->platform_data,
                 ]);
             }
 

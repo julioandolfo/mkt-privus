@@ -179,28 +179,44 @@ class SocialInsightsService
         }
 
         // 2. Insights do perfil (ultimos 28 dias)
-        // Tentativa 1: metric_type=total_value (API v18+)
+        // A API v18+ do Instagram mudou o formato de insights.
+        // Estrategia: tentar varias abordagens em sequencia ate funcionar.
+        $insightsParsed = false;
+        $debugAttempts = [];
+
+        // --- Tentativa 1: API nova (v18+) com metric_type=total_value ---
         $since28 = now()->subDays(28)->startOfDay()->timestamp;
         $untilNow = now()->endOfDay()->timestamp;
 
-        $insightMetrics = 'impressions,reach,profile_views,website_clicks,accounts_engaged,follows_and_unfollows';
-
-        $insights = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+        $insights1 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
             'access_token' => $token,
-            'metric' => $insightMetrics,
+            'metric' => 'impressions,reach,profile_views,accounts_engaged,follows_and_unfollows',
             'period' => 'day',
             'metric_type' => 'total_value',
             'since' => $since28,
             'until' => $untilNow,
         ]);
 
-        $insightsParsed = false;
+        $debugAttempts['attempt1'] = [
+            'status' => $insights1->status(),
+            'data_count' => count($insights1->json('data', [])),
+            'error' => $insights1->json('error.message') ?? null,
+        ];
 
-        if ($insights->successful() && !empty($insights->json('data'))) {
-            foreach ($insights->json('data', []) as $metric) {
+        if ($insights1->successful() && !empty($insights1->json('data'))) {
+            foreach ($insights1->json('data', []) as $metric) {
+                // API nova retorna total_value.value, API antiga retorna values[].value
                 $value = $metric['total_value']['value']
-                    ?? $metric['values'][0]['value']
                     ?? null;
+
+                // Se total_value nao tem, tentar somar values diarios
+                if ($value === null && !empty($metric['values'])) {
+                    $value = 0;
+                    foreach ($metric['values'] as $dayValue) {
+                        $value += $dayValue['value'] ?? 0;
+                    }
+                    if ($value === 0) $value = null;
+                }
 
                 if ($value === null) continue;
                 $insightsParsed = true;
@@ -217,19 +233,24 @@ class SocialInsightsService
             }
         }
 
-        // Tentativa 2: sem metric_type (API antiga) — buscar metricas individuais
+        // --- Tentativa 2: period=day sem metric_type (API classica, somar diarios) ---
         if (!$insightsParsed) {
-            $insightsLegacy = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+            $insights2 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
                 'access_token' => $token,
-                'metric' => 'impressions,reach,profile_views,website_clicks',
+                'metric' => 'impressions,reach,profile_views',
                 'period' => 'day',
                 'since' => $since28,
                 'until' => $untilNow,
             ]);
 
-            if ($insightsLegacy->successful() && !empty($insightsLegacy->json('data'))) {
-                foreach ($insightsLegacy->json('data', []) as $metric) {
-                    // Somar valores diarios do periodo
+            $debugAttempts['attempt2'] = [
+                'status' => $insights2->status(),
+                'data_count' => count($insights2->json('data', [])),
+                'error' => $insights2->json('error.message') ?? null,
+            ];
+
+            if ($insights2->successful() && !empty($insights2->json('data'))) {
+                foreach ($insights2->json('data', []) as $metric) {
                     $sum = 0;
                     foreach ($metric['values'] ?? [] as $dayValue) {
                         $sum += $dayValue['value'] ?? 0;
@@ -240,7 +261,6 @@ class SocialInsightsService
                             'impressions' => $data['impressions'] = $sum,
                             'reach' => $data['reach'] = $sum,
                             'profile_views' => $data['platform_data']['profile_views'] = $sum,
-                            'website_clicks' => $data['clicks'] = $sum,
                             default => null,
                         };
                     }
@@ -248,18 +268,28 @@ class SocialInsightsService
             }
         }
 
-        // Tentativa 3: periodo mais curto (7 dias) se 28 dias falhou
+        // --- Tentativa 3: periodo curto (2 dias) com period=day ---
         if (!$insightsParsed) {
-            $insightsFallback = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+            $since2 = now()->subDays(2)->startOfDay()->timestamp;
+            $until2 = now()->addDay()->startOfDay()->timestamp;
+
+            $insights3 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
                 'access_token' => $token,
                 'metric' => 'impressions,reach',
                 'period' => 'day',
-                'since' => now()->subDays(7)->startOfDay()->timestamp,
-                'until' => $untilNow,
+                'since' => $since2,
+                'until' => $until2,
             ]);
 
-            if ($insightsFallback->successful() && !empty($insightsFallback->json('data'))) {
-                foreach ($insightsFallback->json('data', []) as $metric) {
+            $debugAttempts['attempt3'] = [
+                'status' => $insights3->status(),
+                'data_count' => count($insights3->json('data', [])),
+                'error' => $insights3->json('error.message') ?? null,
+                'raw_sample' => array_slice($insights3->json('data', []), 0, 1),
+            ];
+
+            if ($insights3->successful() && !empty($insights3->json('data'))) {
+                foreach ($insights3->json('data', []) as $metric) {
                     $sum = 0;
                     foreach ($metric['values'] ?? [] as $dayValue) {
                         $sum += $dayValue['value'] ?? 0;
@@ -274,24 +304,89 @@ class SocialInsightsService
                     }
                 }
             }
+        }
 
-            // Log detalhado de todas as tentativas para debug
-            if (!$insightsParsed) {
-                SystemLog::warning('social', 'insights.ig.reach_empty', "Instagram insights API: todas as tentativas falharam", [
-                    'account_id' => $account->id,
-                    'username' => $account->username,
-                    'attempt1_status' => $insights->status(),
-                    'attempt1_error' => $insights->json('error') ?? null,
-                    'attempt1_data_count' => count($insights->json('data', [])),
-                    'attempt2_exists' => isset($insightsLegacy),
-                    'attempt2_status' => isset($insightsLegacy) ? $insightsLegacy->status() : null,
-                    'attempt2_error' => isset($insightsLegacy) ? ($insightsLegacy->json('error') ?? null) : null,
-                    'attempt3_status' => $insightsFallback->status(),
-                    'attempt3_error' => $insightsFallback->json('error') ?? null,
-                    'since_28' => date('Y-m-d', $since28),
-                    'until' => date('Y-m-d', $untilNow),
-                ]);
+        // --- Tentativa 4: period=week (ultimas 2 semanas) ---
+        if (!$insightsParsed) {
+            $sinceWeek = now()->subWeeks(2)->startOfWeek()->timestamp;
+
+            $insights4 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+                'access_token' => $token,
+                'metric' => 'impressions,reach',
+                'period' => 'week',
+                'since' => $sinceWeek,
+                'until' => $untilNow,
+            ]);
+
+            $debugAttempts['attempt4_week'] = [
+                'status' => $insights4->status(),
+                'data_count' => count($insights4->json('data', [])),
+                'error' => $insights4->json('error.message') ?? null,
+            ];
+
+            if ($insights4->successful() && !empty($insights4->json('data'))) {
+                foreach ($insights4->json('data', []) as $metric) {
+                    $sum = 0;
+                    foreach ($metric['values'] ?? [] as $dayValue) {
+                        $sum += $dayValue['value'] ?? 0;
+                    }
+                    if ($sum > 0) {
+                        $insightsParsed = true;
+                        match ($metric['name']) {
+                            'impressions' => $data['impressions'] = $sum,
+                            'reach' => $data['reach'] = $sum,
+                            default => null,
+                        };
+                    }
+                }
             }
+        }
+
+        // --- Tentativa 5: period=days_28 (total dos ultimos 28 dias, valor unico) ---
+        if (!$insightsParsed) {
+            $insights5 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+                'access_token' => $token,
+                'metric' => 'impressions,reach',
+                'period' => 'days_28',
+            ]);
+
+            $debugAttempts['attempt5_days28'] = [
+                'status' => $insights5->status(),
+                'data_count' => count($insights5->json('data', [])),
+                'error' => $insights5->json('error.message') ?? null,
+                'raw_sample' => array_slice($insights5->json('data', []), 0, 1),
+            ];
+
+            if ($insights5->successful() && !empty($insights5->json('data'))) {
+                foreach ($insights5->json('data', []) as $metric) {
+                    // days_28 retorna um unico valor
+                    $value = $metric['values'][0]['value'] ?? null;
+                    if ($value && $value > 0) {
+                        $insightsParsed = true;
+                        match ($metric['name']) {
+                            'impressions' => $data['impressions'] = $value,
+                            'reach' => $data['reach'] = $value,
+                            default => null,
+                        };
+                    }
+                }
+            }
+        }
+
+        // Log sempre (para debug), incluindo o resultado final
+        $data['platform_data']['_debug_insights'] = array_merge($debugAttempts, [
+            'parsed' => $insightsParsed,
+            'final_reach' => $data['reach'],
+            'final_impressions' => $data['impressions'],
+            'api_version' => $apiVersion,
+            'ig_user_id' => $igUserId,
+        ]);
+
+        if (!$insightsParsed) {
+            SystemLog::warning('social', 'insights.ig.reach_empty', "Instagram insights API: todas as 5 tentativas falharam para @{$account->username}", [
+                'account_id' => $account->id,
+                'attempts' => $debugAttempts,
+            ]);
         }
 
         // 3. Engajamento dos posts recentes (ultimos 50 posts, filtrar por 30 dias)
@@ -307,8 +402,10 @@ class SocialInsightsService
         $recentPostCount = 0;
         $storiesCount = 0;
         $reelsCount = 0;
+        $mediaSuccess = false;
 
         if ($media->successful()) {
+            $mediaSuccess = true;
             foreach ($media->json('data', []) as $post) {
                 $postDate = Carbon::parse($post['timestamp']);
                 if ($postDate->gte(now()->subDays(30))) {
@@ -327,6 +424,11 @@ class SocialInsightsService
                     }
                 }
             }
+        } else {
+            SystemLog::warning('social', 'insights.ig.media_failed', "Falha ao buscar posts do Instagram: status={$media->status()}", [
+                'account_id' => $account->id,
+                'error' => $media->json('error') ?? $media->body(),
+            ]);
         }
 
         $data['likes'] = $totalLikes;
@@ -346,24 +448,66 @@ class SocialInsightsService
         $totalVideoViews = 0;
         $totalPostReach = 0;
         $totalPostImpressions = 0;
+        $totalInteractions = 0;
+        $postInsightsOk = 0;
+        $postInsightsFailed = 0;
 
-        foreach (array_slice($recentPostIds, 0, 15) as $mediaId) {
+        foreach (array_slice($recentPostIds, 0, 15) as $idx => $mediaId) {
+            // Tentar metricas modernas primeiro (v18+)
             $mediaInsights = Http::get("https://graph.facebook.com/{$apiVersion}/{$mediaId}/insights", [
                 'access_token' => $token,
-                'metric' => 'saved,shares,video_views,reach,impressions,total_interactions',
+                'metric' => 'saved,shares,total_interactions,reach,impressions',
             ]);
 
-            if ($mediaInsights->successful()) {
+            $gotData = false;
+
+            if ($mediaInsights->successful() && !empty($mediaInsights->json('data'))) {
+                $gotData = true;
+                $postInsightsOk++;
                 foreach ($mediaInsights->json('data', []) as $mi) {
                     $val = $mi['values'][0]['value'] ?? 0;
                     match ($mi['name']) {
                         'saved' => $totalSaves += $val,
                         'shares' => $totalShares += $val,
-                        'video_views' => $totalVideoViews += $val,
+                        'total_interactions' => $totalInteractions += $val,
                         'reach' => $totalPostReach += $val,
                         'impressions' => $totalPostImpressions += $val,
                         default => null,
                     };
+                }
+            }
+
+            // Fallback para metricas legacy se a chamada falhou ou retornou vazio
+            if (!$gotData) {
+                $mediaInsightsLegacy = Http::get("https://graph.facebook.com/{$apiVersion}/{$mediaId}/insights", [
+                    'access_token' => $token,
+                    'metric' => 'engagement,impressions,reach',
+                ]);
+
+                if ($mediaInsightsLegacy->successful() && !empty($mediaInsightsLegacy->json('data'))) {
+                    $gotData = true;
+                    $postInsightsOk++;
+                    foreach ($mediaInsightsLegacy->json('data', []) as $mi) {
+                        $val = $mi['values'][0]['value'] ?? 0;
+                        match ($mi['name']) {
+                            'engagement' => $totalInteractions += $val,
+                            'reach' => $totalPostReach += $val,
+                            'impressions' => $totalPostImpressions += $val,
+                            default => null,
+                        };
+                    }
+                }
+            }
+
+            if (!$gotData) {
+                $postInsightsFailed++;
+                // Log apenas do primeiro falho para nao poluir
+                if ($postInsightsFailed === 1) {
+                    $data['platform_data']['_debug_post_insight_error'] = [
+                        'media_id' => $mediaId,
+                        'status' => $mediaInsights->status(),
+                        'error' => $mediaInsights->json('error.message') ?? $mediaInsights->body(),
+                    ];
                 }
             }
         }
@@ -371,7 +515,20 @@ class SocialInsightsService
         $data['saves'] = $totalSaves;
         $data['shares'] = $totalShares;
         $data['video_views'] = $totalVideoViews > 0 ? $totalVideoViews : null;
-        $data['engagement'] = $totalLikes + $totalComments + $totalSaves + $totalShares;
+
+        // Calcular engagement: preferir total_interactions se disponível, senão somar manualmente
+        $manualEngagement = $totalLikes + $totalComments + $totalSaves + $totalShares;
+        $data['engagement'] = $totalInteractions > 0 ? max($totalInteractions, $manualEngagement) : $manualEngagement;
+
+        // Fallback: se engagement é 0 mas existem posts e a API /media funcionou, usar accounts_engaged
+        if ($data['engagement'] == 0 && $recentPostCount > 0) {
+            // Tentar accounts_engaged como indicador de engajamento
+            $accountsEngaged = $data['platform_data']['accounts_engaged'] ?? 0;
+            if ($accountsEngaged > 0) {
+                $data['engagement'] = $accountsEngaged;
+                $data['platform_data']['engagement_source'] = 'accounts_engaged';
+            }
+        }
 
         // Se reach da conta veio vazio, usar soma de reach dos posts como fallback
         if (!$data['reach'] && $totalPostReach > 0) {
@@ -383,16 +540,32 @@ class SocialInsightsService
             $data['platform_data']['impressions_source'] = 'posts_sum';
         }
 
-        // Engagement rate = (likes + comments + saves + shares) / followers * 100
-        if ($data['followers_count'] && $data['followers_count'] > 0) {
+        // Engagement rate = engagement / followers * 100
+        if ($data['followers_count'] && $data['followers_count'] > 0 && $data['engagement'] > 0) {
             $data['engagement_rate'] = round($data['engagement'] / $data['followers_count'] * 100, 2);
         }
 
         // Posts insights summary
-        $data['platform_data']['posts_analyzed'] = min(count($recentPostIds), 15);
+        $data['platform_data']['posts_analyzed'] = $postInsightsOk;
+        $data['platform_data']['posts_insights_failed'] = $postInsightsFailed;
         $data['platform_data']['posts_total_30d'] = $recentPostCount;
-        $data['platform_data']['avg_reach_per_post'] = count($recentPostIds) > 0 ? round($totalPostReach / min(count($recentPostIds), 15)) : null;
-        $data['platform_data']['avg_impressions_per_post'] = count($recentPostIds) > 0 ? round($totalPostImpressions / min(count($recentPostIds), 15)) : null;
+        $data['platform_data']['avg_reach_per_post'] = $postInsightsOk > 0 ? round($totalPostReach / $postInsightsOk) : null;
+        $data['platform_data']['avg_impressions_per_post'] = $postInsightsOk > 0 ? round($totalPostImpressions / $postInsightsOk) : null;
+
+        // Debug log para rastrear valores
+        $data['platform_data']['_debug_engagement'] = [
+            'likes' => $totalLikes,
+            'comments' => $totalComments,
+            'saves' => $totalSaves,
+            'shares' => $totalShares,
+            'total_interactions_api' => $totalInteractions,
+            'manual_sum' => $manualEngagement,
+            'final' => $data['engagement'],
+            'media_api_success' => $mediaSuccess,
+            'posts_30d' => $recentPostCount,
+            'post_insights_ok' => $postInsightsOk,
+            'post_insights_failed' => $postInsightsFailed,
+        ];
 
         // 5. Audience demographics
         // Tentativa com API nova (v18+): engaged_audience_demographics
@@ -721,33 +894,53 @@ class SocialInsightsService
             $data['platform_data']['total_views'] = (int) ($stats['viewCount'] ?? 0);
         }
 
-        // 2. YouTube Analytics (ultimas 24h) - requer youtube.readonly scope
-        $yesterday = now()->subDay()->format('Y-m-d');
-        $today = now()->format('Y-m-d');
+        // 2. YouTube Analytics (ultimos 30 dias) - requer youtube.readonly scope
+        $startDate = now()->subDays(30)->format('Y-m-d');
+        $endDate = now()->format('Y-m-d');
 
         $analytics = Http::withToken($token)->get('https://youtubeanalytics.googleapis.com/v2/reports', [
             'ids' => 'channel==' . $channelId,
-            'startDate' => $yesterday,
-            'endDate' => $today,
+            'startDate' => $startDate,
+            'endDate' => $endDate,
             'metrics' => 'views,likes,dislikes,comments,shares,subscribersGained,subscribersLost,estimatedMinutesWatched,averageViewDuration',
-            'dimensions' => 'day',
         ]);
 
         if ($analytics->successful()) {
             $rows = $analytics->json('rows', []);
             if (!empty($rows)) {
-                $row = $rows[0]; // Dados do dia
-                $data['platform_data']['daily_views'] = $row[1] ?? 0;
-                $data['likes'] = $row[2] ?? 0;
-                $data['platform_data']['dislikes'] = $row[3] ?? 0;
-                $data['comments'] = $row[4] ?? 0;
-                $data['shares'] = $row[5] ?? 0;
-                $data['followers_gained'] = $row[6] ?? 0;
-                $data['followers_lost'] = $row[7] ?? 0;
-                $data['net_followers'] = ($row[6] ?? 0) - ($row[7] ?? 0);
-                $data['platform_data']['watch_time_minutes'] = $row[8] ?? 0;
-                $data['platform_data']['avg_view_duration'] = $row[9] ?? 0;
+                // Sem dimensions=day, retorna agregado do período
+                $row = $rows[0];
+                $totalViews30d = $row[0] ?? 0;
+                $data['likes'] = $row[1] ?? 0;
+                $data['platform_data']['dislikes'] = $row[2] ?? 0;
+                $data['comments'] = $row[3] ?? 0;
+                $data['shares'] = $row[4] ?? 0;
+                $data['followers_gained'] = $row[5] ?? 0;
+                $data['followers_lost'] = $row[6] ?? 0;
+                $data['net_followers'] = ($row[5] ?? 0) - ($row[6] ?? 0);
+                $data['platform_data']['watch_time_minutes'] = $row[7] ?? 0;
+                $data['platform_data']['avg_view_duration'] = $row[8] ?? 0;
+                $data['platform_data']['views_30d'] = $totalViews30d;
+
+                // YouTube: views = alcance (reach) e impressions
+                $data['reach'] = $totalViews30d;
+                $data['impressions'] = $totalViews30d;
+
+                // Engagement = likes + comments + shares
+                $data['engagement'] = ($data['likes'] ?? 0) + ($data['comments'] ?? 0) + ($data['shares'] ?? 0);
             }
+        } else {
+            // Fallback: usar viewCount total do canal como reach
+            if ($data['video_views']) {
+                $data['reach'] = $data['video_views'];
+                $data['impressions'] = $data['video_views'];
+                $data['platform_data']['reach_source'] = 'channel_total_views';
+            }
+        }
+
+        // Engagement rate: engagement / subscribers * 100
+        if (($data['engagement'] ?? 0) > 0 && ($data['followers_count'] ?? 0) > 0) {
+            $data['engagement_rate'] = round($data['engagement'] / $data['followers_count'] * 100, 2);
         }
 
         return $data;
@@ -788,12 +981,26 @@ class SocialInsightsService
             'max_count' => 20,
         ]);
 
+        $totalViews = 0;
+        $totalVideoLikes = 0;
+        $totalVideoComments = 0;
+        $totalVideoShares = 0;
         if ($videos->successful()) {
-            $totalViews = 0;
             foreach ($videos->json('data.videos', []) as $video) {
                 $totalViews += $video['view_count'] ?? 0;
+                $totalVideoLikes += $video['like_count'] ?? 0;
+                $totalVideoComments += $video['comment_count'] ?? 0;
+                $totalVideoShares += $video['share_count'] ?? 0;
             }
             $data['video_views'] = $totalViews;
+            $data['comments'] = $totalVideoComments;
+            $data['shares'] = $totalVideoShares;
+            $data['engagement'] = $totalVideoLikes + $totalVideoComments + $totalVideoShares;
+        }
+
+        // Engagement rate
+        if (($data['engagement'] ?? 0) > 0 && ($data['followers_count'] ?? 0) > 0) {
+            $data['engagement_rate'] = round($data['engagement'] / $data['followers_count'] * 100, 2);
         }
 
         return $data;
@@ -910,6 +1117,14 @@ class SocialInsightsService
             $data['clicks'] = ($totals['PIN_CLICK'] ?? 0) + ($totals['OUTBOUND_CLICK'] ?? 0);
             $data['platform_data']['pin_clicks'] = $totals['PIN_CLICK'] ?? 0;
             $data['platform_data']['outbound_clicks'] = $totals['OUTBOUND_CLICK'] ?? 0;
+
+            // Engagement = saves + clicks
+            $data['engagement'] = ($data['saves'] ?? 0) + ($data['clicks'] ?? 0);
+        }
+
+        // Engagement rate
+        if (($data['engagement'] ?? 0) > 0 && ($data['followers_count'] ?? 0) > 0) {
+            $data['engagement_rate'] = round($data['engagement'] / $data['followers_count'] * 100, 2);
         }
 
         return $data;
