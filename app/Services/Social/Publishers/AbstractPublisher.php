@@ -37,11 +37,13 @@ abstract class AbstractPublisher
             'username' => $account->username,
         ]);
 
-        // Validar token
+        // Validar e renovar token automaticamente se necessário
         if ($account->access_token && $account->isTokenExpired()) {
-            $msg = "Token expirado para @{$account->username} no {$platform}";
-            Log::warning("Autopilot [{$platform}]: {$msg}");
-            return PublishResult::fail($msg);
+            if (!$account->ensureFreshToken()) {
+                $msg = "Token expirado para @{$account->username} no {$platform}. Reconecte a conta.";
+                Log::warning("Autopilot [{$platform}]: {$msg}");
+                return PublishResult::fail($msg);
+            }
         }
 
         // Validar conta ativa

@@ -32,8 +32,8 @@ Schedule::job(new ProcessScheduledPostsJob)->everyMinute()->withoutOverlapping()
 // Re-tentar posts que falharam (com tentativas restantes) - a cada 15 minutos
 Schedule::job(new RetryFailedPostsJob)->everyFifteenMinutes()->withoutOverlapping();
 
-// Renovar tokens de contas sociais prestes a expirar - a cada hora
-Schedule::job(new RefreshSocialTokensJob)->hourly()->withoutOverlapping();
+// Renovar tokens de contas sociais prestes a expirar - a cada 15 min (Google/YouTube expira em 1h)
+Schedule::job(new RefreshSocialTokensJob)->everyFifteenMinutes()->withoutOverlapping();
 
 /*
 |--------------------------------------------------------------------------

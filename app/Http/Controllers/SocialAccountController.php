@@ -340,6 +340,16 @@ class SocialAccountController extends Controller
                 ]);
             }
 
+            // Tentar renovar token se necessário antes de sincronizar
+            if ($account->isTokenExpired() || $account->needsRefresh()) {
+                if (!$account->ensureFreshToken()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Token expirado e não foi possível renovar. Reconecte a conta.',
+                    ]);
+                }
+            }
+
             $service = app(\App\Services\Social\SocialInsightsService::class);
             $result = $service->syncAccount($account);
 
@@ -397,12 +407,13 @@ class SocialAccountController extends Controller
             return 'sem_token';
         }
 
-        if ($account->isTokenExpired()) {
-            return 'expirado';
-        }
+        // Se token expirado ou prestes a expirar, tentar renovar automaticamente
+        if ($account->isTokenExpired() || $account->needsRefresh()) {
+            if ($account->refresh_token && $account->ensureFreshToken()) {
+                return 'ativo'; // Renovado com sucesso
+            }
 
-        if ($account->needsRefresh()) {
-            return 'renovar';
+            return $account->isTokenExpired() ? 'expirado' : 'renovar';
         }
 
         return 'ativo';

@@ -38,10 +38,11 @@ class RefreshSocialTokensJob implements ShouldQueue
     public function handle(SocialOAuthService $oauthService): void
     {
         // Buscar contas ativas que precisam de refresh
-        // (token expira em menos de 24h OU já expirou)
+        // Token expirado OU expira em menos de 15 minutos (cobre Google/YouTube 1h tokens)
         $accounts = SocialAccount::where('is_active', true)
             ->whereNotNull('token_expires_at')
-            ->where('token_expires_at', '<=', now()->addDay())
+            ->whereNotNull('refresh_token')
+            ->where('token_expires_at', '<=', now()->addMinutes(15))
             ->get();
 
         if ($accounts->isEmpty()) {

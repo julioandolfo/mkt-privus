@@ -142,7 +142,7 @@ class SocialInsightsService
 
     private function fetchInstagramInsights(SocialAccount $account): array
     {
-        $token = $account->access_token;
+        $token = $account->getFreshToken() ?? $account->access_token;
         $igUserId = $account->platform_user_id;
         $apiVersion = config('social_oauth.meta.api_version', 'v19.0');
 
@@ -556,7 +556,7 @@ class SocialInsightsService
 
     private function fetchFacebookInsights(SocialAccount $account): array
     {
-        $token = $account->access_token;
+        $token = $account->getFreshToken() ?? $account->access_token;
         $pageId = $account->platform_user_id;
         $apiVersion = config('social_oauth.meta.api_version', 'v19.0');
 
@@ -695,7 +695,7 @@ class SocialInsightsService
 
     private function fetchYoutubeInsights(SocialAccount $account): array
     {
-        $token = $account->access_token;
+        $token = $account->getFreshToken() ?? $account->access_token;
         $channelId = $account->platform_user_id;
 
         $data = [
@@ -759,7 +759,7 @@ class SocialInsightsService
 
     private function fetchTiktokInsights(SocialAccount $account): array
     {
-        $token = $account->access_token;
+        $token = $account->getFreshToken() ?? $account->access_token;
 
         $data = [
             'followers_count' => null,
@@ -805,7 +805,7 @@ class SocialInsightsService
 
     private function fetchLinkedinInsights(SocialAccount $account): array
     {
-        $token = $account->access_token;
+        $token = $account->getFreshToken() ?? $account->access_token;
         $orgId = $account->platform_user_id;
         $type = $account->metadata['type'] ?? 'profile';
 
@@ -876,7 +876,7 @@ class SocialInsightsService
 
     private function fetchPinterestInsights(SocialAccount $account): array
     {
-        $token = $account->access_token;
+        $token = $account->getFreshToken() ?? $account->access_token;
 
         $data = [
             'followers_count' => null,
