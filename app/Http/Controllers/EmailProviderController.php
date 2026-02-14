@@ -36,6 +36,8 @@ class EmailProviderController extends Controller
                     'created_at' => $p->created_at->format('d/m/Y H:i'),
                     // Informacoes parciais do config para exibicao
                     'config_summary' => $this->getConfigSummary($p),
+                    // Config completo para edição (sem secrets expostos na listagem)
+                    'config_edit' => $this->getConfigForEdit($p),
                 ];
             });
 
@@ -174,6 +176,8 @@ class EmailProviderController extends Controller
             'api_user_id' => 'nullable|string',
             'api_secret' => 'nullable|string',
             'from_email' => 'nullable|email',
+            // SMS SendPulse
+            'sender_name' => 'nullable|string|max:11',
         ]);
 
         // Atualizar config mesclando com existente
@@ -255,6 +259,41 @@ class EmailProviderController extends Controller
             'sms_sendpulse' => [
                 'sender_name' => $config['sender_name'] ?? '-',
                 'api_user_id' => substr($config['api_user_id'] ?? '', 0, 8) . '...',
+            ],
+            default => [],
+        };
+    }
+
+    /**
+     * Retorna config completo para popular o formulário de edição.
+     * Secrets são mascarados (placeholder) para não trafegar em claro na listagem.
+     */
+    private function getConfigForEdit(EmailProvider $provider): array
+    {
+        $config = $provider->config ?? [];
+        return match ($provider->type) {
+            'smtp' => [
+                'host' => $config['host'] ?? '',
+                'port' => $config['port'] ?? 587,
+                'encryption' => $config['encryption'] ?? 'tls',
+                'username' => $config['username'] ?? '',
+                'password' => '', // Não enviar senha real — placeholder para indicar que existe
+                'has_password' => !empty($config['password']),
+                'from_address' => $config['from_address'] ?? '',
+                'from_name' => $config['from_name'] ?? '',
+            ],
+            'sendpulse' => [
+                'api_user_id' => $config['api_user_id'] ?? '',
+                'api_secret' => '', // Não enviar secret real
+                'has_secret' => !empty($config['api_secret']),
+                'from_email' => $config['from_email'] ?? '',
+                'from_name' => $config['from_name'] ?? '',
+            ],
+            'sms_sendpulse' => [
+                'api_user_id' => $config['api_user_id'] ?? '',
+                'api_secret' => '', // Não enviar secret real
+                'has_secret' => !empty($config['api_secret']),
+                'sender_name' => $config['sender_name'] ?? '',
             ],
             default => [],
         };

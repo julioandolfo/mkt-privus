@@ -128,9 +128,17 @@ class EmailProviderService
 
         $accessToken = $tokenResponse->json('access_token');
 
-        // 2. Enviar email
-        $from = $fromEmail ?? $config['from_email'];
-        $name = $fromName ?? $config['from_name'] ?? config('app.name');
+        // 2. Determinar remetente — SEMPRE priorizar o from_email do config do provedor
+        // pois este é o email verificado no SendPulse
+        $configFromEmail = $config['from_email'] ?? $config['from_address'] ?? null;
+        $from = $configFromEmail ?: $fromEmail;
+        $name = $config['from_name'] ?? $fromName ?? config('app.name');
+
+        // Se o fromEmail passado for diferente do config, usar config (o verificado no SendPulse)
+        // Evita erro "Unauthorized action" quando um email nao verificado é usado
+        if (!$from) {
+            return ['success' => false, 'error' => 'Email remetente não configurado no provedor SendPulse.'];
+        }
 
         $payload = [
             'email' => [
@@ -161,9 +169,25 @@ class EmailProviderService
             ];
         }
 
+        // Detalhar erro para facilitar diagnóstico
+        $errorMsg = $sendResponse->json('message') ?? $sendResponse->body();
+        $statusCode = $sendResponse->status();
+
+        SystemLog::warning('email', 'sendpulse.send.error', "SendPulse envio falhou: {$errorMsg}", [
+            'status' => $statusCode,
+            'from' => $from,
+            'to' => $to,
+            'response' => substr($sendResponse->body(), 0, 500),
+        ]);
+
+        // Mensagem amigável para erros comuns
+        if (str_contains($errorMsg, 'Unauthorized') || $statusCode === 403) {
+            $errorMsg = "Email remetente '{$from}' não está verificado no SendPulse. Verifique em SendPulse > SMTP > Sender Emails.";
+        }
+
         return [
             'success' => false,
-            'error' => 'SendPulse: ' . ($sendResponse->json('message') ?? $sendResponse->body()),
+            'error' => 'SendPulse: ' . $errorMsg,
         ];
     }
 

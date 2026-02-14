@@ -39,16 +39,33 @@ function openCreate() {
 
 function openEdit(provider) {
     editingProvider.value = provider;
+    form.reset();
     form.name = provider.name;
     form.type = provider.type;
     form.is_default = provider.is_default;
     form.daily_limit = provider.daily_limit;
-    if (provider.config_summary) {
-        if (provider.type === 'smtp') {
-            form.host = provider.config_summary.host || '';
-            form.from_address = provider.config_summary.from || '';
-        }
+
+    const cfg = provider.config_edit || {};
+
+    if (provider.type === 'smtp') {
+        form.host = cfg.host || '';
+        form.port = cfg.port || 587;
+        form.encryption = cfg.encryption || 'tls';
+        form.username = cfg.username || '';
+        form.password = ''; // Não preencher — placeholder indica que existe
+        form.from_address = cfg.from_address || '';
+        form.from_name = cfg.from_name || '';
+    } else if (provider.type === 'sendpulse') {
+        form.api_user_id = cfg.api_user_id || '';
+        form.api_secret = ''; // Não preencher — placeholder indica que existe
+        form.from_email = cfg.from_email || '';
+        form.from_name = cfg.from_name || '';
+    } else if (provider.type === 'sms_sendpulse') {
+        form.api_user_id = cfg.api_user_id || '';
+        form.api_secret = ''; // Não preencher — placeholder indica que existe
+        form.sender_name = cfg.sender_name || '';
     }
+
     showModal.value = true;
 }
 
@@ -273,7 +290,8 @@ function copyWebhook(url) {
                                 </div>
                                 <div>
                                     <label class="text-sm text-gray-400">Senha</label>
-                                    <input v-model="form.password" type="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                    <input v-model="form.password" type="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" :placeholder="editingProvider?.config_edit?.has_password ? '••••••• (manter atual)' : ''" />
+                                    <p v-if="editingProvider?.config_edit?.has_password" class="text-[10px] text-gray-500 mt-1">Deixe vazio para manter a senha atual.</p>
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 gap-3">
@@ -292,20 +310,22 @@ function copyWebhook(url) {
                         <template v-if="form.type === 'sendpulse'">
                             <div>
                                 <label class="text-sm text-gray-400">API User ID</label>
-                                <input v-model="form.api_user_id" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                <input v-model="form.api_user_id" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" placeholder="ID do cliente SendPulse" />
                             </div>
                             <div>
                                 <label class="text-sm text-gray-400">API Secret</label>
-                                <input v-model="form.api_secret" type="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                <input v-model="form.api_secret" type="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" :placeholder="editingProvider?.config_edit?.has_secret ? '••••••• (manter atual)' : 'Secret do cliente SendPulse'" />
+                                <p v-if="editingProvider?.config_edit?.has_secret" class="text-[10px] text-gray-500 mt-1">Deixe vazio para manter o secret atual.</p>
                             </div>
                             <div class="grid grid-cols-2 gap-3">
                                 <div>
                                     <label class="text-sm text-gray-400">Email Remetente</label>
-                                    <input v-model="form.from_email" type="email" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                    <input v-model="form.from_email" type="email" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" placeholder="email@seudominio.com" />
+                                    <p class="text-[10px] text-gray-500 mt-1">Deve estar verificado no SendPulse.</p>
                                 </div>
                                 <div>
                                     <label class="text-sm text-gray-400">Nome Remetente</label>
-                                    <input v-model="form.from_name" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                    <input v-model="form.from_name" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" placeholder="Minha Empresa" />
                                 </div>
                             </div>
                         </template>
@@ -317,11 +337,12 @@ function copyWebhook(url) {
                             </div>
                             <div>
                                 <label class="text-sm text-gray-400">API User ID</label>
-                                <input v-model="form.api_user_id" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                <input v-model="form.api_user_id" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" placeholder="ID do cliente SendPulse" />
                             </div>
                             <div>
                                 <label class="text-sm text-gray-400">API Secret</label>
-                                <input v-model="form.api_secret" type="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
+                                <input v-model="form.api_secret" type="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" :placeholder="editingProvider?.config_edit?.has_secret ? '••••••• (manter atual)' : 'Secret do cliente SendPulse'" />
+                                <p v-if="editingProvider?.config_edit?.has_secret" class="text-[10px] text-gray-500 mt-1">Deixe vazio para manter o secret atual.</p>
                             </div>
                             <div>
                                 <label class="text-sm text-gray-400">Nome do Remetente (max 11 chars)</label>

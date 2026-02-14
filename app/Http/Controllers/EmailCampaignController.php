@@ -400,8 +400,8 @@ class EmailCampaignController extends Controller
             $request->input('test_email'),
             '[TESTE] ' . $campaign->subject,
             $campaign->html_content ?? '<p>Sem conteúdo</p>',
-            $campaign->from_name,
-            $campaign->from_email,
+            $campaign->from_name ?: $provider->getFromName(),
+            $campaign->from_email ?: $provider->getFromEmail(),
         );
 
         return response()->json($result);
@@ -432,8 +432,8 @@ class EmailCampaignController extends Controller
             $request->input('test_email'),
             '[TESTE] ' . $request->input('subject'),
             $request->input('html_content'),
-            $request->input('from_name') ?: $provider->from_name ?? config('app.name'),
-            $request->input('from_email') ?: $provider->from_email ?? config('mail.from.address'),
+            $request->input('from_name') ?: $provider->getFromName(),
+            $request->input('from_email') ?: $provider->getFromEmail(),
         );
 
         return response()->json($result);
