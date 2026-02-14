@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { Link, router, usePage } from '@inertiajs/vue3';
 import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
@@ -23,7 +23,6 @@ interface NavItem {
 const page = usePage();
 const sidebarOpen = ref(true);
 const mobileMenuOpen = ref(false);
-const expandedMenus = ref<string[]>(['Social']);
 
 const user = computed(() => page.props.auth?.user);
 const currentBrand = computed(() => page.props.currentBrand);
@@ -79,6 +78,41 @@ const navigation: NavItem[] = [
     { name: 'Logs', href: 'logs.index', icon: 'terminal', routeMatch: 'logs.*', enabled: true },
     { name: 'Configurações', href: 'settings.index', icon: 'settings', routeMatch: 'settings.*', enabled: true },
 ];
+
+// Determinar qual menu deve estar expandido com base na rota atual
+function getActiveMenus(): string[] {
+    const expanded: string[] = [];
+    for (const item of navigation) {
+        if (item.children && item.enabled) {
+            try {
+                if (route().current(item.routeMatch)) {
+                    expanded.push(item.name);
+                }
+            } catch {}
+        }
+    }
+    return expanded;
+}
+const expandedMenus = ref<string[]>(getActiveMenus());
+
+// Reagir a navegação SPA (Inertia) — expandir menu correto ao trocar de pagina
+const currentUrl = computed(() => page.url);
+watch(currentUrl, () => {
+    const active = getActiveMenus();
+    // Adicionar menus ativos sem fechar os que o usuario abriu manualmente
+    for (const name of active) {
+        if (!expandedMenus.value.includes(name)) {
+            expandedMenus.value.push(name);
+        }
+    }
+    // Fechar menus que nao estao ativos E que o usuario nao esta navegando
+    expandedMenus.value = expandedMenus.value.filter(name => {
+        // Manter se esta ativo na rota atual
+        if (active.includes(name)) return true;
+        // Remover se nao esta ativo (usuario navegou para outra secao)
+        return false;
+    });
+});
 
 function isRouteActive(routeMatch: string): boolean {
     try {

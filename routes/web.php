@@ -330,6 +330,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/', [EmailCampaignController::class, 'index'])->name('index');
             Route::get('/create', [EmailCampaignController::class, 'create'])->name('create');
             Route::post('/', [EmailCampaignController::class, 'store'])->name('store');
+            Route::post('/send-test-preview', [EmailCampaignController::class, 'sendTestPreview'])->name('send-test-preview');
             Route::get('/{campaign}', [EmailCampaignController::class, 'show'])->name('show');
             Route::get('/{campaign}/edit', [EmailCampaignController::class, 'edit'])->name('edit');
             Route::put('/{campaign}', [EmailCampaignController::class, 'update'])->name('update');

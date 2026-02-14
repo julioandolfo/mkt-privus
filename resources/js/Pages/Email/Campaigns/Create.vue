@@ -76,6 +76,43 @@ function onEditorSave() {
     showVisualEditor.value = false;
 }
 
+// Envio de teste
+const showTestModal = ref(false);
+const testEmail = ref('');
+const testSending = ref(false);
+const testResult = ref(null);
+const testError = ref('');
+
+async function sendTestEmail() {
+    if (!testEmail.value || !form.html_content) return;
+    testSending.value = true;
+    testResult.value = null;
+    testError.value = '';
+
+    try {
+        const resp = await axios.post(route('email.campaigns.send-test-preview'), {
+            test_email: testEmail.value,
+            subject: form.subject || 'Teste de campanha',
+            html_content: form.html_content,
+            email_provider_id: form.email_provider_id,
+            from_name: form.from_name || null,
+            from_email: form.from_email || null,
+        });
+
+        if (resp.data?.success !== false) {
+            testResult.value = 'success';
+        } else {
+            testError.value = resp.data?.error || 'Falha ao enviar teste.';
+            testResult.value = 'error';
+        }
+    } catch (e) {
+        testError.value = e.response?.data?.error || e.response?.data?.message || e.message || 'Erro ao enviar teste.';
+        testResult.value = 'error';
+    } finally {
+        testSending.value = false;
+    }
+}
+
 const estimatedRecipients = computed(() => {
     const includeIds = form.lists;
     const excludeIds = form.exclude_lists;
@@ -616,6 +653,44 @@ function submit() {
 
                 <div v-if="!form.html_content" class="px-4 py-3 rounded-lg bg-yellow-900/30 border border-yellow-700/50 text-yellow-300 text-sm">
                     Atenção: Nenhum conteúdo HTML foi definido. Volte ao passo "Conteúdo" para selecionar um template ou gerar com IA.
+                </div>
+
+                <!-- Enviar Teste -->
+                <div v-if="form.html_content && form.email_provider_id" class="rounded-xl border border-gray-700 bg-gray-800/50 p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <h3 class="text-sm font-semibold text-white">Enviar Email de Teste</h3>
+                            <p class="text-xs text-gray-500 mt-0.5">Envie um teste para visualizar o email antes de criar a campanha.</p>
+                        </div>
+                        <button v-if="!showTestModal" type="button" @click="showTestModal = true"
+                            class="px-3 py-1.5 rounded-lg bg-gray-700 text-xs font-medium text-gray-300 hover:bg-gray-600 hover:text-white transition">
+                            Enviar Teste
+                        </button>
+                    </div>
+                    <div v-if="showTestModal" class="space-y-3">
+                        <div class="flex gap-2">
+                            <input v-model="testEmail" type="email" placeholder="seu@email.com"
+                                class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                @keyup.enter="sendTestEmail" />
+                            <button type="button" @click="sendTestEmail" :disabled="testSending || !testEmail"
+                                class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-500 disabled:opacity-50 transition whitespace-nowrap">
+                                {{ testSending ? 'Enviando...' : 'Enviar' }}
+                            </button>
+                            <button type="button" @click="showTestModal = false; testResult = null; testError = ''"
+                                class="px-3 py-2 text-gray-500 hover:text-white transition">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                        </div>
+                        <p class="text-[10px] text-gray-500">O assunto será prefixado com [TESTE]. Será utilizado o provedor selecionado.</p>
+                        <div v-if="testResult === 'success'" class="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-900/30 border border-emerald-700/50">
+                            <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                            <span class="text-xs text-emerald-300">Email de teste enviado com sucesso para {{ testEmail }}!</span>
+                        </div>
+                        <div v-if="testResult === 'error'" class="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-900/30 border border-red-700/50">
+                            <svg class="w-4 h-4 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+                            <span class="text-xs text-red-300">{{ testError }}</span>
+                        </div>
+                    </div>
                 </div>
 
                 <button type="submit" :disabled="form.processing || !form.html_content" class="w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 transition">

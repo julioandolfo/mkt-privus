@@ -693,11 +693,47 @@ const periodOptions = [
                                 <p class="text-[10px] text-gray-500">Alcance</p>
                             </div>
                         </div>
+                        <!-- Metricas secundarias -->
+                        <div class="grid grid-cols-4 gap-1.5 mt-2">
+                            <div v-if="account.impressions" class="text-center bg-gray-800/40 rounded-lg py-1.5">
+                                <p class="text-xs font-semibold text-white">{{ formatNumber(account.impressions) }}</p>
+                                <p class="text-[9px] text-gray-500">Impressoes</p>
+                            </div>
+                            <div v-if="account.profile_views" class="text-center bg-gray-800/40 rounded-lg py-1.5">
+                                <p class="text-xs font-semibold text-white">{{ formatNumber(account.profile_views) }}</p>
+                                <p class="text-[9px] text-gray-500">Visitas</p>
+                            </div>
+                            <div v-if="account.clicks" class="text-center bg-gray-800/40 rounded-lg py-1.5">
+                                <p class="text-xs font-semibold text-white">{{ formatNumber(account.clicks) }}</p>
+                                <p class="text-[9px] text-gray-500">Cliques</p>
+                            </div>
+                            <div v-if="account.shares" class="text-center bg-gray-800/40 rounded-lg py-1.5">
+                                <p class="text-xs font-semibold text-white">{{ formatNumber(account.shares) }}</p>
+                                <p class="text-[9px] text-gray-500">Compartilh.</p>
+                            </div>
+                            <div v-if="account.video_views" class="text-center bg-gray-800/40 rounded-lg py-1.5">
+                                <p class="text-xs font-semibold text-white">{{ formatNumber(account.video_views) }}</p>
+                                <p class="text-[9px] text-gray-500">Views</p>
+                            </div>
+                            <div v-if="account.stories_count" class="text-center bg-gray-800/40 rounded-lg py-1.5">
+                                <p class="text-xs font-semibold text-white">{{ account.stories_count }}</p>
+                                <p class="text-[9px] text-gray-500">Stories</p>
+                            </div>
+                            <div v-if="account.reels_count" class="text-center bg-gray-800/40 rounded-lg py-1.5">
+                                <p class="text-xs font-semibold text-white">{{ account.reels_count }}</p>
+                                <p class="text-[9px] text-gray-500">Reels</p>
+                            </div>
+                            <div v-if="account.avg_reach_per_post" class="text-center bg-gray-800/40 rounded-lg py-1.5">
+                                <p class="text-xs font-semibold text-white">{{ formatNumber(account.avg_reach_per_post) }}</p>
+                                <p class="text-[9px] text-gray-500">Alc/Post</p>
+                            </div>
+                        </div>
                         <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-800">
                             <div class="flex items-center gap-3 text-[10px] text-gray-500">
                                 <span v-if="account.likes !== null">{{ formatNumber(account.likes) }} curtidas</span>
                                 <span v-if="account.comments !== null">{{ formatNumber(account.comments) }} comentarios</span>
                                 <span v-if="account.saves !== null">{{ formatNumber(account.saves) }} salvos</span>
+                                <span v-if="account.posts_total_30d" class="text-gray-600">{{ account.posts_total_30d }} posts/30d</span>
                             </div>
                             <span v-if="account.last_sync" class="text-[10px] text-gray-600">{{ account.last_sync }}</span>
                         </div>

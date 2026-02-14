@@ -110,6 +110,8 @@ class DashboardController extends Controller
                     $totalFollowersYesterday += $previousFollowers;
                 }
 
+                $platformData = $latest?->platform_data ?? [];
+
                 $socialAccounts[] = [
                     'id' => $account->id,
                     'platform' => $account->platform->value ?? $account->platform,
@@ -127,7 +129,15 @@ class DashboardController extends Controller
                     'impressions' => $latest?->impressions,
                     'likes' => $latest?->likes,
                     'comments' => $latest?->comments,
+                    'shares' => $latest?->shares,
                     'saves' => $latest?->saves,
+                    'clicks' => $latest?->clicks,
+                    'video_views' => $latest?->video_views,
+                    'profile_views' => $platformData['profile_views'] ?? null,
+                    'stories_count' => $platformData['stories_count'] ?? null,
+                    'reels_count' => $platformData['reels_count'] ?? null,
+                    'avg_reach_per_post' => $platformData['avg_reach_per_post'] ?? null,
+                    'posts_total_30d' => $platformData['posts_total_30d'] ?? null,
                     'last_sync' => $latest?->date?->format('d/m/Y'),
                 ];
             }

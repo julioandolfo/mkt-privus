@@ -406,4 +406,36 @@ class EmailCampaignController extends Controller
 
         return response()->json($result);
     }
+
+    /**
+     * Enviar teste avulso (sem campanha salva — usado na criação)
+     */
+    public function sendTestPreview(Request $request)
+    {
+        $request->validate([
+            'test_email' => 'required|email',
+            'subject' => 'required|string|max:255',
+            'html_content' => 'required|string',
+            'email_provider_id' => 'required|exists:email_providers,id',
+            'from_name' => 'nullable|string|max:255',
+            'from_email' => 'nullable|email|max:255',
+        ]);
+
+        $provider = \App\Models\EmailProvider::find($request->input('email_provider_id'));
+        if (!$provider) {
+            return response()->json(['success' => false, 'error' => 'Provedor não encontrado.']);
+        }
+
+        $providerService = app(\App\Services\Email\EmailProviderService::class);
+        $result = $providerService->send(
+            $provider,
+            $request->input('test_email'),
+            '[TESTE] ' . $request->input('subject'),
+            $request->input('html_content'),
+            $request->input('from_name') ?: $provider->from_name ?? config('app.name'),
+            $request->input('from_email') ?: $provider->from_email ?? config('mail.from.address'),
+        );
+
+        return response()->json($result);
+    }
 }
