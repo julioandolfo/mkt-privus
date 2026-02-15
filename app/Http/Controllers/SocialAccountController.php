@@ -401,7 +401,7 @@ class SocialAccountController extends Controller
 
         $token = $account->getFreshToken() ?? $account->access_token;
         $igUserId = $account->platform_user_id;
-        $apiVersion = config('social_oauth.meta.api_version', 'v19.0');
+        $apiVersion = config('social_oauth.meta.api_version', 'v21.0');
 
         $results = [
             'account' => [
@@ -418,7 +418,7 @@ class SocialAccountController extends Controller
         // Teste 0: Profile data (deve funcionar se token valido)
         $profile = \Illuminate\Support\Facades\Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}", [
             'access_token' => $token,
-            'fields' => 'id,name,username,followers_count,follows_count,media_count,account_type,biography',
+            'fields' => 'id,name,username,followers_count,follows_count,media_count,biography,profile_picture_url',
         ]);
         $results['test0_profile'] = [
             'status' => $profile->status(),
@@ -431,7 +431,7 @@ class SocialAccountController extends Controller
 
         $t1 = \Illuminate\Support\Facades\Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
             'access_token' => $token,
-            'metric' => 'impressions,reach',
+            'metric' => 'reach,views,total_interactions,accounts_engaged',
             'period' => 'day',
             'metric_type' => 'total_value',
             'since' => $since28,
@@ -445,7 +445,7 @@ class SocialAccountController extends Controller
         // Teste 2: Insights period=day sem metric_type
         $t2 = \Illuminate\Support\Facades\Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
             'access_token' => $token,
-            'metric' => 'impressions,reach',
+            'metric' => 'reach,views',
             'period' => 'day',
             'since' => now()->subDays(2)->startOfDay()->timestamp,
             'until' => now()->addDay()->startOfDay()->timestamp,
@@ -458,7 +458,7 @@ class SocialAccountController extends Controller
         // Teste 3: period=days_28
         $t3 = \Illuminate\Support\Facades\Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
             'access_token' => $token,
-            'metric' => 'impressions,reach',
+            'metric' => 'reach,views',
             'period' => 'days_28',
         ]);
         $results['test3_days28'] = [

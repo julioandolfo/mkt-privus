@@ -64,7 +64,7 @@ class SocialOAuthService
         return [
             'app_id' => $this->getSetting('meta_app_id') ?: config('social_oauth.meta.app_id'),
             'app_secret' => $this->getSetting('meta_app_secret') ?: config('social_oauth.meta.app_secret'),
-            'api_version' => config('social_oauth.meta.api_version', 'v19.0'),
+            'api_version' => config('social_oauth.meta.api_version', 'v21.0'),
             'scopes' => config('social_oauth.meta.scopes', []),
         ];
     }

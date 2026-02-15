@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Log;
 class MetaAdsService
 {
     protected string $baseUrl = 'https://graph.facebook.com';
-    protected string $apiVersion = 'v19.0';
+    protected string $apiVersion = 'v21.0';
 
     /**
      * Gera URL de autorização OAuth para Meta Ads

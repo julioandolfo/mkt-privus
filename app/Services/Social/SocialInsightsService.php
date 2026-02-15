@@ -144,7 +144,7 @@ class SocialInsightsService
     {
         $token = $account->getFreshToken() ?? $account->access_token;
         $igUserId = $account->platform_user_id;
-        $apiVersion = config('social_oauth.meta.api_version', 'v19.0');
+        $apiVersion = config('social_oauth.meta.api_version', 'v21.0');
 
         $data = [
             'followers_count' => null,
@@ -215,16 +215,18 @@ class SocialInsightsService
                 $name = $metric['name'] ?? '';
                 match ($name) {
                     'impressions' => $data['impressions'] = $value,
+                    'views' => $data['impressions'] = $value, // views = novo nome de impressions
                     'reach' => $data['reach'] = $value,
                     'profile_views' => $data['platform_data']['profile_views'] = $value,
                     'website_clicks' => $data['clicks'] = $value,
                     'accounts_engaged' => $data['platform_data']['accounts_engaged'] = $value,
+                    'total_interactions' => $data['platform_data']['total_interactions'] = $value,
                     'follows_and_unfollows' => $data['platform_data']['net_followers'] = $value,
                     default => null,
                 };
 
-                // Considerar parseado se reach OU impressions tem valor > 0
-                if (in_array($name, ['reach', 'impressions']) && $value > 0) {
+                // Considerar parseado se reach OU views/impressions tem valor > 0
+                if (in_array($name, ['reach', 'impressions', 'views']) && $value > 0) {
                     $found = true;
                     $insightsParsed = true;
                 }
@@ -232,9 +234,12 @@ class SocialInsightsService
             return $found;
         };
 
+        // Metricas validas da API Instagram (v18+): impressions foi substituido por views
+        $igMetrics = 'reach,views,profile_views,accounts_engaged,follows_and_unfollows,total_interactions';
+
         $insights1 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
             'access_token' => $token,
-            'metric' => 'impressions,reach,profile_views,accounts_engaged,follows_and_unfollows',
+            'metric' => $igMetrics,
             'period' => 'day',
             'metric_type' => 'total_value',
             'since' => $since28,
@@ -256,7 +261,7 @@ class SocialInsightsService
         if (!$insightsParsed) {
             $insights2 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
                 'access_token' => $token,
-                'metric' => 'impressions,reach',
+                'metric' => 'reach,views',
                 'period' => 'day',
                 'since' => $since28,
                 'until' => $untilNow,
@@ -278,7 +283,7 @@ class SocialInsightsService
         if (!$insightsParsed) {
             $insights3 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
                 'access_token' => $token,
-                'metric' => 'impressions,reach',
+                'metric' => 'reach,views',
                 'period' => 'day',
                 'since' => now()->subDays(2)->startOfDay()->timestamp,
                 'until' => now()->addDay()->startOfDay()->timestamp,
@@ -300,7 +305,7 @@ class SocialInsightsService
         if (!$insightsParsed) {
             $insights4 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
                 'access_token' => $token,
-                'metric' => 'impressions,reach',
+                'metric' => 'reach,views',
                 'period' => 'days_28',
             ]);
 
@@ -422,7 +427,7 @@ class SocialInsightsService
             // Tentar metricas modernas primeiro (v18+)
             $mediaInsights = Http::get("https://graph.facebook.com/{$apiVersion}/{$mediaId}/insights", [
                 'access_token' => $token,
-                'metric' => 'saved,shares,total_interactions,reach,impressions',
+                'metric' => 'saved,shares,total_interactions,reach,views',
             ]);
 
             $gotData = false;
@@ -437,7 +442,7 @@ class SocialInsightsService
                         'shares' => $totalShares += $val,
                         'total_interactions' => $totalInteractions += $val,
                         'reach' => $totalPostReach += $val,
-                        'impressions' => $totalPostImpressions += $val,
+                        'impressions', 'views' => $totalPostImpressions += $val,
                         default => null,
                     };
                 }
@@ -445,9 +450,10 @@ class SocialInsightsService
 
             // Fallback para metricas legacy se a chamada falhou ou retornou vazio
             if (!$gotData) {
+                // Tentar com views (novo nome) e engagement
                 $mediaInsightsLegacy = Http::get("https://graph.facebook.com/{$apiVersion}/{$mediaId}/insights", [
                     'access_token' => $token,
-                    'metric' => 'engagement,impressions,reach',
+                    'metric' => 'total_interactions,reach,views',
                 ]);
 
                 if ($mediaInsightsLegacy->successful() && !empty($mediaInsightsLegacy->json('data'))) {
@@ -456,9 +462,9 @@ class SocialInsightsService
                     foreach ($mediaInsightsLegacy->json('data', []) as $mi) {
                         $val = $mi['values'][0]['value'] ?? 0;
                         match ($mi['name']) {
-                            'engagement' => $totalInteractions += $val,
+                            'total_interactions' => $totalInteractions += $val,
                             'reach' => $totalPostReach += $val,
-                            'impressions' => $totalPostImpressions += $val,
+                            'impressions', 'views' => $totalPostImpressions += $val,
                             default => null,
                         };
                     }
@@ -697,7 +703,7 @@ class SocialInsightsService
     {
         $token = $account->getFreshToken() ?? $account->access_token;
         $pageId = $account->platform_user_id;
-        $apiVersion = config('social_oauth.meta.api_version', 'v19.0');
+        $apiVersion = config('social_oauth.meta.api_version', 'v21.0');
 
         $data = [
             'followers_count' => null,
