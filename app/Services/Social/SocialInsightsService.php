@@ -188,6 +188,50 @@ class SocialInsightsService
         $since28 = now()->subDays(28)->startOfDay()->timestamp;
         $untilNow = now()->endOfDay()->timestamp;
 
+        // Helper para extrair valor de uma metrica do Instagram (varios formatos)
+        $extractValue = function (array $metric): ?int {
+            // Formato 1: total_value.value (API v18+ com metric_type=total_value)
+            if (isset($metric['total_value']['value'])) {
+                return (int) $metric['total_value']['value'];
+            }
+            // Formato 2: values[].value (API classica com period=day, somar dias)
+            if (!empty($metric['values'])) {
+                $sum = 0;
+                foreach ($metric['values'] as $dayValue) {
+                    $sum += (int) ($dayValue['value'] ?? 0);
+                }
+                return $sum; // retornar mesmo se 0 — zero é dado valido
+            }
+            return null;
+        };
+
+        // Helper para aplicar metricas encontradas
+        $applyMetrics = function (array $metricsData) use (&$data, &$insightsParsed, $extractValue): bool {
+            $found = false;
+            foreach ($metricsData as $metric) {
+                $value = $extractValue($metric);
+                if ($value === null) continue;
+
+                $name = $metric['name'] ?? '';
+                match ($name) {
+                    'impressions' => $data['impressions'] = $value,
+                    'reach' => $data['reach'] = $value,
+                    'profile_views' => $data['platform_data']['profile_views'] = $value,
+                    'website_clicks' => $data['clicks'] = $value,
+                    'accounts_engaged' => $data['platform_data']['accounts_engaged'] = $value,
+                    'follows_and_unfollows' => $data['platform_data']['net_followers'] = $value,
+                    default => null,
+                };
+
+                // Considerar parseado se reach OU impressions tem valor > 0
+                if (in_array($name, ['reach', 'impressions']) && $value > 0) {
+                    $found = true;
+                    $insightsParsed = true;
+                }
+            }
+            return $found;
+        };
+
         $insights1 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
             'access_token' => $token,
             'metric' => 'impressions,reach,profile_views,accounts_engaged,follows_and_unfollows',
@@ -197,183 +241,105 @@ class SocialInsightsService
             'until' => $untilNow,
         ]);
 
-        $debugAttempts['attempt1'] = [
+        $debugAttempts['attempt1_total_value'] = [
             'status' => $insights1->status(),
             'data_count' => count($insights1->json('data', [])),
             'error' => $insights1->json('error.message') ?? null,
+            'raw_body_preview' => mb_substr($insights1->body(), 0, 500),
         ];
 
         if ($insights1->successful() && !empty($insights1->json('data'))) {
-            foreach ($insights1->json('data', []) as $metric) {
-                // API nova retorna total_value.value, API antiga retorna values[].value
-                $value = $metric['total_value']['value']
-                    ?? null;
-
-                // Se total_value nao tem, tentar somar values diarios
-                if ($value === null && !empty($metric['values'])) {
-                    $value = 0;
-                    foreach ($metric['values'] as $dayValue) {
-                        $value += $dayValue['value'] ?? 0;
-                    }
-                    if ($value === 0) $value = null;
-                }
-
-                if ($value === null) continue;
-                $insightsParsed = true;
-
-                match ($metric['name']) {
-                    'impressions' => $data['impressions'] = $value,
-                    'reach' => $data['reach'] = $value,
-                    'profile_views' => $data['platform_data']['profile_views'] = $value,
-                    'website_clicks' => $data['clicks'] = $value,
-                    'accounts_engaged' => $data['platform_data']['accounts_engaged'] = $value,
-                    'follows_and_unfollows' => $data['platform_data']['net_followers'] = $value,
-                    default => null,
-                };
-            }
+            $applyMetrics($insights1->json('data', []));
         }
 
-        // --- Tentativa 2: period=day sem metric_type (API classica, somar diarios) ---
+        // --- Tentativa 2: period=day sem metric_type, somar diarios ---
         if (!$insightsParsed) {
             $insights2 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
                 'access_token' => $token,
-                'metric' => 'impressions,reach,profile_views',
+                'metric' => 'impressions,reach',
                 'period' => 'day',
                 'since' => $since28,
                 'until' => $untilNow,
             ]);
 
-            $debugAttempts['attempt2'] = [
+            $debugAttempts['attempt2_day'] = [
                 'status' => $insights2->status(),
                 'data_count' => count($insights2->json('data', [])),
                 'error' => $insights2->json('error.message') ?? null,
+                'raw_body_preview' => mb_substr($insights2->body(), 0, 500),
             ];
 
             if ($insights2->successful() && !empty($insights2->json('data'))) {
-                foreach ($insights2->json('data', []) as $metric) {
-                    $sum = 0;
-                    foreach ($metric['values'] ?? [] as $dayValue) {
-                        $sum += $dayValue['value'] ?? 0;
-                    }
-                    if ($sum > 0) {
-                        $insightsParsed = true;
-                        match ($metric['name']) {
-                            'impressions' => $data['impressions'] = $sum,
-                            'reach' => $data['reach'] = $sum,
-                            'profile_views' => $data['platform_data']['profile_views'] = $sum,
-                            default => null,
-                        };
-                    }
-                }
+                $applyMetrics($insights2->json('data', []));
             }
         }
 
-        // --- Tentativa 3: periodo curto (2 dias) com period=day ---
+        // --- Tentativa 3: periodo curto (2 dias) ---
         if (!$insightsParsed) {
-            $since2 = now()->subDays(2)->startOfDay()->timestamp;
-            $until2 = now()->addDay()->startOfDay()->timestamp;
-
             $insights3 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
                 'access_token' => $token,
                 'metric' => 'impressions,reach',
                 'period' => 'day',
-                'since' => $since2,
-                'until' => $until2,
+                'since' => now()->subDays(2)->startOfDay()->timestamp,
+                'until' => now()->addDay()->startOfDay()->timestamp,
             ]);
 
-            $debugAttempts['attempt3'] = [
+            $debugAttempts['attempt3_2days'] = [
                 'status' => $insights3->status(),
                 'data_count' => count($insights3->json('data', [])),
                 'error' => $insights3->json('error.message') ?? null,
-                'raw_sample' => array_slice($insights3->json('data', []), 0, 1),
+                'raw_body_preview' => mb_substr($insights3->body(), 0, 500),
             ];
 
             if ($insights3->successful() && !empty($insights3->json('data'))) {
-                foreach ($insights3->json('data', []) as $metric) {
-                    $sum = 0;
-                    foreach ($metric['values'] ?? [] as $dayValue) {
-                        $sum += $dayValue['value'] ?? 0;
-                    }
-                    if ($sum > 0) {
-                        $insightsParsed = true;
-                        match ($metric['name']) {
-                            'impressions' => $data['impressions'] = $sum,
-                            'reach' => $data['reach'] = $sum,
-                            default => null,
-                        };
-                    }
-                }
+                $applyMetrics($insights3->json('data', []));
             }
         }
 
-        // --- Tentativa 4: period=week (ultimas 2 semanas) ---
+        // --- Tentativa 4: period=days_28 (agregado, sem since/until) ---
         if (!$insightsParsed) {
-            $sinceWeek = now()->subWeeks(2)->startOfWeek()->timestamp;
-
             $insights4 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
-                'access_token' => $token,
-                'metric' => 'impressions,reach',
-                'period' => 'week',
-                'since' => $sinceWeek,
-                'until' => $untilNow,
-            ]);
-
-            $debugAttempts['attempt4_week'] = [
-                'status' => $insights4->status(),
-                'data_count' => count($insights4->json('data', [])),
-                'error' => $insights4->json('error.message') ?? null,
-            ];
-
-            if ($insights4->successful() && !empty($insights4->json('data'))) {
-                foreach ($insights4->json('data', []) as $metric) {
-                    $sum = 0;
-                    foreach ($metric['values'] ?? [] as $dayValue) {
-                        $sum += $dayValue['value'] ?? 0;
-                    }
-                    if ($sum > 0) {
-                        $insightsParsed = true;
-                        match ($metric['name']) {
-                            'impressions' => $data['impressions'] = $sum,
-                            'reach' => $data['reach'] = $sum,
-                            default => null,
-                        };
-                    }
-                }
-            }
-        }
-
-        // --- Tentativa 5: period=days_28 (total dos ultimos 28 dias, valor unico) ---
-        if (!$insightsParsed) {
-            $insights5 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
                 'access_token' => $token,
                 'metric' => 'impressions,reach',
                 'period' => 'days_28',
             ]);
 
-            $debugAttempts['attempt5_days28'] = [
-                'status' => $insights5->status(),
-                'data_count' => count($insights5->json('data', [])),
-                'error' => $insights5->json('error.message') ?? null,
-                'raw_sample' => array_slice($insights5->json('data', []), 0, 1),
+            $debugAttempts['attempt4_days28'] = [
+                'status' => $insights4->status(),
+                'data_count' => count($insights4->json('data', [])),
+                'error' => $insights4->json('error.message') ?? null,
+                'raw_body_preview' => mb_substr($insights4->body(), 0, 500),
             ];
 
-            if ($insights5->successful() && !empty($insights5->json('data'))) {
-                foreach ($insights5->json('data', []) as $metric) {
-                    // days_28 retorna um unico valor
-                    $value = $metric['values'][0]['value'] ?? null;
-                    if ($value && $value > 0) {
-                        $insightsParsed = true;
-                        match ($metric['name']) {
-                            'impressions' => $data['impressions'] = $value,
-                            'reach' => $data['reach'] = $value,
-                            default => null,
-                        };
-                    }
-                }
+            if ($insights4->successful() && !empty($insights4->json('data'))) {
+                $applyMetrics($insights4->json('data', []));
             }
         }
 
-        // Log sempre (para debug), incluindo o resultado final
+        // --- Tentativa 5: period=lifetime (historico total) ---
+        if (!$insightsParsed) {
+            $insights5 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+                'access_token' => $token,
+                'metric' => 'follower_count',
+                'period' => 'day',
+                'since' => now()->subDays(2)->startOfDay()->timestamp,
+                'until' => now()->addDay()->startOfDay()->timestamp,
+            ]);
+
+            $debugAttempts['attempt5_follower_test'] = [
+                'status' => $insights5->status(),
+                'data_count' => count($insights5->json('data', [])),
+                'error' => $insights5->json('error.message') ?? null,
+                'raw_body_preview' => mb_substr($insights5->body(), 0, 500),
+            ];
+
+            // Se ate a metric follower_count falha, é problema de permissao/tipo de conta
+            if (!$insights5->successful() || empty($insights5->json('data'))) {
+                $data['platform_data']['_insight_error'] = 'API de insights indisponível. Verifique se a conta é Business/Creator e se as permissões instagram_manage_insights estão concedidas.';
+            }
+        }
+
+        // Log resultado (sempre salva no platform_data para debug)
         $data['platform_data']['_debug_insights'] = array_merge($debugAttempts, [
             'parsed' => $insightsParsed,
             'final_reach' => $data['reach'],
@@ -383,7 +349,7 @@ class SocialInsightsService
         ]);
 
         if (!$insightsParsed) {
-            SystemLog::warning('social', 'insights.ig.reach_empty', "Instagram insights API: todas as 5 tentativas falharam para @{$account->username}", [
+            SystemLog::warning('social', 'insights.ig.reach_empty', "Instagram insights API: todas as tentativas falharam para @{$account->username}", [
                 'account_id' => $account->id,
                 'attempts' => $debugAttempts,
             ]);
