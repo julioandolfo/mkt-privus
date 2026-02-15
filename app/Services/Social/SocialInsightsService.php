@@ -218,7 +218,10 @@ class SocialInsightsService
                     'views' => $data['impressions'] = $value, // views = novo nome de impressions
                     'reach' => $data['reach'] = $value,
                     'profile_views' => $data['platform_data']['profile_views'] = $value,
-                    'website_clicks' => $data['clicks'] = $value,
+                    'website_clicks' => (function () use (&$data, $value) {
+                        $data['clicks'] = $value;
+                        $data['platform_data']['website_clicks'] = $value;
+                    })(),
                     'accounts_engaged' => $data['platform_data']['accounts_engaged'] = $value,
                     'total_interactions' => $data['platform_data']['total_interactions'] = $value,
                     'follows_and_unfollows' => $data['platform_data']['net_followers'] = $value,
@@ -235,7 +238,7 @@ class SocialInsightsService
         };
 
         // Metricas validas da API Instagram (v18+): impressions foi substituido por views
-        $igMetrics = 'reach,views,profile_views,accounts_engaged,follows_and_unfollows,total_interactions';
+        $igMetrics = 'reach,views,profile_views,website_clicks,accounts_engaged,follows_and_unfollows,total_interactions';
 
         $insights1 = Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
             'access_token' => $token,

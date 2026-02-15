@@ -54,18 +54,41 @@ class SocialInsight extends Model
     }
 
     /**
+     * Aliases: metric_key do template => coluna/platform_data real
+     * Necessario quando o template usa um nome diferente do armazenado
+     */
+    private static array $metricAliases = [
+        'website_clicks' => ['column' => 'clicks', 'platform_data' => 'website_clicks'],
+    ];
+
+    /**
      * Busca o valor de uma metrica especifica pelo metric_key
      */
     public function getMetricValue(string $metricKey): mixed
     {
-        // Primeiro verifica nas colunas diretas
-        if (isset($this->attributes[$metricKey])) {
+        // 1. Verificar nas colunas diretas
+        if (array_key_exists($metricKey, $this->attributes) && $this->attributes[$metricKey] !== null) {
             return $this->attributes[$metricKey];
         }
 
-        // Depois verifica no platform_data
+        // 2. Verificar no platform_data
         if ($this->platform_data && isset($this->platform_data[$metricKey])) {
             return $this->platform_data[$metricKey];
+        }
+
+        // 3. Verificar aliases (ex: website_clicks -> column clicks)
+        if (isset(self::$metricAliases[$metricKey])) {
+            $alias = self::$metricAliases[$metricKey];
+
+            // Tentar coluna alternativa
+            if (isset($alias['column']) && array_key_exists($alias['column'], $this->attributes) && $this->attributes[$alias['column']] !== null) {
+                return $this->attributes[$alias['column']];
+            }
+
+            // Tentar platform_data alternativo
+            if (isset($alias['platform_data']) && $this->platform_data && isset($this->platform_data[$alias['platform_data']])) {
+                return $this->platform_data[$alias['platform_data']];
+            }
         }
 
         return null;
