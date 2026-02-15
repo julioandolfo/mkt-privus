@@ -5,11 +5,13 @@ namespace App\Services\Blog;
 use App\Enums\AIModel;
 use App\Models\BlogArticle;
 use App\Models\BlogCalendarItem;
+use App\Models\BlogCategory;
 use App\Models\Brand;
 use App\Models\SystemLog;
 use App\Services\AI\AIGateway;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 
 class BlogCalendarService
 {
@@ -60,12 +62,20 @@ class BlogCalendarService
             ->map(fn($t) => '- ' . $t)
             ->implode("\n");
 
+        // Categorias existentes para sugestão da IA
+        $existingCategories = BlogCategory::forBrand($brand->id)
+            ->orderBy('name')
+            ->get(['id', 'name', 'slug', 'wp_category_id']);
+
+        $categoriesList = $existingCategories->map(fn($c) => $c->name)->implode(', ');
+
         $brandContext = $brand->getAIContext();
         $batchId = uniqid('blogcal_');
 
         $prompt = $this->buildCalendarPrompt(
             $brandContext, $start->format('Y-m-d'), $end->format('Y-m-d'),
-            $totalArticles, $tone, $recentArticles, $existingItems, $extraInstructions
+            $totalArticles, $tone, $recentArticles, $existingItems, $extraInstructions,
+            $categoriesList
         );
 
         try {
@@ -103,6 +113,14 @@ class BlogCalendarService
                     continue;
                 }
 
+                // Resolver categoria: prioridade -> seleção manual > sugestão da IA
+                $itemCategoryId = $categoryId;
+                if (!$itemCategoryId && !empty($item['category'])) {
+                    $itemCategoryId = $this->resolveCategoryFromAI(
+                        $item['category'], $brand->id, $existingCategories
+                    );
+                }
+
                 $calendarItem = BlogCalendarItem::create([
                     'brand_id' => $brand->id,
                     'user_id' => $userId,
@@ -114,7 +132,7 @@ class BlogCalendarService
                     'instructions' => $item['instructions'] ?? '',
                     'estimated_word_count' => $item['estimated_word_count'] ?? 800,
                     'wordpress_connection_id' => $connectionId,
-                    'blog_category_id' => $categoryId,
+                    'blog_category_id' => $itemCategoryId,
                     'status' => 'pending',
                     'ai_model_used' => $aiModel,
                     'batch_id' => $batchId,
@@ -124,6 +142,7 @@ class BlogCalendarService
                         'tokens_used' => $totalTokens,
                         'cover_width' => $coverWidth,
                         'cover_height' => $coverHeight,
+                        'ai_suggested_category' => $item['category'] ?? null,
                     ],
                 ]);
 
@@ -303,6 +322,7 @@ class BlogCalendarService
         string $recentArticles,
         string $existingItems,
         string $extraInstructions,
+        string $categoriesList = '',
     ): string {
         $avoidSection = '';
         if ($recentArticles) {
@@ -314,6 +334,23 @@ class BlogCalendarService
 
         $instructionSection = $extraInstructions ? "\nInstruções adicionais do usuário: {$extraInstructions}\n" : '';
 
+        $categorySection = '';
+        if ($categoriesList) {
+            $categorySection = <<<CAT
+
+Categorias disponíveis no blog: {$categoriesList}
+- OBRIGATORIAMENTE sugira uma categoria para cada artigo usando o campo "category"
+- Prefira usar as categorias existentes listadas acima
+- Se nenhuma existente se encaixa, sugira uma nova categoria relevante (o sistema irá criá-la automaticamente)
+CAT;
+        } else {
+            $categorySection = <<<CAT
+
+- Sugira uma categoria para cada artigo usando o campo "category"
+- Categorias devem ser curtas e genéricas (ex: "Dicas", "Tendências", "Guias", "Novidades")
+CAT;
+        }
+
         return <<<PROMPT
 Você é um estrategista de conteúdo digital especializado em SEO e marketing de conteúdo para blogs.
 
@@ -323,7 +360,7 @@ Contexto da marca:
 {$brandContext}
 
 Tom de voz: {$tone}
-{$avoidSection}{$instructionSection}
+{$avoidSection}{$instructionSection}{$categorySection}
 Regras para o calendário:
 - Distribua os artigos uniformemente ao longo das semanas (NÃO concentre tudo em poucos dias)
 - Prefira publicações em dias úteis (segunda a sexta)
@@ -340,6 +377,7 @@ Responda OBRIGATORIAMENTE como um JSON array:
     "title": "Título do artigo (claro e SEO-friendly)",
     "description": "Briefing de 1-2 frases sobre o que abordar",
     "keywords": "keyword1, keyword2, keyword3",
+    "category": "Nome da Categoria",
     "tone": "tom específico para este artigo",
     "instructions": "instruções especiais ou pontos a cobrir",
     "estimated_word_count": 800
@@ -348,6 +386,67 @@ Responda OBRIGATORIAMENTE como um JSON array:
 
 Retorne APENAS o JSON, sem texto extra.
 PROMPT;
+    }
+
+    /**
+     * Resolve categoria sugerida pela IA: encontra existente ou cria nova
+     */
+    private function resolveCategoryFromAI(string $categoryName, int $brandId, $existingCategories): ?int
+    {
+        $categoryName = trim($categoryName);
+        if (empty($categoryName)) {
+            return null;
+        }
+
+        // 1. Buscar match exato por nome (case-insensitive)
+        $match = $existingCategories->first(fn($c) => mb_strtolower($c->name) === mb_strtolower($categoryName));
+        if ($match) {
+            return $match->id;
+        }
+
+        // 2. Buscar match por slug
+        $slug = Str::slug($categoryName);
+        $matchBySlug = $existingCategories->first(fn($c) => $c->slug === $slug);
+        if ($matchBySlug) {
+            return $matchBySlug->id;
+        }
+
+        // 3. Buscar match parcial (categoria contém o nome sugerido ou vice-versa)
+        $matchPartial = $existingCategories->first(function ($c) use ($categoryName) {
+            $cName = mb_strtolower($c->name);
+            $suggested = mb_strtolower($categoryName);
+            return str_contains($cName, $suggested) || str_contains($suggested, $cName);
+        });
+        if ($matchPartial) {
+            return $matchPartial->id;
+        }
+
+        // 4. Não encontrou — criar nova categoria local
+        try {
+            $newCategory = BlogCategory::create([
+                'brand_id' => $brandId,
+                'name' => $categoryName,
+                'slug' => $slug,
+                'description' => 'Categoria sugerida por IA',
+            ]);
+
+            // Adicionar ao cache local para próximas iterações
+            $existingCategories->push($newCategory);
+
+            SystemLog::info('blog', 'category.ai_created', "Categoria '{$categoryName}' criada automaticamente por sugestão da IA", [
+                'category_id' => $newCategory->id,
+                'brand_id' => $brandId,
+            ]);
+
+            return $newCategory->id;
+        } catch (\Throwable $e) {
+            // Se falhar (ex: duplicata), tentar buscar novamente
+            $existing = BlogCategory::where('brand_id', $brandId)
+                ->where('slug', $slug)
+                ->first();
+
+            return $existing?->id;
+        }
     }
 
     private function parseCalendarResponse(string $content): array

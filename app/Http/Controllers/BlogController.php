@@ -543,6 +543,17 @@ class BlogController extends Controller
             'last_synced_at' => now(),
         ]);
 
+        // Auto-sincronizar categorias do WordPress
+        $syncedCategories = 0;
+        try {
+            $syncedCategories = $this->wpService->syncCategories($connection, $brandId);
+        } catch (\Throwable $e) {
+            // Nao bloquear criacao da conexao se sync falhar
+            SystemLog::warning('blog', 'connection.category_sync_error', "Erro ao auto-sincronizar categorias: {$e->getMessage()}", [
+                'connection_id' => $connection->id,
+            ]);
+        }
+
         return response()->json([
             'success' => true,
             'connection' => [
@@ -551,7 +562,8 @@ class BlogController extends Controller
                 'platform' => 'wordpress',
                 'site_url' => rtrim($validated['site_url'], '/'),
             ],
-            'message' => 'Conexão WordPress criada com sucesso!',
+            'synced_categories' => $syncedCategories,
+            'message' => "Conexão WordPress criada com sucesso!" . ($syncedCategories > 0 ? " {$syncedCategories} categorias sincronizadas." : ''),
         ]);
     }
 

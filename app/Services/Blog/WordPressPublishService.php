@@ -84,10 +84,10 @@ class WordPressPublishService
                 }
             }
 
-            // 2. Resolver categoria no WordPress
+            // 2. Resolver categoria no WordPress (criar se nao existir)
             $wpCategoryId = null;
-            if ($article->category && $article->category->wp_category_id) {
-                $wpCategoryId = $article->category->wp_category_id;
+            if ($article->category) {
+                $wpCategoryId = $this->resolveWpCategory($connection, $article->category);
             }
 
             // 3. Publicar post
@@ -319,6 +319,161 @@ class WordPressPublishService
         }
 
         return $synced;
+    }
+
+    /**
+     * Resolve a categoria no WordPress: retorna wp_category_id existente ou cria nova
+     */
+    public function resolveWpCategory(AnalyticsConnection $connection, BlogCategory $category): ?int
+    {
+        // Se ja tem ID do WP vinculado, retornar direto
+        if ($category->wp_category_id) {
+            return $category->wp_category_id;
+        }
+
+        $config = $connection->config ?? [];
+        $baseUrl = $this->getBaseUrl($config);
+        $auth = $this->getAuth($connection);
+
+        if (!$baseUrl || !$auth) {
+            return null;
+        }
+
+        try {
+            // 1. Tentar encontrar categoria por slug no WordPress
+            $response = Http::withBasicAuth($auth['user'], $auth['pass'])
+                ->timeout(10)
+                ->get("{$baseUrl}/wp-json/wp/v2/categories", [
+                    'slug' => $category->slug,
+                    'per_page' => 1,
+                ]);
+
+            if ($response->successful() && !empty($response->json())) {
+                $wpCatId = $response->json()[0]['id'];
+                $this->linkCategoryToWp($category, $connection, $wpCatId);
+
+                SystemLog::info('blog', 'category.wp_found', "Categoria '{$category->name}' encontrada no WP (ID: {$wpCatId})", [
+                    'category_id' => $category->id,
+                    'wp_category_id' => $wpCatId,
+                ]);
+
+                return $wpCatId;
+            }
+
+            // 2. Tentar buscar por nome (search)
+            $searchResponse = Http::withBasicAuth($auth['user'], $auth['pass'])
+                ->timeout(10)
+                ->get("{$baseUrl}/wp-json/wp/v2/categories", [
+                    'search' => $category->name,
+                    'per_page' => 5,
+                ]);
+
+            if ($searchResponse->successful() && !empty($searchResponse->json())) {
+                // Match exato ou bem proximo pelo nome
+                foreach ($searchResponse->json() as $wpCat) {
+                    $wpName = html_entity_decode($wpCat['name'] ?? '');
+                    if (mb_strtolower(trim($wpName)) === mb_strtolower(trim($category->name))) {
+                        $wpCatId = $wpCat['id'];
+                        $this->linkCategoryToWp($category, $connection, $wpCatId);
+
+                        SystemLog::info('blog', 'category.wp_matched', "Categoria '{$category->name}' vinculada por nome ao WP (ID: {$wpCatId})", [
+                            'category_id' => $category->id,
+                            'wp_category_id' => $wpCatId,
+                        ]);
+
+                        return $wpCatId;
+                    }
+                }
+            }
+
+            // 3. Criar nova categoria no WordPress
+            return $this->createWpCategory($connection, $category);
+
+        } catch (\Throwable $e) {
+            SystemLog::warning('blog', 'category.wp_resolve_error', "Erro ao resolver categoria '{$category->name}' no WP: {$e->getMessage()}", [
+                'category_id' => $category->id,
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Cria uma nova categoria no WordPress e vincula localmente
+     */
+    public function createWpCategory(AnalyticsConnection $connection, BlogCategory $category): ?int
+    {
+        $config = $connection->config ?? [];
+        $baseUrl = $this->getBaseUrl($config);
+        $auth = $this->getAuth($connection);
+
+        if (!$baseUrl || !$auth) {
+            return null;
+        }
+
+        try {
+            $payload = [
+                'name' => $category->name,
+                'slug' => $category->slug,
+            ];
+
+            if ($category->description) {
+                $payload['description'] = $category->description;
+            }
+
+            $response = Http::withBasicAuth($auth['user'], $auth['pass'])
+                ->timeout(15)
+                ->post("{$baseUrl}/wp-json/wp/v2/categories", $payload);
+
+            if ($response->successful()) {
+                $wpCatId = $response->json()['id'] ?? null;
+
+                if ($wpCatId) {
+                    $this->linkCategoryToWp($category, $connection, $wpCatId);
+
+                    SystemLog::info('blog', 'category.wp_created', "Categoria '{$category->name}' criada no WP (ID: {$wpCatId})", [
+                        'category_id' => $category->id,
+                        'wp_category_id' => $wpCatId,
+                        'connection_id' => $connection->id,
+                    ]);
+                }
+
+                return $wpCatId;
+            }
+
+            // Se falhou com "term_exists", a categoria ja existe — buscar
+            if ($response->status() === 400) {
+                $errorCode = $response->json('code');
+                $existingId = $response->json('data.term_id');
+
+                if ($errorCode === 'term_exists' && $existingId) {
+                    $this->linkCategoryToWp($category, $connection, $existingId);
+                    return $existingId;
+                }
+            }
+
+            SystemLog::warning('blog', 'category.wp_create_error', "Falha ao criar categoria '{$category->name}' no WP: " . $response->body(), [
+                'category_id' => $category->id,
+                'status' => $response->status(),
+            ]);
+
+            return null;
+        } catch (\Throwable $e) {
+            SystemLog::error('blog', 'category.wp_create_exception', "Exceção ao criar categoria no WP: {$e->getMessage()}", [
+                'category_id' => $category->id,
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Vincula categoria local ao ID do WordPress
+     */
+    private function linkCategoryToWp(BlogCategory $category, AnalyticsConnection $connection, int $wpCategoryId): void
+    {
+        $category->update([
+            'wp_category_id' => $wpCategoryId,
+            'wordpress_connection_id' => $connection->id,
+        ]);
     }
 
     // ===== PRIVATE =====
