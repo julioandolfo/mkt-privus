@@ -265,32 +265,74 @@ class WordPressPublishService
 
     /**
      * Busca categorias do site WordPress
+     * Tenta primeiro sem auth (endpoint publico), depois com auth como fallback
      */
     public function fetchCategories(AnalyticsConnection $connection): array
     {
         $config = $connection->config ?? [];
         $baseUrl = $this->getBaseUrl($config);
-        $auth = $this->getAuth($connection);
+
+        if (!$baseUrl) {
+            return [];
+        }
+
+        $parseCategories = fn($response) => collect($response->json())
+            ->map(fn($cat) => [
+                'id' => $cat['id'],
+                'name' => $cat['name'],
+                'slug' => $cat['slug'],
+                'count' => $cat['count'] ?? 0,
+                'parent' => $cat['parent'] ?? 0,
+            ])
+            ->toArray();
 
         try {
-            $response = Http::withBasicAuth($auth['user'], $auth['pass'])
-                ->timeout(15)
+            // 1. Tentar com autenticacao (se disponivel) — necessario para sites privados
+            $auth = $this->getAuth($connection);
+            if ($auth) {
+                $response = Http::withBasicAuth($auth['user'], $auth['pass'])
+                    ->timeout(15)
+                    ->get("{$baseUrl}/wp-json/wp/v2/categories", ['per_page' => 100]);
+
+                if ($response->successful()) {
+                    return $parseCategories($response);
+                }
+            }
+
+            // 2. Fallback: tentar SEM auth (endpoint publico no WordPress)
+            $publicResponse = Http::timeout(15)
                 ->get("{$baseUrl}/wp-json/wp/v2/categories", ['per_page' => 100]);
 
-            if ($response->successful()) {
-                return collect($response->json())
-                    ->map(fn($cat) => [
-                        'id' => $cat['id'],
-                        'name' => $cat['name'],
-                        'slug' => $cat['slug'],
-                        'count' => $cat['count'] ?? 0,
-                        'parent' => $cat['parent'] ?? 0,
-                    ])
-                    ->toArray();
+            if ($publicResponse->successful()) {
+                return $parseCategories($publicResponse);
+            }
+
+            // 3. Fallback para WooCommerce: tentar endpoint de categorias de produto
+            if ($connection->platform === 'woocommerce' && $auth) {
+                $wcResponse = Http::withBasicAuth($auth['user'], $auth['pass'])
+                    ->timeout(15)
+                    ->get("{$baseUrl}/wp-json/wc/v3/products/categories", ['per_page' => 100]);
+
+                if ($wcResponse->successful()) {
+                    return collect($wcResponse->json())
+                        ->map(fn($cat) => [
+                            'id' => $cat['id'],
+                            'name' => html_entity_decode($cat['name'] ?? ''),
+                            'slug' => $cat['slug'] ?? '',
+                            'count' => $cat['count'] ?? 0,
+                            'parent' => $cat['parent'] ?? 0,
+                            'source' => 'woocommerce_product',
+                        ])
+                        ->toArray();
+                }
             }
 
             return [];
         } catch (\Throwable $e) {
+            SystemLog::warning('blog', 'categories.fetch_error', "Erro ao buscar categorias: {$e->getMessage()}", [
+                'connection_id' => $connection->id,
+                'platform' => $connection->platform,
+            ]);
             return [];
         }
     }
@@ -304,6 +346,14 @@ class WordPressPublishService
         $synced = 0;
 
         foreach ($wpCategories as $wpCat) {
+            if (empty($wpCat['id']) || empty($wpCat['name'])) {
+                continue;
+            }
+
+            $name = html_entity_decode($wpCat['name']);
+            $slug = $wpCat['slug'] ?: \Illuminate\Support\Str::slug($name);
+            $source = $wpCat['source'] ?? 'wordpress';
+
             BlogCategory::updateOrCreate(
                 [
                     'brand_id' => $brandId,
@@ -311,11 +361,22 @@ class WordPressPublishService
                     'wp_category_id' => $wpCat['id'],
                 ],
                 [
-                    'name' => html_entity_decode($wpCat['name']),
-                    'slug' => $wpCat['slug'],
+                    'name' => $name,
+                    'slug' => $slug,
+                    'description' => $source === 'woocommerce_product'
+                        ? 'Categoria de produto (WooCommerce)'
+                        : null,
                 ]
             );
             $synced++;
+        }
+
+        if ($synced > 0) {
+            SystemLog::info('blog', 'categories.synced', "{$synced} categorias sincronizadas de {$connection->name}", [
+                'connection_id' => $connection->id,
+                'platform' => $connection->platform,
+                'brand_id' => $brandId,
+            ]);
         }
 
         return $synced;
@@ -399,6 +460,7 @@ class WordPressPublishService
 
     /**
      * Cria uma nova categoria no WordPress e vincula localmente
+     * Tenta endpoint WP REST API, fallback para WooCommerce se aplicavel
      */
     public function createWpCategory(AnalyticsConnection $connection, BlogCategory $category): ?int
     {
@@ -416,10 +478,11 @@ class WordPressPublishService
                 'slug' => $category->slug,
             ];
 
-            if ($category->description) {
+            if ($category->description && $category->description !== 'Categoria de produto (WooCommerce)') {
                 $payload['description'] = $category->description;
             }
 
+            // 1. Tentar criar via WP REST API (funciona com WP Application Passwords)
             $response = Http::withBasicAuth($auth['user'], $auth['pass'])
                 ->timeout(15)
                 ->post("{$baseUrl}/wp-json/wp/v2/categories", $payload);
@@ -440,7 +503,7 @@ class WordPressPublishService
                 return $wpCatId;
             }
 
-            // Se falhou com "term_exists", a categoria ja existe — buscar
+            // Se falhou com "term_exists", a categoria ja existe — vincular
             if ($response->status() === 400) {
                 $errorCode = $response->json('code');
                 $existingId = $response->json('data.term_id');
@@ -451,7 +514,35 @@ class WordPressPublishService
                 }
             }
 
-            SystemLog::warning('blog', 'category.wp_create_error', "Falha ao criar categoria '{$category->name}' no WP: " . $response->body(), [
+            // 2. Se falhou (ex: WooCommerce sem credenciais WP), tentar endpoint WC para categorias de produto
+            if ($response->status() === 401 || $response->status() === 403) {
+                if ($connection->platform === 'woocommerce') {
+                    $wcResponse = Http::withBasicAuth($auth['user'], $auth['pass'])
+                        ->timeout(15)
+                        ->post("{$baseUrl}/wp-json/wc/v3/products/categories", $payload);
+
+                    if ($wcResponse->successful()) {
+                        $wpCatId = $wcResponse->json()['id'] ?? null;
+                        if ($wpCatId) {
+                            $this->linkCategoryToWp($category, $connection, $wpCatId);
+
+                            SystemLog::info('blog', 'category.wc_created', "Categoria '{$category->name}' criada via WooCommerce API (ID: {$wpCatId})", [
+                                'category_id' => $category->id,
+                                'wp_category_id' => $wpCatId,
+                            ]);
+                        }
+                        return $wpCatId;
+                    }
+                }
+
+                SystemLog::warning('blog', 'category.wp_auth_error', "Sem permissão para criar categoria '{$category->name}' no WP. Conexões WooCommerce podem necessitar de Application Password WordPress adicional.", [
+                    'category_id' => $category->id,
+                    'connection_platform' => $connection->platform,
+                ]);
+                return null;
+            }
+
+            SystemLog::warning('blog', 'category.wp_create_error', "Falha ao criar categoria '{$category->name}' no WP: " . substr($response->body(), 0, 300), [
                 'category_id' => $category->id,
                 'status' => $response->status(),
             ]);
