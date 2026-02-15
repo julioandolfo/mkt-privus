@@ -204,6 +204,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{account}/toggle', [SocialAccountController::class, 'toggle'])->name('toggle');
             Route::post('/{account}/link-brand', [SocialAccountController::class, 'linkBrand'])->name('link-brand');
             Route::post('/{account}/sync', [SocialAccountController::class, 'syncAccount'])->name('sync');
+            Route::get('/{account}/diagnose', [SocialAccountController::class, 'diagnoseInsights'])->name('diagnose');
         });
 
         // OAuth Social (callback está fora do auth - ver acima)

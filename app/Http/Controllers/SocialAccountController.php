@@ -390,6 +390,113 @@ class SocialAccountController extends Controller
         }
     }
 
+    /**
+     * Diagnóstico da API de insights do Instagram — testa todas as chamadas e retorna os resultados raw.
+     */
+    public function diagnoseInsights(SocialAccount $account): JsonResponse
+    {
+        if (!$account->access_token) {
+            return response()->json(['error' => 'Conta sem token de acesso.']);
+        }
+
+        $token = $account->getFreshToken() ?? $account->access_token;
+        $igUserId = $account->platform_user_id;
+        $apiVersion = config('social_oauth.meta.api_version', 'v19.0');
+
+        $results = [
+            'account' => [
+                'id' => $account->id,
+                'username' => $account->username,
+                'platform_user_id' => $igUserId,
+                'platform' => $account->platform->value ?? $account->platform,
+                'token_status' => $this->getTokenStatus($account),
+                'token_expires_at' => $account->token_expires_at?->toDateTimeString(),
+            ],
+            'api_version' => $apiVersion,
+        ];
+
+        // Teste 0: Profile data (deve funcionar se token valido)
+        $profile = \Illuminate\Support\Facades\Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}", [
+            'access_token' => $token,
+            'fields' => 'id,name,username,followers_count,follows_count,media_count,account_type,biography',
+        ]);
+        $results['test0_profile'] = [
+            'status' => $profile->status(),
+            'data' => $profile->json(),
+        ];
+
+        // Teste 1: Insights com metric_type=total_value (API v18+)
+        $since28 = now()->subDays(28)->startOfDay()->timestamp;
+        $untilNow = now()->endOfDay()->timestamp;
+
+        $t1 = \Illuminate\Support\Facades\Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+            'access_token' => $token,
+            'metric' => 'impressions,reach',
+            'period' => 'day',
+            'metric_type' => 'total_value',
+            'since' => $since28,
+            'until' => $untilNow,
+        ]);
+        $results['test1_total_value'] = [
+            'status' => $t1->status(),
+            'body' => $t1->json() ?? $t1->body(),
+        ];
+
+        // Teste 2: Insights period=day sem metric_type
+        $t2 = \Illuminate\Support\Facades\Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+            'access_token' => $token,
+            'metric' => 'impressions,reach',
+            'period' => 'day',
+            'since' => now()->subDays(2)->startOfDay()->timestamp,
+            'until' => now()->addDay()->startOfDay()->timestamp,
+        ]);
+        $results['test2_day'] = [
+            'status' => $t2->status(),
+            'body' => $t2->json() ?? $t2->body(),
+        ];
+
+        // Teste 3: period=days_28
+        $t3 = \Illuminate\Support\Facades\Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+            'access_token' => $token,
+            'metric' => 'impressions,reach',
+            'period' => 'days_28',
+        ]);
+        $results['test3_days28'] = [
+            'status' => $t3->status(),
+            'body' => $t3->json() ?? $t3->body(),
+        ];
+
+        // Teste 4: follower_count (metrica simples — se esta falha, é permissão)
+        $t4 = \Illuminate\Support\Facades\Http::get("https://graph.facebook.com/{$apiVersion}/{$igUserId}/insights", [
+            'access_token' => $token,
+            'metric' => 'follower_count',
+            'period' => 'day',
+            'since' => now()->subDays(2)->startOfDay()->timestamp,
+            'until' => now()->addDay()->startOfDay()->timestamp,
+        ]);
+        $results['test4_follower_count'] = [
+            'status' => $t4->status(),
+            'body' => $t4->json() ?? $t4->body(),
+        ];
+
+        // Teste 5: Debug token permissions
+        $t5 = \Illuminate\Support\Facades\Http::get("https://graph.facebook.com/debug_token", [
+            'input_token' => $token,
+            'access_token' => $token,
+        ]);
+        $results['test5_debug_token'] = [
+            'status' => $t5->status(),
+            'scopes' => $t5->json('data.scopes') ?? [],
+            'type' => $t5->json('data.type') ?? null,
+            'app_id' => $t5->json('data.app_id') ?? null,
+            'is_valid' => $t5->json('data.is_valid') ?? null,
+            'expires_at' => $t5->json('data.expires_at') ?? null,
+            'error' => $t5->json('data.error') ?? null,
+        ];
+
+        return response()->json($results, 200, [], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    }
+
     // ===== PRIVATE =====
 
     private function authorizeAccount(Request $request, SocialAccount $account): void
