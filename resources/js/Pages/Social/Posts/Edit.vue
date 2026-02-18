@@ -182,6 +182,18 @@ async function generateWithAI() {
     }
 }
 
+/** Converte o valor do input datetime-local (sem fuso) para ISO 8601 com offset local. */
+function toLocalISO(datetimeLocal: string): string {
+    if (!datetimeLocal) return '';
+    const d = new Date(datetimeLocal);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const offset = -d.getTimezoneOffset();
+    const sign = offset >= 0 ? '+' : '-';
+    const hh = pad(Math.floor(Math.abs(offset) / 60));
+    const mm = pad(Math.abs(offset) % 60);
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00${sign}${hh}:${mm}`;
+}
+
 // Submit
 function submit() {
     form.clearErrors();
@@ -191,7 +203,7 @@ function submit() {
     formData.append('caption', form.caption);
     formData.append('type', form.type || 'feed');
     formData.append('status', form.status);
-    if (form.scheduled_at) formData.append('scheduled_at', form.scheduled_at);
+    if (form.scheduled_at) formData.append('scheduled_at', toLocalISO(form.scheduled_at));
 
     form.platforms.forEach((p, i) => formData.append(`platforms[${i}]`, p));
     form.hashtags.forEach((h, i) => formData.append(`hashtags[${i}]`, h));

@@ -158,7 +158,7 @@ class PostController extends Controller
             'type' => 'required|string',
             'platforms' => 'required|array|min:1',
             'platforms.*' => 'string',
-            'scheduled_at' => 'nullable|date|after:now',
+            'scheduled_at' => 'nullable|date|after:2 minutes ago',
             'media' => 'nullable|array|max:10',
             'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,mov,avi|max:51200',
         ]);
