@@ -303,32 +303,106 @@ const chartMaxValue = computed(() => {
     return Math.max(...props.followersChart.map(p => p[chartMetric.value] ?? 0), 1);
 });
 
+const chartMinValue = computed(() => {
+    if (!props.followersChart.length) return 0;
+    const vals = props.followersChart.map(p => p[chartMetric.value] ?? 0);
+    const min = Math.min(...vals);
+    // Floor to 80% of min so the curve doesn't flatten at the bottom
+    return min > 0 ? Math.floor(min * 0.8) : 0;
+});
+
+const CHART_W = 800;
+const CHART_H = 200;
+const CHART_PAD_TOP = 12;
+const CHART_PAD_BOTTOM = 8;
+
+function getY(value: number): number {
+    const range = chartMaxValue.value - chartMinValue.value || 1;
+    const usable = CHART_H - CHART_PAD_TOP - CHART_PAD_BOTTOM;
+    return CHART_H - CHART_PAD_BOTTOM - ((value - chartMinValue.value) / range) * usable;
+}
+
+function getX(i: number): number {
+    const n = props.followersChart.length;
+    if (n <= 1) return CHART_W / 2;
+    return (i / (n - 1)) * CHART_W;
+}
+
 const chartPath = computed(() => {
     const data = props.followersChart;
     if (data.length < 2) return '';
-    const w = 800;
-    const h = 200;
-    const max = chartMaxValue.value;
-    const step = w / (data.length - 1);
     return data.map((p, i) => {
-        const x = i * step;
-        const y = h - ((p[chartMetric.value] ?? 0) / max) * (h - 20) - 10;
+        const x = getX(i);
+        const y = getY(p[chartMetric.value] ?? 0);
         return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
 });
 
 const chartAreaPath = computed(() => {
     if (!chartPath.value) return '';
-    const w = 800;
-    return chartPath.value + ` L${w},200 L0,200 Z`;
+    return chartPath.value + ` L${CHART_W},${CHART_H} L0,${CHART_H} Z`;
 });
 
 const chartLabels = computed(() => {
     const data = props.followersChart;
     if (!data.length) return [];
     const step = Math.max(1, Math.floor(data.length / 6));
-    return data.filter((_, i) => i % step === 0 || i === data.length - 1).map(p => p.date);
+    return data
+        .map((p, i) => ({ label: p.date, i }))
+        .filter(({ i }) => i % step === 0 || i === data.length - 1);
 });
+
+const chartYLabels = computed(() => {
+    const min = chartMinValue.value;
+    const max = chartMaxValue.value;
+    const steps = 4;
+    return Array.from({ length: steps + 1 }, (_, i) => {
+        const val = min + ((max - min) / steps) * (steps - i);
+        const y = getY(val);
+        return { val, y };
+    });
+});
+
+// Tooltip state
+const tooltip = ref<{
+    visible: boolean;
+    x: number;
+    y: number;
+    point: ChartPoint | null;
+    svgX: number;
+    svgY: number;
+}>({ visible: false, x: 0, y: 0, point: null, svgX: 0, svgY: 0 });
+
+const chartSvgRef = ref<SVGSVGElement | null>(null);
+
+function onChartMouseMove(event: MouseEvent) {
+    if (!chartSvgRef.value || !props.followersChart.length) return;
+    const rect = chartSvgRef.value.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const relX = (mouseX / rect.width) * CHART_W;
+
+    const n = props.followersChart.length;
+    let closestIdx = 0;
+    let minDist = Infinity;
+    for (let i = 0; i < n; i++) {
+        const d = Math.abs(getX(i) - relX);
+        if (d < minDist) { minDist = d; closestIdx = i; }
+    }
+
+    const point = props.followersChart[closestIdx];
+    const svgX = getX(closestIdx);
+    const svgY = getY(point[chartMetric.value] ?? 0);
+
+    // Convert SVG coords to DOM coords for the floating div
+    const domX = (svgX / CHART_W) * rect.width + rect.left;
+    const domY = (svgY / CHART_H) * rect.height + rect.top;
+
+    tooltip.value = { visible: true, x: domX, y: domY, point, svgX, svgY };
+}
+
+function onChartMouseLeave() {
+    tooltip.value.visible = false;
+}
 
 const periodOptions = [
     { value: 'followers' as const, label: 'Seguidores' },
@@ -753,25 +827,128 @@ const periodOptions = [
                             </button>
                         </div>
                     </div>
-                    <div v-if="followersChart.length >= 2" class="relative">
-                        <svg viewBox="0 0 800 220" class="w-full h-48" preserveAspectRatio="none">
-                            <line v-for="i in 4" :key="'grid-' + i" x1="0" :y1="i * 50" x2="800" :y2="i * 50" stroke="rgba(255,255,255,0.03)" stroke-width="1" />
-                            <path :d="chartAreaPath" fill="url(#chartGradient)" opacity="0.3" />
-                            <path :d="chartPath" fill="none" stroke="#6366F1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
-                            <circle v-for="(point, i) in followersChart" :key="'dot-' + i"
-                                :cx="i * (800 / Math.max(followersChart.length - 1, 1))"
-                                :cy="200 - ((point[chartMetric] ?? 0) / chartMaxValue) * 180 - 10"
-                                r="3" fill="#6366F1" class="opacity-0 hover:opacity-100 transition" />
-                            <defs>
-                                <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="0%" stop-color="#6366F1" stop-opacity="0.4" />
-                                    <stop offset="100%" stop-color="#6366F1" stop-opacity="0" />
-                                </linearGradient>
-                            </defs>
-                        </svg>
-                        <div class="flex justify-between mt-1 px-1">
-                            <span v-for="label in chartLabels" :key="label" class="text-[10px] text-gray-600">{{ label }}</span>
+                    <div v-if="followersChart.length >= 2" class="relative select-none">
+                        <!-- Y-axis labels -->
+                        <div class="absolute left-0 top-0 h-48 flex flex-col justify-between py-1 pr-2 pointer-events-none" style="width:44px">
+                            <span v-for="yl in chartYLabels" :key="yl.val" class="text-[9px] text-gray-600 text-right leading-none">
+                                {{ formatNumber(Math.round(yl.val)) }}
+                            </span>
                         </div>
+
+                        <!-- Chart area -->
+                        <div class="ml-10">
+                            <svg
+                                ref="chartSvgRef"
+                                :viewBox="`0 0 ${CHART_W} ${CHART_H}`"
+                                class="w-full h-48 cursor-crosshair"
+                                preserveAspectRatio="none"
+                                @mousemove="onChartMouseMove"
+                                @mouseleave="onChartMouseLeave"
+                            >
+                                <defs>
+                                    <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stop-color="#6366F1" stop-opacity="0.35" />
+                                        <stop offset="100%" stop-color="#6366F1" stop-opacity="0" />
+                                    </linearGradient>
+                                    <clipPath id="chartClip">
+                                        <rect :x="0" :y="0" :width="CHART_W" :height="CHART_H" />
+                                    </clipPath>
+                                </defs>
+
+                                <!-- Grid horizontais -->
+                                <line v-for="yl in chartYLabels" :key="'g-' + yl.val"
+                                    x1="0" :y1="yl.y.toFixed(1)" :x2="CHART_W" :y2="yl.y.toFixed(1)"
+                                    stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+
+                                <!-- Área preenchida -->
+                                <path :d="chartAreaPath" fill="url(#chartGradient)" clip-path="url(#chartClip)" />
+
+                                <!-- Linha principal -->
+                                <path :d="chartPath" fill="none" stroke="#6366F1" stroke-width="2.5"
+                                    stroke-linecap="round" stroke-linejoin="round" clip-path="url(#chartClip)" />
+
+                                <!-- Linha vertical do tooltip -->
+                                <line v-if="tooltip.visible"
+                                    :x1="tooltip.svgX" y1="0"
+                                    :x2="tooltip.svgX" :y2="CHART_H"
+                                    stroke="rgba(99,102,241,0.4)" stroke-width="1.5" stroke-dasharray="4,3" />
+
+                                <!-- Ponto do tooltip -->
+                                <circle v-if="tooltip.visible"
+                                    :cx="tooltip.svgX" :cy="tooltip.svgY"
+                                    r="5" fill="#6366F1" stroke="white" stroke-width="2" />
+
+                                <!-- Pontos ao longo do gráfico (pequenos, sempre visíveis) -->
+                                <circle v-for="(point, i) in followersChart" :key="'dot-' + i"
+                                    :cx="getX(i).toFixed(1)"
+                                    :cy="getY(point[chartMetric] ?? 0).toFixed(1)"
+                                    r="2" fill="#6366F1" opacity="0.5" />
+
+                                <!-- Áreas invisíveis de hover por coluna -->
+                                <rect v-for="(point, i) in followersChart" :key="'hit-' + i"
+                                    :x="(getX(i) - (CHART_W / Math.max(followersChart.length - 1, 1)) / 2).toFixed(1)"
+                                    y="0"
+                                    :width="(CHART_W / Math.max(followersChart.length - 1, 1)).toFixed(1)"
+                                    :height="CHART_H"
+                                    fill="transparent" />
+                            </svg>
+
+                            <!-- X labels -->
+                            <div class="relative h-4 mt-1">
+                                <span
+                                    v-for="item in chartLabels"
+                                    :key="item.i"
+                                    class="absolute text-[10px] text-gray-600 -translate-x-1/2 whitespace-nowrap"
+                                    :style="{ left: (getX(item.i) / CHART_W * 100) + '%' }"
+                                >{{ item.label }}</span>
+                            </div>
+                        </div>
+
+                        <!-- Tooltip flutuante (fora do SVG, no DOM) -->
+                        <Teleport to="body">
+                            <Transition name="tooltip-fade">
+                                <div
+                                    v-if="tooltip.visible && tooltip.point"
+                                    class="fixed z-50 pointer-events-none"
+                                    :style="{
+                                        left: tooltip.x + 'px',
+                                        top: (tooltip.y - 12) + 'px',
+                                        transform: 'translate(-50%, -100%)',
+                                    }"
+                                >
+                                    <div class="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl px-3.5 py-2.5 min-w-[140px]">
+                                        <p class="text-[10px] text-gray-400 mb-1.5 font-medium">{{ tooltip.point.date_full }}</p>
+                                        <div class="space-y-1">
+                                            <div class="flex items-center justify-between gap-4">
+                                                <span class="text-[10px] text-gray-500">Seguidores</span>
+                                                <span class="text-[10px] font-semibold text-white">{{ formatNumber(tooltip.point.followers) }}</span>
+                                            </div>
+                                            <div class="flex items-center justify-between gap-4">
+                                                <span class="text-[10px] text-gray-500">Engajamento</span>
+                                                <span class="text-[10px] font-semibold text-white">{{ formatNumber(tooltip.point.engagement) }}</span>
+                                            </div>
+                                            <div class="flex items-center justify-between gap-4">
+                                                <span class="text-[10px] text-gray-500">Alcance</span>
+                                                <span class="text-[10px] font-semibold text-white">{{ formatNumber(tooltip.point.reach) }}</span>
+                                            </div>
+                                            <div class="flex items-center justify-between gap-4">
+                                                <span class="text-[10px] text-gray-500">Impressões</span>
+                                                <span class="text-[10px] font-semibold text-white">{{ formatNumber(tooltip.point.impressions) }}</span>
+                                            </div>
+                                        </div>
+                                        <!-- Indicador da métrica ativa -->
+                                        <div class="mt-2 pt-1.5 border-t border-gray-800 flex items-center justify-between">
+                                            <span class="text-[10px] text-indigo-400 font-medium capitalize">{{ periodOptions.find(o => o.value === chartMetric)?.label }}</span>
+                                            <span class="text-xs font-bold text-indigo-300">{{ formatNumber(tooltip.point[chartMetric] ?? 0) }}</span>
+                                        </div>
+                                    </div>
+                                    <!-- Seta -->
+                                    <div class="flex justify-center">
+                                        <div class="w-2.5 h-2.5 bg-gray-900 border-r border-b border-gray-700 rotate-45 -mt-1.5"></div>
+                                    </div>
+                                </div>
+                            </Transition>
+                        </Teleport>
                     </div>
                     <div v-else class="flex items-center justify-center h-48 text-gray-600 text-sm">
                         <div class="text-center">
@@ -909,3 +1086,15 @@ const periodOptions = [
         </div>
     </AuthenticatedLayout>
 </template>
+
+<style scoped>
+.tooltip-fade-enter-active,
+.tooltip-fade-leave-active {
+    transition: opacity 0.1s ease, transform 0.1s ease;
+}
+.tooltip-fade-enter-from,
+.tooltip-fade-leave-to {
+    opacity: 0;
+    transform: translate(-50%, calc(-100% + 4px));
+}
+</style>
