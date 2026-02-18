@@ -184,8 +184,28 @@ async function generateWithAI() {
 
 // Submit
 function submit() {
-    form.put(route('social.posts.update', props.post.id), {
-        forceFormData: true,
+    const formData = new FormData();
+    formData.append('_method', 'PUT'); // Laravel method spoofing
+    formData.append('title', form.title);
+    formData.append('caption', form.caption);
+    formData.append('type', form.type || 'feed');
+    formData.append('status', form.status);
+    if (form.scheduled_at) formData.append('scheduled_at', form.scheduled_at);
+
+    form.platforms.forEach((p, i) => formData.append(`platforms[${i}]`, p));
+    form.hashtags.forEach((h, i) => formData.append(`hashtags[${i}]`, h));
+    form.media.forEach((file, i) => formData.append(`media[${i}]`, file));
+    form.remove_media.forEach((id, i) => formData.append(`remove_media[${i}]`, String(id)));
+
+    router.post(route('social.posts.update', props.post.id), formData, {
+        onStart: () => { form.processing = true; },
+        onFinish: () => { form.processing = false; },
+        onError: (errors) => {
+            form.processing = false;
+            Object.keys(errors).forEach(key => {
+                form.setError(key as any, errors[key]);
+            });
+        },
     });
 }
 

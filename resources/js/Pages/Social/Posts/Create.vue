@@ -2,7 +2,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import GuideBox from '@/Components/GuideBox.vue';
 import InputError from '@/Components/InputError.vue';
-import { Head, Link, useForm } from '@inertiajs/vue3';
+import { Head, Link, useForm, router } from '@inertiajs/vue3';
 import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 
@@ -310,12 +310,21 @@ function submit() {
     formData.append('type', form.type);
     if (form.scheduled_at) formData.append('scheduled_at', form.scheduled_at);
 
+    // Arrays precisam ser adicionados item a item no FormData
     form.platforms.forEach((p, i) => formData.append(`platforms[${i}]`, p));
     form.hashtags.forEach((h, i) => formData.append(`hashtags[${i}]`, h));
     form.media.forEach((file, i) => formData.append(`media[${i}]`, file));
 
-    form.post(route('social.posts.store'), {
-        forceFormData: true,
+    // Usar router.post com o formData real (não form.post que ignora o formData construído)
+    router.post(route('social.posts.store'), formData, {
+        onStart: () => { form.processing = true; },
+        onFinish: () => { form.processing = false; },
+        onError: (errors) => {
+            form.processing = false;
+            Object.keys(errors).forEach(key => {
+                form.setError(key as any, errors[key]);
+            });
+        },
     });
 }
 

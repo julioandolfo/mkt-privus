@@ -2,9 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\AIModel;
 use App\Models\EmailAsset;
 use App\Models\EmailSavedBlock;
 use App\Models\AnalyticsConnection;
+use App\Models\Brand;
+use App\Models\SystemLog;
+use App\Services\AI\AIGateway;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
@@ -237,62 +241,109 @@ class EmailEditorController extends Controller
 
         $type = $validated['type'] ?? 'full_template';
         $brandId = session('current_brand_id');
+        $brand = Brand::find($brandId);
+        $user = Auth::user();
 
-        // Buscar info da marca
-        $brand = \App\Models\Brand::find($brandId);
-        $brandContext = $brand ? "Marca: {$brand->name}. Segmento: {$brand->segment}. Tom: {$brand->tone}." : '';
+        $brandInfo = '';
+        if ($brand) {
+            $brandInfo = "\nMarca: {$brand->name}."
+                . ($brand->segment ? " Segmento: {$brand->segment}." : '')
+                . ($brand->tone_of_voice ? " Tom de voz: {$brand->tone_of_voice}." : '')
+                . ($brand->description ? " Sobre: {$brand->description}." : '');
+        }
 
         $systemPrompt = match ($type) {
-            'subject' => "Você é um especialista em email marketing. Gere 5 opções de assunto de email atraentes e com alta taxa de abertura. {$brandContext} Responda APENAS com um JSON array: [\"assunto1\", \"assunto2\", ...]",
-            'content' => "Você é um copywriter expert em email marketing. Gere o texto do corpo do email em HTML simples (sem <html>, <head>, <body>). Use tags como <h1>, <h2>, <p>, <a>, <strong>. {$brandContext}",
-            'full_template' => "Você é um designer e copywriter expert em email marketing. Gere um template completo de email em HTML responsivo e bonito. Use tabelas para layout (compatibilidade com email clients). Inclua: cabeçalho com logo placeholder, conteúdo principal, CTA (call-to-action), e rodapé. Use cores modernas e design clean. {$brandContext} Retorne APENAS o HTML completo (com <html>, <head> com estilos inline, e <body>).",
+            'subject' => "Você é um especialista em email marketing com alta taxa de abertura.{$brandInfo}\nGere 5 opções criativas e atraentes de assunto para o email descrito. Responda APENAS com um JSON array de strings: [\"assunto1\", \"assunto2\", \"assunto3\", \"assunto4\", \"assunto5\"]",
+            'content' => "Você é um copywriter expert em email marketing.{$brandInfo}\nGere o texto do corpo do email em HTML (sem <html>, <head>, <body> — apenas o conteúdo interno). Use tags como <h1>, <h2>, <p>, <a href='#'>, <strong>, <ul>, <li>. Estilos inline onde necessário. Responda APENAS com o HTML.",
+            'full_template' => "Você é um designer e copywriter expert em email marketing.{$brandInfo}\nGere um template completo de email em HTML responsivo. Regras:\n- Use tabelas para layout (compatibilidade com clientes de email)\n- Toda estilização deve ser inline (style=\"...\")\n- Inclua: header com logo placeholder, conteúdo principal atraente, botão CTA destacado, footer com unsubscribe link\n- Use paleta de cores moderna e profissional\n- Largura máxima de 600px centralizada\n- Fontes seguras para email (Arial, Helvetica, sans-serif)\nResponda APENAS com o HTML completo (iniciando em <!DOCTYPE html>).",
+            default => "Você é um especialista em email marketing.{$brandInfo}",
         };
 
-        // Buscar API key
-        $apiKey = \App\Models\Setting::get('api_keys', 'gemini_api_key');
-        if (!$apiKey) {
-            $apiKey = \App\Models\Setting::get('api_keys', 'openai_api_key');
-        }
-
-        if (!$apiKey) {
-            return response()->json(['success' => false, 'error' => 'Nenhuma API key de IA configurada.']);
-        }
-
         try {
-            // Tentar Gemini primeiro
-            $geminiKey = \App\Models\Setting::get('api_keys', 'gemini_api_key');
-            if ($geminiKey) {
-                $response = Http::timeout(60)->post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$geminiKey}",
-                    [
-                        'contents' => [
-                            ['parts' => [['text' => $systemPrompt . "\n\nSolicitação: " . $validated['prompt']]]],
-                        ],
-                        'generationConfig' => [
-                            'temperature' => 0.7,
-                            'maxOutputTokens' => 4096,
-                        ],
-                    ]
-                );
+            $aiGateway = app(AIGateway::class);
 
-                if ($response->successful()) {
-                    $text = $response->json('candidates.0.content.parts.0.text', '');
-
-                    // Limpar markdown code blocks se houver
-                    $text = preg_replace('/^```(?:html|json)?\s*\n?/m', '', $text);
-                    $text = preg_replace('/\n?```\s*$/m', '', $text);
-
-                    return response()->json([
-                        'success' => true,
-                        'content' => trim($text),
-                        'type' => $type,
-                    ]);
-                }
+            // Determinar modelo disponivel (Gemini preferido, OpenAI como fallback)
+            $model = $this->resolveAIModel();
+            if (!$model) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Nenhuma API key de IA configurada. Configure em Configurações → Integrações.',
+                ]);
             }
 
-            return response()->json(['success' => false, 'error' => 'Falha ao gerar conteúdo.']);
+            $response = $aiGateway->chat(
+                model: $model,
+                messages: [
+                    ['role' => 'system', 'content' => $systemPrompt],
+                    ['role' => 'user', 'content' => $validated['prompt']],
+                ],
+                brand: $brand,
+                user: $user,
+                feature: 'email_ai_generation',
+                options: [
+                    'temperature' => 0.75,
+                    'max_tokens' => $type === 'full_template' ? 6000 : 2000,
+                ],
+            );
+
+            $text = $response['content'] ?? '';
+
+            // Limpar markdown code blocks se houver
+            $text = preg_replace('/^```(?:html|json)?\s*\n?/im', '', $text);
+            $text = preg_replace('/\n?```\s*$/m', '', $text);
+            $text = trim($text);
+
+            if (empty($text)) {
+                SystemLog::warning('email', 'ai.empty_response', "IA retornou conteúdo vazio para geração de email", [
+                    'type' => $type,
+                    'model' => $model->value,
+                    'brand_id' => $brandId,
+                ]);
+                return response()->json(['success' => false, 'error' => 'A IA não retornou conteúdo. Tente novamente ou ajuste o prompt.']);
+            }
+
+            SystemLog::info('email', 'ai.generated', "Conteúdo de email gerado por IA: tipo={$type}", [
+                'type' => $type,
+                'model' => $model->value,
+                'brand_id' => $brandId,
+                'tokens' => ($response['input_tokens'] ?? 0) + ($response['output_tokens'] ?? 0),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'content' => $text,
+                'type' => $type,
+                'model' => $model->value,
+            ]);
         } catch (\Throwable $e) {
-            return response()->json(['success' => false, 'error' => $e->getMessage()]);
+            SystemLog::error('email', 'ai.generation_error', "Erro ao gerar conteúdo de email: {$e->getMessage()}", [
+                'type' => $type,
+                'brand_id' => $brandId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Erro ao comunicar com a IA: ' . $e->getMessage(),
+            ]);
         }
+    }
+
+    /**
+     * Resolve o modelo de IA disponivel baseado nas API keys configuradas
+     */
+    private function resolveAIModel(): ?AIModel
+    {
+        $geminiKey = \App\Models\Setting::get('api_keys', 'gemini_api_key');
+        if ($geminiKey) {
+            return AIModel::GeminiFlash;
+        }
+
+        $openaiKey = \App\Models\Setting::get('api_keys', 'openai_api_key');
+        if ($openaiKey) {
+            return AIModel::GPT4oMini;
+        }
+
+        return null;
     }
 }
