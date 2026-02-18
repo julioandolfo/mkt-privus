@@ -472,4 +472,27 @@ Route::middleware(['auth', 'verified'])->group(function () {
 Route::get('/l/{slug}', [LinkPagePublicController::class, 'show'])->name('links.public');
 Route::post('/l/{slug}/click', [LinkPagePublicController::class, 'click'])->name('links.public.click');
 
+/*
+|--------------------------------------------------------------------------
+| Storage público — serve arquivos do storage sem autenticação.
+| Necessário para que APIs externas (Instagram, Facebook, LinkedIn) consigam
+| baixar mídias enviadas pelo usuário.
+|--------------------------------------------------------------------------
+*/
+Route::get('/storage/{path}', function (string $path) {
+    $fullPath = storage_path('app/public/' . $path);
+
+    if (!file_exists($fullPath)) {
+        abort(404);
+    }
+
+    $mimeType = mime_content_type($fullPath) ?: 'application/octet-stream';
+
+    return response()->file($fullPath, [
+        'Content-Type'  => $mimeType,
+        'Cache-Control' => 'public, max-age=31536000, immutable',
+        'X-Content-Type-Options' => 'nosniff',
+    ]);
+})->where('path', '.*')->name('storage.serve');
+
 require __DIR__.'/auth.php';
