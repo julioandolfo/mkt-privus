@@ -350,9 +350,9 @@ function getPlatformLabel(value: string): string {
 
                             <!-- Actions -->
                             <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-                                <!-- Publicar Agora: somente para draft/scheduled/failed -->
+                                <!-- Publicar Agora: draft / pending_review / approved / scheduled / failed -->
                                 <button
-                                    v-if="['draft', 'scheduled', 'failed'].includes(post.status)"
+                                    v-if="['draft', 'pending_review', 'approved', 'scheduled', 'failed'].includes(post.status)"
                                     @click="publishNow(post)"
                                     :disabled="publishingId === post.id"
                                     class="p-1.5 rounded-lg text-gray-500 hover:text-green-400 hover:bg-gray-800 transition disabled:opacity-50"
