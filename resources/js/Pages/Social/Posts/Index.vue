@@ -63,6 +63,7 @@ const page = usePage();
 const currentBrand = computed(() => page.props.currentBrand);
 
 const publishingId = ref<number | null>(null);
+const republishingId = ref<number | null>(null);
 
 const filterStatus = ref(props.filters?.status || '');
 const filterPlatform = ref(props.filters?.platform || '');
@@ -125,6 +126,21 @@ async function publishNow(post: Post) {
         alert(typeof msg === 'object' ? Object.values(msg).join('\n') : msg);
     } finally {
         publishingId.value = null;
+    }
+}
+
+async function republish(post: Post) {
+    if (!confirm(`Republicar "${post.title || 'este post'}" nas plataformas: ${post.platforms.join(', ')}?\n\nIsso vai criar uma nova publicação nas redes sociais.`)) return;
+
+    republishingId.value = post.id;
+    try {
+        await axios.post(route('social.posts.republish', post.id));
+        router.reload({ preserveScroll: true });
+    } catch (err: any) {
+        const msg = err?.response?.data?.message || 'Erro ao republicar.';
+        alert(typeof msg === 'object' ? Object.values(msg).join('\n') : msg);
+    } finally {
+        republishingId.value = null;
     }
 }
 
@@ -336,7 +352,7 @@ function getPlatformLabel(value: string): string {
                             <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
                                 <!-- Publicar Agora: somente para draft/scheduled/failed -->
                                 <button
-                                    v-if="!['published', 'publishing'].includes(post.status)"
+                                    v-if="['draft', 'scheduled', 'failed'].includes(post.status)"
                                     @click="publishNow(post)"
                                     :disabled="publishingId === post.id"
                                     class="p-1.5 rounded-lg text-gray-500 hover:text-green-400 hover:bg-gray-800 transition disabled:opacity-50"
@@ -347,6 +363,22 @@ function getPlatformLabel(value: string): string {
                                     </svg>
                                     <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                         <circle cx="12" cy="12" r="10" /><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none" />
+                                    </svg>
+                                </button>
+
+                                <!-- Republicar: somente para published/failed -->
+                                <button
+                                    v-if="['published', 'failed'].includes(post.status)"
+                                    @click="republish(post)"
+                                    :disabled="republishingId === post.id"
+                                    class="p-1.5 rounded-lg text-gray-500 hover:text-blue-400 hover:bg-gray-800 transition disabled:opacity-50"
+                                    title="Republicar"
+                                >
+                                    <svg v-if="republishingId === post.id" class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                                    </svg>
+                                    <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 0 1 3.51 15"/>
                                     </svg>
                                 </button>
                                 <Link

@@ -460,6 +460,76 @@ class PostController extends Controller
     }
 
     /**
+     * Republica um post já publicado (ou falhado) — cria novos PostSchedules e dispara imediatamente.
+     */
+    public function republish(Request $request, Post $post): \Illuminate\Http\JsonResponse
+    {
+        $this->authorizePost($request, $post);
+
+        $brand = $request->user()->getActiveBrand();
+
+        if (!$brand) {
+            return response()->json(['message' => 'Nenhuma marca ativa.'], 422);
+        }
+
+        if ($post->status->value === 'publishing') {
+            return response()->json(['message' => 'Este post já está sendo publicado.'], 422);
+        }
+
+        $accounts = SocialAccount::where('brand_id', $brand->id)
+            ->where('is_active', true)
+            ->whereIn('platform', $post->platforms ?? [])
+            ->get();
+
+        if ($accounts->isEmpty()) {
+            return response()->json([
+                'message' => 'Nenhuma conta social conectada para as plataformas selecionadas. Conecte contas em Social > Contas.',
+            ], 422);
+        }
+
+        $now = now();
+
+        // Resetar o post para publishing
+        $post->update([
+            'status'       => 'publishing',
+            'scheduled_at' => $now,
+            'published_at' => null,
+        ]);
+
+        $dispatched = 0;
+
+        foreach ($accounts as $account) {
+            // Sempre criar um novo schedule para republicação
+            $schedule = PostSchedule::create([
+                'post_id'           => $post->id,
+                'social_account_id' => $account->id,
+                'platform'          => $account->platform->value,
+                'status'            => 'publishing',
+                'scheduled_at'      => $now,
+                'attempts'          => 1,
+                'max_attempts'      => 3,
+                'last_attempted_at' => $now,
+            ]);
+
+            \App\Jobs\PublishPostJob::dispatch($schedule)->onQueue('autopilot');
+            $dispatched++;
+        }
+
+        \App\Models\SystemLog::info('social', 'post.republish', "Republicação disparada para post #{$post->id}", [
+            'post_id'    => $post->id,
+            'brand_id'   => $brand->id,
+            'platforms'  => $post->platforms,
+            'dispatched' => $dispatched,
+            'user_id'    => $request->user()->id,
+        ]);
+
+        return response()->json([
+            'message'    => "Republicação iniciada! {$dispatched} conta(s) serão publicadas em instantes.",
+            'dispatched' => $dispatched,
+        ]);
+    }
+
+    /**
      * Cria ou atualiza os PostSchedules para cada conta conectada correspondente às plataformas do post.
      * Somente cria schedules pendentes (não toca os que já foram published/publishing).
      */
