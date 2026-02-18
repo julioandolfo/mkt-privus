@@ -5,22 +5,13 @@ namespace App\Services\Social\Publishers;
 use App\Models\Post;
 use App\Models\PostMedia;
 use App\Models\SocialAccount;
+use App\Models\SystemLog;
 use App\Services\Social\PublishResult;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
  * Publisher para LinkedIn via API v2 (UGC Posts).
- *
- * Suporta posts de membros (pessoa) e organizações (empresa/página).
- * O platform_user_id pode ser:
- *   - ID numérico de pessoa: usa urn:li:person:{id}
- *   - ID numérico de organização: usa urn:li:organization:{id} (se metadata.type == 'organization')
- *
- * Fluxo com mídia:
- *  1. Registrar upload de imagem (registerUpload)
- *  2. Fazer upload do binário
- *  3. Criar UGC post com o asset
  */
 class LinkedInPublisher extends AbstractPublisher
 {
@@ -35,47 +26,52 @@ class LinkedInPublisher extends AbstractPublisher
     {
         $token = $account->getFreshToken() ?? $account->access_token;
 
+        SystemLog::info('social', 'li.publish.start', "LinkedIn: iniciando publicação do post #{$post->id}", [
+            'post_id'     => $post->id,
+            'account_id'  => $account->id,
+            'username'    => $account->username,
+            'platform_id' => $account->platform_user_id,
+            'metadata'    => $account->metadata,
+            'has_token'   => !empty($token),
+            'media_count' => $post->media->count(),
+        ]);
+
         if (!$token) {
-            return PublishResult::fail('Conta LinkedIn sem token. Reconecte a conta.');
+            return $this->fail($post, 'Conta LinkedIn sem token. Reconecte a conta.');
         }
 
-        $authorUrn = $this->resolveAuthorUrn($account);
-        $caption   = $this->buildCaption($post);
-
+        $authorUrn  = $this->resolveAuthorUrn($account);
+        $caption    = $this->buildCaption($post);
         $mediaItems = $post->media->sortBy('order')->values();
 
-        // Post apenas com texto
+        SystemLog::info('social', 'li.publish.author', "LinkedIn: autor resolvido", [
+            'post_id'    => $post->id,
+            'author_urn' => $authorUrn,
+        ]);
+
         if ($mediaItems->isEmpty()) {
-            return $this->publishText($token, $authorUrn, $caption);
+            return $this->publishText($post, $token, $authorUrn, $caption);
         }
 
-        // Com imagem(ns) — LinkedIn suporta multi-imagem desde 2023
-        $images = $mediaItems->where('type', 'image')->values();
-        $video  = $mediaItems->where('type', 'video')->first();
-
+        $video = $mediaItems->where('type', 'video')->first();
         if ($video) {
-            return $this->publishWithVideo($token, $authorUrn, $caption, $video);
+            return $this->publishWithVideo($post, $token, $authorUrn, $caption, $video);
         }
 
-        if ($images->count() === 1) {
-            return $this->publishWithImage($token, $authorUrn, $caption, $images->first());
-        }
-
-        // Múltiplas imagens — publicar como carrossel (artigo nativo não disponível via API)
-        // Fallback: publicar só texto com nota
-        return $this->publishWithImage($token, $authorUrn, $caption, $images->first());
+        $images = $mediaItems->where('type', 'image')->values();
+        return $this->publishWithImage($post, $token, $authorUrn, $caption, $images->first());
     }
 
-    // ===== Post de texto simples =====
+    // ===== Texto simples =====
 
-    private function publishText(string $token, string $authorUrn, string $caption): PublishResult
+    private function publishText(Post $post, string $token, string $authorUrn, string $caption): PublishResult
     {
         $body = [
             'author'          => $authorUrn,
             'lifecycleState'  => 'PUBLISHED',
             'specificContent' => [
                 'com.linkedin.ugc.ShareContent' => [
-                    'shareCommentary' => ['text' => $caption],
+                    'shareCommentary'    => ['text' => $caption],
                     'shareMediaCategory' => 'NONE',
                 ],
             ],
@@ -84,70 +80,127 @@ class LinkedInPublisher extends AbstractPublisher
             ],
         ];
 
+        SystemLog::info('social', 'li.text.post', "LinkedIn: publicando texto", [
+            'post_id'    => $post->id,
+            'author_urn' => $authorUrn,
+            'body'       => $body,
+        ]);
+
         $response = Http::withToken($token)
             ->withHeaders(['X-Restli-Protocol-Version' => '2.0.0'])
             ->post(self::BASE_URL . '/ugcPosts', $body);
 
+        SystemLog::info('social', 'li.text.response', "LinkedIn: resposta texto", [
+            'post_id' => $post->id,
+            'status'  => $response->status(),
+            'headers' => $response->headers(),
+            'body'    => $response->json() ?? $response->body(),
+        ]);
+
         if (!$response->successful()) {
-            return PublishResult::fail('Erro ao publicar no LinkedIn: ' . $this->apiError($response));
+            return $this->fail($post, 'Erro ao publicar no LinkedIn: ' . $this->apiError($response), $response->json());
         }
 
         $postId  = $response->json('id') ?? $response->header('X-RestLi-Id');
         $postUrl = "https://www.linkedin.com/feed/update/{$postId}";
 
-        return PublishResult::ok($postId ?? 'linkedin_post', $postUrl);
+        SystemLog::info('social', 'li.publish.success', "LinkedIn: post #{$post->id} publicado", [
+            'post_id'          => $post->id,
+            'platform_post_id' => $postId,
+        ]);
+
+        return PublishResult::ok($postId ?? 'li_text', $postUrl);
     }
 
-    // ===== Post com imagem =====
+    // ===== Com imagem =====
 
-    private function publishWithImage(string $token, string $authorUrn, string $caption, PostMedia $media): PublishResult
+    private function publishWithImage(Post $post, string $token, string $authorUrn, string $caption, PostMedia $media): PublishResult
     {
         // Passo 1: Registrar upload
+        $registerBody = [
+            'registerUploadRequest' => [
+                'recipes'              => ['urn:li:digitalmediaRecipe:feedshare-image'],
+                'owner'                => $authorUrn,
+                'serviceRelationships' => [[
+                    'relationshipType' => 'OWNER',
+                    'identifier'       => 'urn:li:userGeneratedContent',
+                ]],
+            ],
+        ];
+
+        SystemLog::info('social', 'li.image.register', "LinkedIn: registrando upload de imagem", [
+            'post_id'   => $post->id,
+            'media_id'  => $media->id,
+            'file_path' => $media->file_path,
+            'body'      => $registerBody,
+        ]);
+
         $registerResponse = Http::withToken($token)
             ->withHeaders(['X-Restli-Protocol-Version' => '2.0.0'])
-            ->post(self::BASE_URL . '/assets?action=registerUpload', [
-                'registerUploadRequest' => [
-                    'recipes'                 => ['urn:li:digitalmediaRecipe:feedshare-image'],
-                    'owner'                   => $authorUrn,
-                    'serviceRelationships'    => [[
-                        'relationshipType' => 'OWNER',
-                        'identifier'       => 'urn:li:userGeneratedContent',
-                    ]],
-                ],
-            ]);
+            ->post(self::BASE_URL . '/assets?action=registerUpload', $registerBody);
+
+        SystemLog::info('social', 'li.image.register.response', "LinkedIn: resposta registro upload", [
+            'post_id' => $post->id,
+            'status'  => $registerResponse->status(),
+            'body'    => $registerResponse->json(),
+        ]);
 
         if (!$registerResponse->successful()) {
-            return PublishResult::fail('Erro ao registrar upload de imagem no LinkedIn: ' . $this->apiError($registerResponse));
+            return $this->fail($post, 'Erro ao registrar upload no LinkedIn: ' . $this->apiError($registerResponse), $registerResponse->json());
         }
 
         $uploadUrl = $registerResponse->json('value.uploadMechanism.com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest.uploadUrl');
         $assetUrn  = $registerResponse->json('value.asset');
 
+        SystemLog::info('social', 'li.image.upload_url', "LinkedIn: URL de upload obtida", [
+            'post_id'    => $post->id,
+            'upload_url' => $uploadUrl ? substr($uploadUrl, 0, 100) . '...' : null,
+            'asset_urn'  => $assetUrn,
+        ]);
+
         if (!$uploadUrl || !$assetUrn) {
-            return PublishResult::fail('LinkedIn retornou URL de upload inválida.');
+            return $this->fail($post, 'LinkedIn retornou URL de upload ou asset URN inválido.', $registerResponse->json());
         }
 
         // Passo 2: Upload do binário
         $filePath = storage_path('app/public/' . $media->file_path);
 
+        SystemLog::info('social', 'li.image.binary.upload', "LinkedIn: enviando binário da imagem", [
+            'post_id'     => $post->id,
+            'file_path'   => $filePath,
+            'file_exists' => file_exists($filePath),
+            'file_size'   => file_exists($filePath) ? filesize($filePath) : 0,
+            'mime_type'   => $media->mime_type,
+        ]);
+
         if (!file_exists($filePath)) {
-            return PublishResult::fail("Arquivo de mídia não encontrado: {$media->file_path}");
+            return $this->fail($post, "Arquivo de mídia não encontrado: {$media->file_path}");
         }
 
         $uploadResponse = Http::withToken($token)
             ->withHeaders([
-                'Content-Type'                 => $media->mime_type ?? 'image/jpeg',
-                'X-Restli-Protocol-Version'    => '2.0.0',
+                'Content-Type'              => $media->mime_type ?? 'image/jpeg',
+                'X-Restli-Protocol-Version' => '2.0.0',
             ])
             ->withBody(file_get_contents($filePath), $media->mime_type ?? 'image/jpeg')
             ->put($uploadUrl);
 
-        if (!$uploadResponse->successful() && $uploadResponse->status() !== 201) {
-            Log::warning("LinkedIn: upload retornou status {$uploadResponse->status()} (pode ser ok)");
+        SystemLog::info('social', 'li.image.binary.response', "LinkedIn: resposta upload binário", [
+            'post_id' => $post->id,
+            'status'  => $uploadResponse->status(),
+            'body'    => substr($uploadResponse->body(), 0, 200),
+        ]);
+
+        // Status 201 ou 200 são válidos para upload
+        if (!in_array($uploadResponse->status(), [200, 201])) {
+            SystemLog::warning('social', 'li.image.binary.warning', "LinkedIn: upload retornou status inesperado (continuando)", [
+                'post_id' => $post->id,
+                'status'  => $uploadResponse->status(),
+            ]);
         }
 
-        // Passo 3: Criar post com o asset
-        $body = [
+        // Passo 3: Criar post com asset
+        $postBody = [
             'author'          => $authorUrn,
             'lifecycleState'  => 'PUBLISHED',
             'specificContent' => [
@@ -166,28 +219,48 @@ class LinkedInPublisher extends AbstractPublisher
             ],
         ];
 
+        SystemLog::info('social', 'li.image.post', "LinkedIn: criando post com imagem", [
+            'post_id'   => $post->id,
+            'asset_urn' => $assetUrn,
+            'body'      => $postBody,
+        ]);
+
         $response = Http::withToken($token)
             ->withHeaders(['X-Restli-Protocol-Version' => '2.0.0'])
-            ->post(self::BASE_URL . '/ugcPosts', $body);
+            ->post(self::BASE_URL . '/ugcPosts', $postBody);
+
+        SystemLog::info('social', 'li.image.post.response', "LinkedIn: resposta post com imagem", [
+            'post_id' => $post->id,
+            'status'  => $response->status(),
+            'headers' => $response->headers(),
+            'body'    => $response->json() ?? $response->body(),
+        ]);
 
         if (!$response->successful()) {
-            return PublishResult::fail('Erro ao publicar imagem no LinkedIn: ' . $this->apiError($response));
+            return $this->fail($post, 'Erro ao publicar imagem no LinkedIn: ' . $this->apiError($response), $response->json());
         }
 
         $postId  = $response->json('id') ?? $response->header('X-RestLi-Id');
         $postUrl = "https://www.linkedin.com/feed/update/{$postId}";
 
-        return PublishResult::ok($postId ?? 'linkedin_post', $postUrl);
+        SystemLog::info('social', 'li.publish.success', "LinkedIn: imagem do post #{$post->id} publicada", [
+            'post_id'          => $post->id,
+            'platform_post_id' => $postId,
+        ]);
+
+        return PublishResult::ok($postId ?? 'li_image', $postUrl);
     }
 
-    // ===== Post com vídeo =====
+    // ===== Com vídeo =====
 
-    private function publishWithVideo(string $token, string $authorUrn, string $caption, PostMedia $media): PublishResult
+    private function publishWithVideo(Post $post, string $token, string $authorUrn, string $caption, PostMedia $media): PublishResult
     {
-        // Vídeo no LinkedIn via API v2 requer upload multipart complexo
-        // Por ora, publicar texto com nota sobre o vídeo
-        Log::warning("LinkedIn: publicação de vídeo ainda não suportada via API, publicando texto.");
-        return $this->publishText($token, $authorUrn, $caption . "\n\n[Vídeo disponível em breve]");
+        SystemLog::warning('social', 'li.video.fallback', "LinkedIn: publicação de vídeo via API v2 não suportada — publicando texto", [
+            'post_id'  => $post->id,
+            'media_id' => $media->id,
+        ]);
+
+        return $this->publishText($post, $token, $authorUrn, $caption . "\n\n[Vídeo disponível em breve]");
     }
 
     // ===== Helpers =====
@@ -198,13 +271,12 @@ class LinkedInPublisher extends AbstractPublisher
         $type     = $metadata['type'] ?? $metadata['account_type'] ?? 'person';
         $id       = $account->platform_user_id;
 
-        if (in_array($type, ['organization', 'company', 'page'])) {
-            return "urn:li:organization:{$id}";
+        if (str_starts_with((string) $id, 'urn:li:')) {
+            return $id;
         }
 
-        // Se já é um URN completo, retornar direto
-        if (str_starts_with($id, 'urn:li:')) {
-            return $id;
+        if (in_array($type, ['organization', 'company', 'page'])) {
+            return "urn:li:organization:{$id}";
         }
 
         return "urn:li:person:{$id}";
@@ -226,6 +298,17 @@ class LinkedInPublisher extends AbstractPublisher
     {
         return $response->json('message')
             ?? $response->json('error.message')
-            ?? $response->body();
+            ?? substr($response->body(), 0, 300);
+    }
+
+    private function fail(Post $post, string $message, ?array $apiResponse = null): PublishResult
+    {
+        SystemLog::error('social', 'li.publish.error', "LinkedIn: falha ao publicar post #{$post->id}", [
+            'post_id'      => $post->id,
+            'error'        => $message,
+            'api_response' => $apiResponse,
+        ]);
+
+        return PublishResult::fail($message);
     }
 }

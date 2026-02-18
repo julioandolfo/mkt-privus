@@ -70,12 +70,28 @@ class PublishPostJob implements ShouldQueue
                 $result->platformPostUrl,
             );
 
-            // Verificar se todos os schedules do post foram concluidos
+            \App\Models\SystemLog::info('social', 'autopilot.published', "Autopilot: schedule #{$schedule->id} publicado com sucesso", [
+                'schedule_id'      => $schedule->id,
+                'post_id'          => $schedule->post_id,
+                'platform'         => $schedule->platform->value,
+                'platform_post_id' => $result->platformPostId,
+                'platform_url'     => $result->platformPostUrl,
+            ]);
+
             $this->checkPostCompletion($schedule);
         } else {
-            $schedule->markAsFailed($result->errorMessage ?? 'Erro desconhecido');
+            $errorMsg = $result->errorMessage ?? 'Erro desconhecido';
+            $schedule->markAsFailed($errorMsg);
 
-            // Se esgotou tentativas, verificar conclusao do post mesmo assim
+            \App\Models\SystemLog::error('social', 'autopilot.failed', "Autopilot: schedule #{$schedule->id} falhou", [
+                'schedule_id' => $schedule->id,
+                'post_id'     => $schedule->post_id,
+                'platform'    => $schedule->platform->value,
+                'error'       => $errorMsg,
+                'attempts'    => $schedule->fresh()->attempts,
+                'can_retry'   => $schedule->canRetry(),
+            ]);
+
             if (!$schedule->canRetry()) {
                 $this->checkPostCompletion($schedule);
             }
@@ -131,11 +147,22 @@ class PublishPostJob implements ShouldQueue
      */
     public function failed(\Throwable $exception): void
     {
+        $msg = $exception->getMessage();
+
         Log::error("Autopilot: Job de publicação falhou definitivamente", [
             'schedule_id' => $this->schedule->id,
-            'error' => $exception->getMessage(),
+            'error'       => $msg,
+            'trace'       => substr($exception->getTraceAsString(), 0, 1000),
         ]);
 
-        $this->schedule->markAsFailed("Falha definitiva: {$exception->getMessage()}");
+        \App\Models\SystemLog::error('social', 'autopilot.job_failed', "Autopilot: job definitivamente falhado para schedule #{$this->schedule->id}", [
+            'schedule_id' => $this->schedule->id,
+            'post_id'     => $this->schedule->post_id,
+            'platform'    => $this->schedule->platform->value,
+            'error'       => $msg,
+            'exception'   => get_class($exception),
+        ]);
+
+        $this->schedule->markAsFailed("Falha definitiva: {$msg}");
     }
 }
