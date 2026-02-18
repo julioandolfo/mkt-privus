@@ -414,35 +414,48 @@ class PostController extends Controller
         $dispatched = 0;
 
         foreach ($accounts as $account) {
-            $schedule = PostSchedule::firstOrCreate(
-                ['post_id' => $post->id, 'social_account_id' => $account->id],
-                [
-                    'platform'     => $account->platform->value,
-                    'status'       => 'pending',
-                    'scheduled_at' => $now,
-                    'attempts'     => 0,
-                    'max_attempts' => 3,
-                ]
-            );
+            // Buscar schedule existente para esta conta
+            $schedule = PostSchedule::where('post_id', $post->id)
+                ->where('social_account_id', $account->id)
+                ->latest()
+                ->first();
 
-            if (in_array($schedule->status, ['published', 'publishing'])) {
+            // Se já foi publicado com sucesso nesta conta, pular
+            if ($schedule && $schedule->status === 'published') {
                 continue;
             }
 
-            $schedule->update([
-                'status'            => 'publishing',
-                'scheduled_at'      => $now,
-                'attempts'          => $schedule->attempts + 1,
-                'last_attempted_at' => $now,
-            ]);
+            if ($schedule) {
+                // Reutilizar o schedule existente — resetar para nova tentativa
+                $schedule->update([
+                    'status'            => 'publishing',
+                    'scheduled_at'      => $now,
+                    'attempts'          => $schedule->attempts + 1,
+                    'last_attempted_at' => $now,
+                    'error_message'     => null,
+                ]);
+            } else {
+                // Criar novo schedule
+                $schedule = PostSchedule::create([
+                    'post_id'           => $post->id,
+                    'social_account_id' => $account->id,
+                    'platform'          => $account->platform->value,
+                    'status'            => 'publishing',
+                    'scheduled_at'      => $now,
+                    'attempts'          => 1,
+                    'max_attempts'      => 3,
+                    'last_attempted_at' => $now,
+                ]);
+            }
 
             \App\Jobs\PublishPostJob::dispatch($schedule)->onQueue('autopilot');
             $dispatched++;
         }
 
         if ($dispatched === 0) {
-            $post->update(['status' => 'draft']);
-            return response()->json(['message' => 'Nenhum job disparado (contas já publicadas ou em processo).'], 422);
+            // Todos já foram publicados com sucesso — marcar post como publicado
+            $post->update(['status' => 'published', 'published_at' => now()]);
+            return response()->json(['message' => 'Post já publicado em todas as contas conectadas.']);
         }
 
         \App\Models\SystemLog::info('social', 'post.publish_now', "Publicação manual disparada para post #{$post->id}", [
