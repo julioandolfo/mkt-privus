@@ -19,6 +19,33 @@ const postsGuideTips = [
 import { ref, computed } from 'vue';
 import axios from 'axios';
 
+// Modal de preview
+const previewPost = ref<Post | null>(null);
+const previewMediaIndex = ref(0);
+
+function openPreview(post: Post) {
+    previewPost.value = post;
+    previewMediaIndex.value = 0;
+    document.body.style.overflow = 'hidden';
+}
+
+function closePreview() {
+    previewPost.value = null;
+    document.body.style.overflow = '';
+}
+
+function prevMedia() {
+    if (!previewPost.value) return;
+    const len = previewPost.value.media.length;
+    previewMediaIndex.value = (previewMediaIndex.value - 1 + len) % len;
+}
+
+function nextMedia() {
+    if (!previewPost.value) return;
+    const len = previewPost.value.media.length;
+    previewMediaIndex.value = (previewMediaIndex.value + 1) % len;
+}
+
 interface PostMedia {
     id: number;
     type: string;
@@ -350,6 +377,17 @@ function getPlatformLabel(value: string): string {
 
                             <!-- Actions -->
                             <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                                <!-- Visualizar -->
+                                <button
+                                    @click="openPreview(post)"
+                                    class="p-1.5 rounded-lg text-gray-500 hover:text-purple-400 hover:bg-gray-800 transition"
+                                    title="Visualizar"
+                                >
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                </button>
+
                                 <!-- Publicar Agora: draft / pending_review / approved / scheduled / failed -->
                                 <button
                                     v-if="['draft', 'pending_review', 'approved', 'scheduled', 'failed'].includes(post.status)"
@@ -449,4 +487,187 @@ function getPlatformLabel(value: string): string {
             </div>
         </template>
     </AuthenticatedLayout>
+
+    <!-- Modal de Preview do Post -->
+    <Teleport to="body">
+        <Transition name="modal">
+            <div
+                v-if="previewPost"
+                class="fixed inset-0 z-50 flex items-center justify-center p-4"
+                @click.self="closePreview"
+            >
+                <!-- Backdrop -->
+                <div class="absolute inset-0 bg-black/80 backdrop-blur-sm" @click="closePreview" />
+
+                <!-- Modal -->
+                <div class="relative z-10 w-full max-w-sm bg-white rounded-2xl overflow-hidden shadow-2xl">
+
+                    <!-- Header estilo Instagram -->
+                    <div class="flex items-center gap-3 px-4 py-3 border-b border-gray-100">
+                        <div class="w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                            {{ (previewPost.title || previewPost.caption || 'P').charAt(0).toUpperCase() }}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm font-semibold text-gray-900 truncate">{{ previewPost.title || 'Post' }}</p>
+                            <div class="flex items-center gap-1 flex-wrap">
+                                <span
+                                    v-for="platform in previewPost.platforms"
+                                    :key="platform"
+                                    class="text-[10px] font-medium px-1.5 py-0.5 rounded text-white"
+                                    :style="{ backgroundColor: platformColors[platform] || '#6B7280' }"
+                                >
+                                    {{ getPlatformLabel(platform) }}
+                                </span>
+                            </div>
+                        </div>
+                        <!-- Status badge -->
+                        <span :class="['text-xs px-2 py-1 rounded-full font-medium border', statusColorClasses[previewPost.status_color] || statusColorClasses.gray]">
+                            {{ previewPost.status_label }}
+                        </span>
+                        <!-- Fechar -->
+                        <button @click="closePreview" class="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition flex-shrink-0">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Mídia -->
+                    <div class="relative bg-black aspect-square">
+                        <!-- Imagem/Vídeo -->
+                        <template v-if="previewPost.media.length">
+                            <template v-if="previewPost.media[previewMediaIndex]?.type === 'video'">
+                                <video
+                                    :key="previewMediaIndex"
+                                    :src="previewPost.media[previewMediaIndex].file_path || ''"
+                                    class="w-full h-full object-contain"
+                                    controls
+                                    autoplay
+                                    muted
+                                />
+                            </template>
+                            <template v-else>
+                                <img
+                                    :key="previewMediaIndex"
+                                    :src="previewPost.media[previewMediaIndex]?.file_path || ''"
+                                    :alt="previewPost.media[previewMediaIndex]?.alt_text || 'Post'"
+                                    class="w-full h-full object-contain"
+                                />
+                            </template>
+
+                            <!-- Navegação carrossel -->
+                            <template v-if="previewPost.media.length > 1">
+                                <button
+                                    @click="prevMedia"
+                                    class="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition"
+                                >
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                                </button>
+                                <button
+                                    @click="nextMedia"
+                                    class="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition"
+                                >
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                                </button>
+                                <!-- Dots indicadores -->
+                                <div class="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5">
+                                    <button
+                                        v-for="(_, i) in previewPost.media"
+                                        :key="i"
+                                        @click="previewMediaIndex = i"
+                                        :class="['w-1.5 h-1.5 rounded-full transition', i === previewMediaIndex ? 'bg-white' : 'bg-white/40']"
+                                    />
+                                </div>
+                            </template>
+                        </template>
+
+                        <!-- Sem mídia -->
+                        <div v-else class="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
+                            <div class="text-center text-gray-400">
+                                <svg class="w-12 h-12 mx-auto mb-2 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                    <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                                </svg>
+                                <p class="text-xs opacity-50">Sem imagem</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Ações estilo Instagram -->
+                    <div class="px-4 pt-3 pb-1 flex items-center gap-4">
+                        <svg class="w-6 h-6 text-gray-700 cursor-pointer hover:text-red-500 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                        <svg class="w-6 h-6 text-gray-700 cursor-pointer hover:text-gray-900 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        <svg class="w-6 h-6 text-gray-700 cursor-pointer hover:text-gray-900 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                        <svg class="w-6 h-6 text-gray-700 cursor-pointer hover:text-gray-900 transition ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                    </div>
+
+                    <!-- Caption -->
+                    <div class="px-4 pb-4">
+                        <!-- Legenda completa -->
+                        <p class="text-sm text-gray-900 leading-relaxed mt-1">
+                            <span class="font-semibold mr-1">{{ previewPost.title || 'post' }}</span>
+                            {{ previewPost.caption }}
+                        </p>
+
+                        <!-- Hashtags -->
+                        <p v-if="previewPost.hashtags?.length" class="text-sm text-blue-500 mt-1">
+                            {{ previewPost.hashtags.map(h => h.startsWith('#') ? h : `#${h}`).join(' ') }}
+                        </p>
+
+                        <!-- Data/hora -->
+                        <p class="text-[11px] text-gray-400 mt-2 uppercase tracking-wide">
+                            <span v-if="previewPost.published_at">Publicado em {{ previewPost.published_at }}</span>
+                            <span v-else-if="previewPost.scheduled_at">Agendado: {{ previewPost.scheduled_at }}</span>
+                            <span v-else>Criado: {{ previewPost.created_at }}</span>
+                        </p>
+                    </div>
+
+                    <!-- Footer ações -->
+                    <div class="flex border-t border-gray-100">
+                        <Link
+                            :href="route('social.posts.edit', previewPost.id)"
+                            class="flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            Editar
+                        </Link>
+                        <button
+                            v-if="['draft', 'pending_review', 'approved', 'scheduled', 'failed'].includes(previewPost.status)"
+                            @click="closePreview(); publishNow(previewPost)"
+                            class="flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium text-green-600 hover:bg-green-50 transition border-l border-gray-100"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/></svg>
+                            Publicar
+                        </button>
+                        <button
+                            v-else-if="['published', 'failed'].includes(previewPost.status)"
+                            @click="closePreview(); republish(previewPost)"
+                            class="flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium text-blue-600 hover:bg-blue-50 transition border-l border-gray-100"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+                            Republicar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Transition>
+    </Teleport>
 </template>
+
+<style scoped>
+.modal-enter-active,
+.modal-leave-active {
+    transition: opacity 0.2s ease;
+}
+.modal-enter-from,
+.modal-leave-to {
+    opacity: 0;
+}
+.modal-enter-active .relative,
+.modal-leave-active .relative {
+    transition: transform 0.2s ease;
+}
+.modal-enter-from .relative,
+.modal-leave-to .relative {
+    transform: scale(0.95);
+}
+</style>

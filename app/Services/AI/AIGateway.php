@@ -44,30 +44,86 @@ class AIGateway
             ]);
         }
 
-        $provider = $model->provider();
+        // Montar lista de modelos para tentar: o solicitado primeiro, depois fallbacks
+        $modelsToTry = $this->buildFallbackChain($model);
 
-        try {
-            $response = match ($provider) {
-                AIProvider::OpenAI => $this->callOpenAI($model, $messages, $options),
-                AIProvider::Anthropic => $this->callAnthropic($model, $messages, $options),
-                AIProvider::Google => $this->callGemini($model, $messages, $options),
-            };
+        $lastException = null;
 
-            // Registrar log de uso
-            if ($user) {
-                $this->logUsage($user, $brand, $model, $feature, $response);
+        foreach ($modelsToTry as $tryModel) {
+            $provider = $tryModel->provider();
+            $apiKey   = $this->resolveApiKey($provider);
+
+            if (!$apiKey) {
+                continue;
             }
 
-            return $response;
-        } catch (\Exception $e) {
-            Log::error("AI Gateway Error [{$provider->value}]: {$e->getMessage()}", [
-                'model' => $model->value,
-                'feature' => $feature,
-                'user_id' => $user?->id,
-                'brand_id' => $brand?->id,
-            ]);
-            throw $e;
+            try {
+                $response = match ($provider) {
+                    AIProvider::OpenAI => $this->callOpenAI($tryModel, $messages, $options),
+                    AIProvider::Anthropic => $this->callAnthropic($tryModel, $messages, $options),
+                    AIProvider::Google => $this->callGemini($tryModel, $messages, $options),
+                };
+
+                if ($tryModel !== $model) {
+                    Log::info("AI Gateway: fallback de {$model->value} para {$tryModel->value} funcionou", [
+                        'feature' => $feature,
+                        'original_error' => $lastException?->getMessage(),
+                    ]);
+                }
+
+                if ($user) {
+                    $this->logUsage($user, $brand, $tryModel, $feature, $response);
+                }
+
+                return $response;
+            } catch (\Exception $e) {
+                $lastException = $e;
+
+                Log::warning("AI Gateway: falha com {$tryModel->value} ({$provider->value}), tentando próximo", [
+                    'model'   => $tryModel->value,
+                    'feature' => $feature,
+                    'error'   => mb_substr($e->getMessage(), 0, 200),
+                ]);
+            }
         }
+
+        Log::error("AI Gateway: todos os provedores falharam para feature={$feature}", [
+            'requested_model' => $model->value,
+            'tried'           => array_map(fn($m) => $m->value, $modelsToTry),
+            'last_error'      => $lastException?->getMessage(),
+            'user_id'         => $user?->id,
+            'brand_id'        => $brand?->id,
+        ]);
+
+        throw $lastException ?? new \RuntimeException('Nenhum provedor de IA disponível.');
+    }
+
+    /**
+     * Monta a cadeia de fallback: modelo solicitado → alternativas com key configurada.
+     * @return AIModel[]
+     */
+    private function buildFallbackChain(AIModel $requestedModel): array
+    {
+        $chain = [$requestedModel];
+
+        // Ordem de fallback por custo-benefício
+        $allModels = [
+            AIModel::GeminiFlash,
+            AIModel::GPT4oMini,
+            AIModel::Claude35Haiku,
+            AIModel::GeminiPro,
+            AIModel::GPT4o,
+            AIModel::Claude35Sonnet,
+        ];
+
+        foreach ($allModels as $fallback) {
+            if ($fallback === $requestedModel) {
+                continue;
+            }
+            $chain[] = $fallback;
+        }
+
+        return $chain;
     }
 
     /**
