@@ -17,6 +17,7 @@ const postsGuideTips = [
     'O Autopilot monitora e publica posts agendados automaticamente a cada minuto.',
 ];
 import { ref, computed } from 'vue';
+import axios from 'axios';
 
 interface PostMedia {
     id: number;
@@ -60,6 +61,8 @@ interface Props {
 const props = defineProps<Props>();
 const page = usePage();
 const currentBrand = computed(() => page.props.currentBrand);
+
+const publishingId = ref<number | null>(null);
 
 const filterStatus = ref(props.filters?.status || '');
 const filterPlatform = ref(props.filters?.platform || '');
@@ -108,6 +111,21 @@ function deletePost(postId: number) {
 
 function duplicatePost(postId: number) {
     router.post(route('social.posts.duplicate', postId));
+}
+
+async function publishNow(post: Post) {
+    if (!confirm(`Publicar "${post.title || 'este post'}" agora nas plataformas: ${post.platforms.join(', ')}?`)) return;
+
+    publishingId.value = post.id;
+    try {
+        await axios.post(route('social.posts.publish-now', post.id));
+        router.reload({ preserveScroll: true });
+    } catch (err: any) {
+        const msg = err?.response?.data?.message || err?.response?.data?.errors?.accounts || 'Erro ao publicar.';
+        alert(typeof msg === 'object' ? Object.values(msg).join('\n') : msg);
+    } finally {
+        publishingId.value = null;
+    }
 }
 
 function truncate(text: string, length: number): string {
@@ -316,6 +334,21 @@ function getPlatformLabel(value: string): string {
 
                             <!-- Actions -->
                             <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                                <!-- Publicar Agora: somente para draft/scheduled/failed -->
+                                <button
+                                    v-if="!['published', 'publishing'].includes(post.status)"
+                                    @click="publishNow(post)"
+                                    :disabled="publishingId === post.id"
+                                    class="p-1.5 rounded-lg text-gray-500 hover:text-green-400 hover:bg-gray-800 transition disabled:opacity-50"
+                                    title="Publicar Agora"
+                                >
+                                    <svg v-if="publishingId === post.id" class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                                    </svg>
+                                    <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10" /><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none" />
+                                    </svg>
+                                </button>
                                 <Link
                                     :href="route('social.posts.edit', post.id)"
                                     class="p-1.5 rounded-lg text-gray-500 hover:text-indigo-400 hover:bg-gray-800 transition"

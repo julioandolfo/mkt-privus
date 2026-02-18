@@ -184,6 +184,7 @@ async function generateWithAI() {
 
 // Submit
 function submit() {
+    form.clearErrors();
     const formData = new FormData();
     formData.append('_method', 'PUT'); // Laravel method spoofing
     formData.append('title', form.title);

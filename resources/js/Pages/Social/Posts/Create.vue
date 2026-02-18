@@ -304,6 +304,7 @@ async function generateWithAI() {
 
 // ===== SUBMIT =====
 function submit() {
+    form.clearErrors();
     const formData = new FormData();
     formData.append('title', form.title);
     formData.append('caption', form.caption);

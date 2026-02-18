@@ -8,6 +8,8 @@ use App\Enums\PostType;
 use App\Enums\SocialPlatform;
 use App\Models\Post;
 use App\Models\PostMedia;
+use App\Models\PostSchedule;
+use App\Models\SocialAccount;
 use App\Services\AI\AIGateway;
 use App\Services\Social\ContentGeneratorService;
 use Illuminate\Http\JsonResponse;
@@ -196,8 +198,20 @@ class PostController extends Controller
             }
         }
 
-        return redirect()->route('social.posts.index')
-            ->with('success', 'Post criado com sucesso!');
+        // Criar PostSchedules para cada conta conectada (necessario para autopilot)
+        if ($validated['scheduled_at'] && $brand) {
+            $this->syncPostSchedules($post, $brand->id);
+        }
+
+        $scheduledCount = $post->schedules()->count();
+        $msg = 'Post criado com sucesso!';
+        if ($validated['scheduled_at'] && $scheduledCount === 0) {
+            $msg .= ' Atenção: nenhuma conta social conectada encontrada para publicação automática. Conecte contas em Social > Contas.';
+        } elseif ($validated['scheduled_at'] && $scheduledCount > 0) {
+            $msg .= " Agendado para {$scheduledCount} conta(s).";
+        }
+
+        return redirect()->route('social.posts.index')->with('success', $msg);
     }
 
     /**
@@ -328,6 +342,14 @@ class PostController extends Controller
             }
         }
 
+        // Sincronizar PostSchedules se há agendamento
+        if ($validated['scheduled_at']) {
+            $brand = $request->user()->getActiveBrand();
+            if ($brand) {
+                $this->syncPostSchedules($post, $brand->id);
+            }
+        }
+
         return redirect()->route('social.posts.index')
             ->with('success', 'Post atualizado com sucesso!');
     }
@@ -350,6 +372,148 @@ class PostController extends Controller
 
         return redirect()->route('social.posts.index')
             ->with('success', 'Post removido com sucesso!');
+    }
+
+    /**
+     * Publicar post imediatamente (manual), sem aguardar o scheduler.
+     * Cria PostSchedules se necessário e dispara PublishPostJob agora.
+     * Responde JSON para chamadas AJAX do frontend.
+     */
+    public function publishNow(Request $request, Post $post): \Illuminate\Http\JsonResponse
+    {
+        $this->authorizePost($request, $post);
+
+        $brand = $request->user()->getActiveBrand();
+
+        if (!$brand) {
+            return response()->json(['message' => 'Nenhuma marca ativa.'], 422);
+        }
+
+        if (in_array($post->status->value, ['published', 'publishing'])) {
+            return response()->json(['message' => 'Este post já foi publicado ou está sendo publicado.'], 422);
+        }
+
+        $now = now();
+        $post->update([
+            'scheduled_at' => $now,
+            'status'       => 'publishing',
+        ]);
+
+        $accounts = SocialAccount::where('brand_id', $brand->id)
+            ->where('is_active', true)
+            ->whereIn('platform', $post->platforms ?? [])
+            ->get();
+
+        if ($accounts->isEmpty()) {
+            $post->update(['status' => 'draft', 'scheduled_at' => null]);
+            return response()->json([
+                'message' => 'Nenhuma conta social conectada encontrada para as plataformas selecionadas. Conecte contas em Social > Contas.',
+            ], 422);
+        }
+
+        $dispatched = 0;
+
+        foreach ($accounts as $account) {
+            $schedule = PostSchedule::firstOrCreate(
+                ['post_id' => $post->id, 'social_account_id' => $account->id],
+                [
+                    'platform'     => $account->platform->value,
+                    'status'       => 'pending',
+                    'scheduled_at' => $now,
+                    'attempts'     => 0,
+                    'max_attempts' => 3,
+                ]
+            );
+
+            if (in_array($schedule->status, ['published', 'publishing'])) {
+                continue;
+            }
+
+            $schedule->update([
+                'status'            => 'publishing',
+                'scheduled_at'      => $now,
+                'attempts'          => $schedule->attempts + 1,
+                'last_attempted_at' => $now,
+            ]);
+
+            \App\Jobs\PublishPostJob::dispatch($schedule)->onQueue('autopilot');
+            $dispatched++;
+        }
+
+        if ($dispatched === 0) {
+            $post->update(['status' => 'draft']);
+            return response()->json(['message' => 'Nenhum job disparado (contas já publicadas ou em processo).'], 422);
+        }
+
+        \App\Models\SystemLog::info('social', 'post.publish_now', "Publicação manual disparada para post #{$post->id}", [
+            'post_id'    => $post->id,
+            'brand_id'   => $brand->id,
+            'platforms'  => $post->platforms,
+            'dispatched' => $dispatched,
+            'user_id'    => $request->user()->id,
+        ]);
+
+        return response()->json([
+            'message'    => "Publicação iniciada! {$dispatched} conta(s) serão publicadas em instantes.",
+            'dispatched' => $dispatched,
+        ]);
+    }
+
+    /**
+     * Cria ou atualiza os PostSchedules para cada conta conectada correspondente às plataformas do post.
+     * Somente cria schedules pendentes (não toca os que já foram published/publishing).
+     */
+    private function syncPostSchedules(Post $post, int $brandId): void
+    {
+        $scheduledAt = $post->scheduled_at;
+        $platforms   = $post->platforms ?? [];
+
+        if (!$scheduledAt || empty($platforms)) {
+            return;
+        }
+
+        // Buscar contas ativas da marca para as plataformas selecionadas
+        $accounts = SocialAccount::where('brand_id', $brandId)
+            ->where('is_active', true)
+            ->whereIn('platform', $platforms)
+            ->get();
+
+        if ($accounts->isEmpty()) {
+            Log::warning("PostSchedule: nenhuma conta social encontrada para post #{$post->id}", [
+                'platforms' => $platforms,
+                'brand_id'  => $brandId,
+            ]);
+            return;
+        }
+
+        foreach ($accounts as $account) {
+            // Não duplicar — apenas criar se não existir schedule pendente/ativo para essa conta
+            $existing = PostSchedule::where('post_id', $post->id)
+                ->where('social_account_id', $account->id)
+                ->whereIn('status', ['pending', 'publishing'])
+                ->first();
+
+            if ($existing) {
+                // Atualizar horário se mudou
+                $existing->update(['scheduled_at' => $scheduledAt]);
+                continue;
+            }
+
+            PostSchedule::create([
+                'post_id'           => $post->id,
+                'social_account_id' => $account->id,
+                'platform'          => $account->platform->value,
+                'status'            => 'pending',
+                'scheduled_at'      => $scheduledAt,
+                'attempts'          => 0,
+                'max_attempts'      => 3,
+            ]);
+        }
+
+        Log::info("PostSchedule: {$accounts->count()} schedule(s) criado(s)/atualizados para post #{$post->id}", [
+            'scheduled_at' => $scheduledAt,
+            'platforms'    => $platforms,
+        ]);
     }
 
     /**
