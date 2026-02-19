@@ -416,32 +416,57 @@ class InstagramPublisher extends AbstractPublisher
     }
 
     /**
-     * Descobre a primeira Facebook Page vinculada ao token.
+     * Descobre a Facebook Page vinculada ao token.
+     *
+     * Tenta 3 estratégias em sequência:
+     * 1. GET /me/accounts (funciona se token é de Usuário)
+     * 2. GET /me?fields=id,name (funciona se token já é de Página)
+     * 3. Busca SocialAccount do tipo facebook no mesmo brand
      */
     private function discoverFacebookPage(string $token): void
     {
         try {
+            // Estratégia 1: Token de Usuário → listar Pages gerenciadas
             $resp = Http::get(self::BASE_URL . '/me/accounts', [
                 'access_token' => $token,
                 'fields'       => 'id,name,access_token',
                 'limit'        => 5,
             ]);
 
-            if (!$resp->successful() || empty($resp->json('data'))) {
-                SystemLog::warning('social', 'ig.cdn.pages_empty', "Nenhuma Page retornada por /me/accounts", [
-                    'status'   => $resp->status(),
-                    'response' => $resp->json(),
+            if ($resp->successful() && !empty($resp->json('data'))) {
+                $page = $resp->json('data.0');
+                $this->cachedPageId    = $page['id'];
+                $this->cachedPageToken = $page['access_token'] ?? $token;
+
+                SystemLog::info('social', 'ig.cdn.page_found', "Facebook Page encontrada via /me/accounts", [
+                    'page_id'   => $this->cachedPageId,
+                    'page_name' => $page['name'] ?? '?',
                 ]);
                 return;
             }
 
-            $page = $resp->json('data.0');
-            $this->cachedPageId    = $page['id'];
-            $this->cachedPageToken = $page['access_token'] ?? null;
+            // Estratégia 2: Token já é de Página → /me retorna a própria Page
+            $meResp = Http::get(self::BASE_URL . '/me', [
+                'access_token' => $token,
+                'fields'       => 'id,name',
+            ]);
 
-            SystemLog::info('social', 'ig.cdn.page_found', "Facebook Page encontrada para CDN", [
-                'page_id'   => $this->cachedPageId,
-                'page_name' => $page['name'] ?? '?',
+            if ($meResp->successful() && $meResp->json('id')) {
+                $this->cachedPageId    = $meResp->json('id');
+                $this->cachedPageToken = $token;
+
+                SystemLog::info('social', 'ig.cdn.page_found', "Facebook Page encontrada via /me (token de Página)", [
+                    'page_id'   => $this->cachedPageId,
+                    'page_name' => $meResp->json('name') ?? '?',
+                ]);
+                return;
+            }
+
+            SystemLog::warning('social', 'ig.cdn.pages_empty', "Nenhuma Page encontrada por nenhuma estratégia", [
+                'accounts_status'   => $resp->status(),
+                'accounts_response' => $resp->json(),
+                'me_status'         => $meResp->status(),
+                'me_response'       => $meResp->json(),
             ]);
 
         } catch (\Throwable $e) {
