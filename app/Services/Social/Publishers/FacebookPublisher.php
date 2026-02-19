@@ -12,6 +12,9 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Publisher para Facebook Pages via Meta Graph API.
+ *
+ * Inclui fallback automático: se a URL da mídia falhar,
+ * faz upload direto do arquivo (multipart) para o Graph API.
  */
 class FacebookPublisher extends AbstractPublisher
 {
@@ -41,7 +44,6 @@ class FacebookPublisher extends AbstractPublisher
             return $this->fail($post, 'Conta Facebook sem token ou Page ID. Reconecte a conta.');
         }
 
-        // Tentar trocar por Page Access Token
         $pageToken = $this->getPageToken($post, $pageId, $token);
         $useToken  = $pageToken ?? $token;
 
@@ -112,11 +114,20 @@ class FacebookPublisher extends AbstractPublisher
             'media_url' => $url,
         ]);
 
+        // Tentar via URL primeiro
         $response = Http::post(self::BASE_URL . "/{$pageId}/photos", [
             'url'          => $url,
             'caption'      => $caption,
             'access_token' => $token,
         ]);
+
+        // Fallback: upload direto do arquivo se URL falhou
+        if (!$response->successful()) {
+            $fallback = $this->uploadPhotoDirectly($post, $pageId, $token, $caption, $media, true);
+            if ($fallback) {
+                $response = $fallback;
+            }
+        }
 
         SystemLog::info('social', 'fb.photo.response', "Facebook: resposta foto", [
             'post_id' => $post->id,
@@ -154,11 +165,20 @@ class FacebookPublisher extends AbstractPublisher
                 'media_url' => $url,
             ]);
 
+            // Tentar via URL primeiro
             $response = Http::post(self::BASE_URL . "/{$pageId}/photos", [
                 'url'          => $url,
                 'published'    => false,
                 'access_token' => $token,
             ]);
+
+            // Fallback: upload direto
+            if (!$response->successful()) {
+                $fallback = $this->uploadPhotoDirectly($post, $pageId, $token, null, $media, false);
+                if ($fallback) {
+                    $response = $fallback;
+                }
+            }
 
             SystemLog::info('social', 'fb.multi.photo.response', "Facebook: resposta upload foto #{$index}", [
                 'post_id' => $post->id,
@@ -242,6 +262,58 @@ class FacebookPublisher extends AbstractPublisher
         ]);
 
         return PublishResult::ok($videoId, $postUrl);
+    }
+
+    // ===== Upload direto (fallback) =====
+
+    /**
+     * Faz upload direto do arquivo via multipart/form-data quando a URL falha.
+     */
+    private function uploadPhotoDirectly(Post $post, string $pageId, string $token, ?string $caption, PostMedia $media, bool $published): mixed
+    {
+        $localPath = storage_path('app/public/' . $media->file_path);
+
+        if (!file_exists($localPath)) {
+            SystemLog::warning('social', 'fb.upload.file_missing', "Facebook: arquivo local não encontrado para upload direto", [
+                'post_id'    => $post->id,
+                'file_path'  => $media->file_path,
+                'local_path' => $localPath,
+            ]);
+            return null;
+        }
+
+        $mimeType = mime_content_type($localPath) ?: 'image/jpeg';
+
+        SystemLog::info('social', 'fb.upload.direct', "Facebook: fazendo upload direto do arquivo", [
+            'post_id'   => $post->id,
+            'media_id'  => $media->id,
+            'file_size' => filesize($localPath),
+            'mime_type' => $mimeType,
+        ]);
+
+        $params = [
+            'published'    => $published ? 'true' : 'false',
+            'access_token' => $token,
+        ];
+
+        if ($caption) {
+            $params['caption'] = $caption;
+        }
+
+        $response = Http::attach(
+            'source',
+            file_get_contents($localPath),
+            basename($localPath),
+            ['Content-Type' => $mimeType]
+        )->post(self::BASE_URL . "/{$pageId}/photos", $params);
+
+        SystemLog::info('social', 'fb.upload.direct.response', "Facebook: resposta upload direto", [
+            'post_id' => $post->id,
+            'status'  => $response->status(),
+            'body'    => $response->json(),
+        ]);
+
+        return $response->successful() ? $response : null;
     }
 
     // ===== Helpers =====

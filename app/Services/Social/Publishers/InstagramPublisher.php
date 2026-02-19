@@ -13,6 +13,10 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Publisher para Instagram via Meta Graph API.
+ *
+ * Inclui fallback automático: se a URL direta da mídia for rejeitada
+ * pelo Instagram (error 2207052), faz upload via Facebook Page CDN
+ * e retenta com a URL do CDN do Meta.
  */
 class InstagramPublisher extends AbstractPublisher
 {
@@ -20,6 +24,12 @@ class InstagramPublisher extends AbstractPublisher
     private const BASE_URL               = 'https://graph.facebook.com/' . self::API_VERSION;
     private const VIDEO_POLL_MAX_SECONDS = 90;
     private const VIDEO_POLL_INTERVAL    = 5;
+    private const MEDIA_FETCH_ERROR      = 2207052;
+
+    /** IDs de fotos temporárias no Facebook para limpeza pós-publicação */
+    private array $tempFbPhotoIds = [];
+    private ?string $cachedPageId = null;
+    private ?string $cachedPageToken = null;
 
     protected function platformName(): string
     {
@@ -64,11 +74,15 @@ class InstagramPublisher extends AbstractPublisher
             ])->toArray(),
         ]);
 
-        if ($mediaItems->count() === 1) {
-            return $this->publishSingle($post, $igUserId, $token, $caption, $mediaItems->first());
-        }
+        try {
+            if ($mediaItems->count() === 1) {
+                return $this->publishSingle($post, $igUserId, $token, $caption, $mediaItems->first());
+            }
 
-        return $this->publishCarousel($post, $igUserId, $token, $caption, $mediaItems);
+            return $this->publishCarousel($post, $igUserId, $token, $caption, $mediaItems);
+        } finally {
+            $this->cleanupTempPhotos($token);
+        }
     }
 
     // ===== Mídia única =====
@@ -78,19 +92,21 @@ class InstagramPublisher extends AbstractPublisher
         $isVideo = $media->type === 'video';
         $isReel  = $post->type?->value === 'reel';
 
+        $resolvedUrl = $this->resolveMediaUrl($post, $media, $token, $isVideo || $isReel);
+
         $params = ['caption' => $caption, 'access_token' => $token];
 
         if ($isVideo || $isReel) {
             $params['media_type'] = 'REELS';
-            $params['video_url']  = $this->mediaUrl($media);
+            $params['video_url']  = $resolvedUrl;
         } else {
-            $params['image_url'] = $this->mediaUrl($media);
+            $params['image_url'] = $resolvedUrl;
         }
 
         SystemLog::info('social', 'ig.container.create', "Instagram: criando container", [
             'post_id'    => $post->id,
             'media_type' => $params['media_type'] ?? 'IMAGE',
-            'url'        => $params['image_url'] ?? $params['video_url'] ?? null,
+            'url'        => $resolvedUrl,
         ]);
 
         $containerResponse = Http::post(self::BASE_URL . "/{$igUserId}/media", $params);
@@ -100,6 +116,11 @@ class InstagramPublisher extends AbstractPublisher
             'status'  => $containerResponse->status(),
             'body'    => $containerResponse->json(),
         ]);
+
+        // Fallback: se a URL direta falhou, tentar via Meta CDN
+        if (!$containerResponse->successful() && !$isVideo && !$isReel) {
+            $containerResponse = $this->retryWithCdn($post, $media, $igUserId, $token, $params, $containerResponse);
+        }
 
         if (!$containerResponse->successful()) {
             return $this->fail($post, 'Erro ao criar container: ' . $this->apiError($containerResponse), $containerResponse->json());
@@ -124,20 +145,23 @@ class InstagramPublisher extends AbstractPublisher
         $childIds = [];
 
         foreach ($mediaItems as $index => $media) {
+            $isVideo = $media->type === 'video';
+            $resolvedUrl = $this->resolveMediaUrl($post, $media, $token, $isVideo);
+
             $params = ['is_carousel_item' => 'true', 'access_token' => $token];
 
-            if ($media->type === 'video') {
+            if ($isVideo) {
                 $params['media_type'] = 'VIDEO';
-                $params['video_url']  = $this->mediaUrl($media);
+                $params['video_url']  = $resolvedUrl;
             } else {
-                $params['image_url'] = $this->mediaUrl($media);
+                $params['image_url'] = $resolvedUrl;
             }
 
             SystemLog::info('social', 'ig.carousel.item', "Instagram: criando item carrossel #{$index}", [
                 'post_id'    => $post->id,
                 'media_id'   => $media->id,
                 'media_type' => $params['media_type'] ?? 'IMAGE',
-                'url'        => $params['image_url'] ?? $params['video_url'] ?? null,
+                'url'        => $resolvedUrl,
             ]);
 
             $response = Http::post(self::BASE_URL . "/{$igUserId}/media", $params);
@@ -147,6 +171,11 @@ class InstagramPublisher extends AbstractPublisher
                 'status'  => $response->status(),
                 'body'    => $response->json(),
             ]);
+
+            // Fallback para imagens do carrossel
+            if (!$response->successful() && !$isVideo) {
+                $response = $this->retryWithCdn($post, $media, $igUserId, $token, $params, $response, true);
+            }
 
             if (!$response->successful()) {
                 return $this->fail($post, "Erro ao criar item #{$index} do carrossel: " . $this->apiError($response), $response->json());
@@ -209,6 +238,239 @@ class InstagramPublisher extends AbstractPublisher
         ]);
 
         return PublishResult::ok($postId, $postUrl);
+    }
+
+    // ===== Meta CDN Fallback =====
+
+    /**
+     * Resolve a URL da mídia: tenta a URL direta primeiro.
+     * Se já sabemos que o CDN é necessário (por falha anterior na mesma sessão),
+     * já resolve via CDN diretamente.
+     */
+    private function resolveMediaUrl(Post $post, PostMedia $media, string $token, bool $isVideo): string
+    {
+        $directUrl = $this->mediaUrl($media);
+
+        // Vídeos não suportam o workaround de CDN (apenas imagens)
+        if ($isVideo) {
+            return $directUrl;
+        }
+
+        // Se já fizemos upload CDN nesta sessão, pré-resolver via CDN
+        if (!empty($this->tempFbPhotoIds)) {
+            $cdnUrl = $this->uploadToMetaCdn($post, $media, $token);
+            if ($cdnUrl) {
+                SystemLog::info('social', 'ig.cdn.preemptive', "Instagram: usando CDN preventivamente", [
+                    'post_id'    => $post->id,
+                    'media_id'   => $media->id,
+                    'cdn_url'    => $cdnUrl,
+                    'direct_url' => $directUrl,
+                ]);
+                return $cdnUrl;
+            }
+        }
+
+        return $directUrl;
+    }
+
+    /**
+     * Retenta criação de container usando URL do Meta CDN.
+     */
+    private function retryWithCdn(Post $post, PostMedia $media, string $igUserId, string $token, array $params, $originalResponse, bool $isCarouselItem = false): mixed
+    {
+        $errorSubcode = $originalResponse->json('error.error_subcode');
+
+        if ($errorSubcode != self::MEDIA_FETCH_ERROR) {
+            return $originalResponse;
+        }
+
+        SystemLog::warning('social', 'ig.cdn.fallback', "Instagram: URL rejeitada (2207052), tentando via Meta CDN", [
+            'post_id'    => $post->id,
+            'media_id'   => $media->id,
+            'direct_url' => $params['image_url'] ?? null,
+            'error'      => $originalResponse->json('error.error_user_msg'),
+        ]);
+
+        $cdnUrl = $this->uploadToMetaCdn($post, $media, $token);
+
+        if (!$cdnUrl) {
+            SystemLog::error('social', 'ig.cdn.failed', "Instagram: fallback CDN também falhou", [
+                'post_id'  => $post->id,
+                'media_id' => $media->id,
+            ]);
+            return $originalResponse;
+        }
+
+        $params['image_url'] = $cdnUrl;
+
+        $retryResponse = Http::post(self::BASE_URL . "/{$igUserId}/media", $params);
+
+        SystemLog::info('social', 'ig.cdn.retry_response', "Instagram: resposta retry com CDN", [
+            'post_id'  => $post->id,
+            'cdn_url'  => $cdnUrl,
+            'status'   => $retryResponse->status(),
+            'body'     => $retryResponse->json(),
+        ]);
+
+        return $retryResponse;
+    }
+
+    /**
+     * Faz upload de uma imagem para uma Facebook Page (não publicada)
+     * e retorna a URL pública do CDN do Meta.
+     */
+    private function uploadToMetaCdn(Post $post, PostMedia $media, string $token): ?string
+    {
+        $localPath = storage_path('app/public/' . $media->file_path);
+
+        if (!file_exists($localPath)) {
+            SystemLog::warning('social', 'ig.cdn.file_missing', "Arquivo não encontrado no disco", [
+                'post_id'    => $post->id,
+                'file_path'  => $media->file_path,
+                'local_path' => $localPath,
+            ]);
+            return null;
+        }
+
+        try {
+            // Obter Page ID + token (com cache para múltiplas mídias)
+            if (!$this->cachedPageId) {
+                $this->discoverFacebookPage($token);
+            }
+
+            if (!$this->cachedPageId) {
+                SystemLog::warning('social', 'ig.cdn.no_page', "Nenhuma Facebook Page encontrada para upload CDN", [
+                    'post_id' => $post->id,
+                ]);
+                return null;
+            }
+
+            $pageToken = $this->cachedPageToken ?? $token;
+
+            // Upload da imagem como foto não publicada
+            $mimeType = mime_content_type($localPath) ?: 'image/jpeg';
+
+            $uploadResp = Http::attach(
+                'source',
+                file_get_contents($localPath),
+                basename($localPath),
+                ['Content-Type' => $mimeType]
+            )->post(self::BASE_URL . "/{$this->cachedPageId}/photos", [
+                'published'    => 'false',
+                'temporary'    => 'true',
+                'access_token' => $pageToken,
+            ]);
+
+            if (!$uploadResp->successful()) {
+                SystemLog::warning('social', 'ig.cdn.upload_fail', "Falha no upload para Facebook CDN", [
+                    'post_id'  => $post->id,
+                    'page_id'  => $this->cachedPageId,
+                    'status'   => $uploadResp->status(),
+                    'response' => $uploadResp->json(),
+                ]);
+                return null;
+            }
+
+            $photoId = $uploadResp->json('id');
+            $this->tempFbPhotoIds[] = ['id' => $photoId, 'token' => $pageToken];
+
+            // Obter URL do CDN
+            $photoResp = Http::get(self::BASE_URL . "/{$photoId}", [
+                'fields'       => 'images',
+                'access_token' => $pageToken,
+            ]);
+
+            if (!$photoResp->successful() || empty($photoResp->json('images'))) {
+                SystemLog::warning('social', 'ig.cdn.images_fail', "Falha ao obter URL das imagens do CDN", [
+                    'post_id'  => $post->id,
+                    'photo_id' => $photoId,
+                    'status'   => $photoResp->status(),
+                    'response' => $photoResp->json(),
+                ]);
+                return null;
+            }
+
+            $images = $photoResp->json('images');
+            usort($images, fn($a, $b) => ($b['width'] ?? 0) - ($a['width'] ?? 0));
+            $cdnUrl = $images[0]['source'] ?? null;
+
+            SystemLog::info('social', 'ig.cdn.success', "Meta CDN URL obtida com sucesso", [
+                'post_id'  => $post->id,
+                'media_id' => $media->id,
+                'photo_id' => $photoId,
+                'cdn_url'  => $cdnUrl,
+                'sizes'    => count($images),
+                'largest'  => ['w' => $images[0]['width'] ?? 0, 'h' => $images[0]['height'] ?? 0],
+            ]);
+
+            return $cdnUrl;
+
+        } catch (\Throwable $e) {
+            SystemLog::error('social', 'ig.cdn.exception', "Exceção no upload CDN: {$e->getMessage()}", [
+                'post_id'   => $post->id,
+                'media_id'  => $media->id,
+                'exception' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Descobre a primeira Facebook Page vinculada ao token.
+     */
+    private function discoverFacebookPage(string $token): void
+    {
+        try {
+            $resp = Http::get(self::BASE_URL . '/me/accounts', [
+                'access_token' => $token,
+                'fields'       => 'id,name,access_token',
+                'limit'        => 5,
+            ]);
+
+            if (!$resp->successful() || empty($resp->json('data'))) {
+                SystemLog::warning('social', 'ig.cdn.pages_empty', "Nenhuma Page retornada por /me/accounts", [
+                    'status'   => $resp->status(),
+                    'response' => $resp->json(),
+                ]);
+                return;
+            }
+
+            $page = $resp->json('data.0');
+            $this->cachedPageId    = $page['id'];
+            $this->cachedPageToken = $page['access_token'] ?? null;
+
+            SystemLog::info('social', 'ig.cdn.page_found', "Facebook Page encontrada para CDN", [
+                'page_id'   => $this->cachedPageId,
+                'page_name' => $page['name'] ?? '?',
+            ]);
+
+        } catch (\Throwable $e) {
+            SystemLog::error('social', 'ig.cdn.pages_error', "Erro ao buscar Pages: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Remove fotos temporárias do Facebook após a publicação.
+     */
+    private function cleanupTempPhotos(string $fallbackToken): void
+    {
+        foreach ($this->tempFbPhotoIds as $item) {
+            try {
+                Http::delete(self::BASE_URL . "/{$item['id']}", [
+                    'access_token' => $item['token'] ?? $fallbackToken,
+                ]);
+            } catch (\Throwable) {
+                // Silenciar — fotos temporárias expiram automaticamente
+            }
+        }
+
+        if (!empty($this->tempFbPhotoIds)) {
+            SystemLog::info('social', 'ig.cdn.cleanup', "Limpeza de fotos temporárias do CDN", [
+                'count' => count($this->tempFbPhotoIds),
+            ]);
+        }
+
+        $this->tempFbPhotoIds = [];
     }
 
     // ===== Aguardar processamento de vídeo =====
