@@ -35,6 +35,7 @@ const form = useForm({
     exclude_lists: [],
     email_template_id: null,
     html_content: '',
+    status: 'draft',
 });
 
 // AI generation state
@@ -289,7 +290,13 @@ async function generateSubjectWithAI() {
 
 const categoryLabels = { marketing: 'Marketing', newsletter: 'Newsletter', promotional: 'Promoção', welcome: 'Boas-vindas', transactional: 'Transacional' };
 
+function saveDraft() {
+    form.status = 'draft';
+    form.post(route('email.campaigns.store'));
+}
+
 function submit() {
+    form.status = 'scheduled';
     form.post(route('email.campaigns.store'));
 }
 </script>
@@ -693,9 +700,18 @@ function submit() {
                     </div>
                 </div>
 
-                <button type="submit" :disabled="form.processing || !form.html_content" class="w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 transition">
-                    {{ form.processing ? 'Criando...' : 'Criar Campanha' }}
-                </button>
+                <div class="flex gap-3">
+                    <button type="button" @click="saveDraft" :disabled="form.processing || !form.name"
+                        class="flex-1 rounded-xl border border-gray-600 py-3 text-sm font-semibold text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-50 transition flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+                        </svg>
+                        {{ form.processing && form.status === 'draft' ? 'Salvando...' : 'Salvar Rascunho' }}
+                    </button>
+                    <button type="submit" :disabled="form.processing || !form.html_content" class="flex-1 rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 transition">
+                        {{ form.processing && form.status === 'scheduled' ? 'Criando...' : 'Criar Campanha' }}
+                    </button>
+                </div>
             </div>
 
             <!-- Navigation -->
@@ -704,10 +720,19 @@ function submit() {
                     Anterior
                 </button>
                 <span v-else></span>
-                <button v-if="currentStep < totalSteps" type="button" @click="nextStep" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 transition">
-                    Próximo
-                </button>
-                <span v-else></span>
+                <div class="flex items-center gap-3">
+                    <!-- Salvar rascunho disponível em qualquer etapa -->
+                    <button v-if="form.name" type="button" @click="saveDraft" :disabled="form.processing"
+                        class="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-400 hover:bg-gray-800 hover:text-white disabled:opacity-50 transition flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/>
+                        </svg>
+                        Salvar Rascunho
+                    </button>
+                    <button v-if="currentStep < totalSteps" type="button" @click="nextStep" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 transition">
+                        Próximo
+                    </button>
+                </div>
             </div>
         </form>
 

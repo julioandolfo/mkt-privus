@@ -77,42 +77,46 @@ class EmailCampaignController extends Controller
 
     public function store(Request $request)
     {
+        $isDraft = $request->input('status') === 'draft';
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'subject' => 'required|string|max:255',
+            'subject' => 'nullable|string|max:255',
             'preview_text' => 'nullable|string|max:255',
             'from_name' => 'nullable|string|max:255',
             'from_email' => 'nullable|email',
             'reply_to' => 'nullable|email',
-            'email_provider_id' => 'required|exists:email_providers,id',
+            'email_provider_id' => ($isDraft ? 'nullable' : 'required') . '|exists:email_providers,id',
             'email_template_id' => 'nullable|exists:email_templates,id',
             'html_content' => 'nullable|string',
             'mjml_content' => 'nullable|string',
             'json_content' => 'nullable|array',
             'type' => 'nullable|in:regular,ab_test',
-            'lists' => 'required|array|min:1',
+            'lists' => $isDraft ? 'nullable|array' : 'required|array|min:1',
             'lists.*' => 'exists:email_lists,id',
             'exclude_lists' => 'nullable|array',
             'exclude_lists.*' => 'exists:email_lists,id',
             'settings' => 'nullable|array',
             'tags' => 'nullable|array',
+            'status' => 'nullable|in:draft,scheduled',
         ]);
 
         $campaign = EmailCampaign::create([
             'brand_id' => session('current_brand_id'),
             'user_id' => Auth::id(),
-            'email_provider_id' => $validated['email_provider_id'],
+            'email_provider_id' => $validated['email_provider_id'] ?? null,
             'email_template_id' => $validated['email_template_id'] ?? null,
             'name' => $validated['name'],
-            'subject' => $validated['subject'],
+            'subject' => $validated['subject'] ?? '',
             'preview_text' => $validated['preview_text'] ?? null,
-            'from_name' => $validated['from_name'],
-            'from_email' => $validated['from_email'],
+            'from_name' => $validated['from_name'] ?? null,
+            'from_email' => $validated['from_email'] ?? null,
             'reply_to' => $validated['reply_to'] ?? null,
             'html_content' => $validated['html_content'] ?? null,
             'mjml_content' => $validated['mjml_content'] ?? null,
             'json_content' => $validated['json_content'] ?? null,
             'type' => $validated['type'] ?? 'regular',
+            'status' => $validated['status'] ?? 'draft',
             'tags' => $validated['tags'] ?? null,
             'settings' => array_merge([
                 'track_opens' => true,
@@ -129,11 +133,15 @@ class EmailCampaignController extends Controller
             $campaign->lists()->attach($listId, ['type' => 'exclude']);
         }
 
-        // Calcular total
-        $this->campaignService->prepareCampaign($campaign);
+        // Calcular total (apenas se não for rascunho sem listas)
+        if (!empty($validated['lists'])) {
+            $this->campaignService->prepareCampaign($campaign);
+        }
+
+        $message = $isDraft ? 'Rascunho salvo com sucesso!' : 'Campanha criada com sucesso!';
 
         return redirect()->route('email.campaigns.show', $campaign)
-            ->with('success', 'Campanha criada com sucesso!');
+            ->with('success', $message);
     }
 
     public function show(EmailCampaign $campaign)
