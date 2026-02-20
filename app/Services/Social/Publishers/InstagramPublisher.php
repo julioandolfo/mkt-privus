@@ -128,11 +128,10 @@ class InstagramPublisher extends AbstractPublisher
 
         $creationId = $containerResponse->json('id');
 
-        if ($isVideo || $isReel) {
-            $waitResult = $this->waitForVideoProcessing($post, $creationId, $token);
-            if ($waitResult !== null) {
-                return $waitResult;
-            }
+        // Aguardar container ficar pronto (imagens e vídeos)
+        $waitResult = $this->waitForContainerReady($post, $creationId, $token, $isVideo || $isReel);
+        if ($waitResult !== null) {
+            return $waitResult;
         }
 
         return $this->publishContainer($post, $igUserId, $token, $creationId);
@@ -181,7 +180,15 @@ class InstagramPublisher extends AbstractPublisher
                 return $this->fail($post, "Erro ao criar item #{$index} do carrossel: " . $this->apiError($response), $response->json());
             }
 
-            $childIds[] = $response->json('id');
+            $childId = $response->json('id');
+
+            // Aguardar cada item ficar pronto antes de criar o carrossel
+            $waitResult = $this->waitForContainerReady($post, $childId, $token, $isVideo);
+            if ($waitResult !== null) {
+                return $waitResult;
+            }
+
+            $childIds[] = $childId;
         }
 
         $carouselResponse = Http::post(self::BASE_URL . "/{$igUserId}/media", [
@@ -201,7 +208,15 @@ class InstagramPublisher extends AbstractPublisher
             return $this->fail($post, 'Erro ao criar carrossel: ' . $this->apiError($carouselResponse), $carouselResponse->json());
         }
 
-        return $this->publishContainer($post, $igUserId, $token, $carouselResponse->json('id'));
+        $carouselId = $carouselResponse->json('id');
+
+        // Aguardar container do carrossel ficar pronto
+        $waitResult = $this->waitForContainerReady($post, $carouselId, $token, false);
+        if ($waitResult !== null) {
+            return $waitResult;
+        }
+
+        return $this->publishContainer($post, $igUserId, $token, $carouselId);
     }
 
     // ===== Publicar container =====
@@ -213,22 +228,49 @@ class InstagramPublisher extends AbstractPublisher
             'creation_id' => $creationId,
         ]);
 
-        $response = Http::post(self::BASE_URL . "/{$igUserId}/media_publish", [
-            'creation_id'  => $creationId,
-            'access_token' => $token,
-        ]);
+        $maxRetries   = 5;
+        $retryDelay   = 3;
+        $lastResponse = null;
 
-        SystemLog::info('social', 'ig.publish.response', "Instagram: resposta publicação final", [
-            'post_id' => $post->id,
-            'status'  => $response->status(),
-            'body'    => $response->json(),
-        ]);
+        for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
+            $response = Http::post(self::BASE_URL . "/{$igUserId}/media_publish", [
+                'creation_id'  => $creationId,
+                'access_token' => $token,
+            ]);
 
-        if (!$response->successful()) {
-            return $this->fail($post, 'Erro ao publicar no Instagram: ' . $this->apiError($response), $response->json());
+            $lastResponse = $response;
+
+            SystemLog::info('social', 'ig.publish.response', "Instagram: resposta publicação (tentativa {$attempt}/{$maxRetries})", [
+                'post_id' => $post->id,
+                'attempt' => $attempt,
+                'status'  => $response->status(),
+                'body'    => $response->json(),
+            ]);
+
+            if ($response->successful()) {
+                break;
+            }
+
+            // "Media ID is not available" (2207027) — container ainda processando
+            $subcode = $response->json('error.error_subcode');
+            if ($subcode == 2207027 && $attempt < $maxRetries) {
+                SystemLog::info('social', 'ig.publish.wait', "Instagram: container não pronto, aguardando {$retryDelay}s (tentativa {$attempt})", [
+                    'post_id'     => $post->id,
+                    'creation_id' => $creationId,
+                ]);
+                sleep($retryDelay);
+                $retryDelay = min($retryDelay * 2, 15);
+                continue;
+            }
+
+            break;
         }
 
-        $postId  = $response->json('id');
+        if (!$lastResponse->successful()) {
+            return $this->fail($post, 'Erro ao publicar no Instagram: ' . $this->apiError($lastResponse), $lastResponse->json());
+        }
+
+        $postId  = $lastResponse->json('id');
         $postUrl = "https://www.instagram.com/p/{$postId}/";
 
         SystemLog::info('social', 'ig.publish.success', "Instagram: post #{$post->id} publicado com sucesso", [
@@ -498,41 +540,62 @@ class InstagramPublisher extends AbstractPublisher
         $this->tempFbPhotoIds = [];
     }
 
-    // ===== Aguardar processamento de vídeo =====
+    // ===== Aguardar container ficar pronto =====
 
-    private function waitForVideoProcessing(Post $post, string $creationId, string $token): ?PublishResult
+    /**
+     * Polling do status do container antes de publicar.
+     * Imagens vindas do CDN podem demorar alguns segundos para processar.
+     * Vídeos podem demorar até 90 segundos.
+     *
+     * @return PublishResult|null  null = pronto para publicar
+     */
+    private function waitForContainerReady(Post $post, string $creationId, string $token, bool $isVideo): ?PublishResult
     {
-        $waited = 0;
+        $maxWait  = $isVideo ? self::VIDEO_POLL_MAX_SECONDS : 30;
+        $interval = $isVideo ? self::VIDEO_POLL_INTERVAL : 3;
+        $waited   = 0;
 
-        while ($waited < self::VIDEO_POLL_MAX_SECONDS) {
-            sleep(self::VIDEO_POLL_INTERVAL);
-            $waited += self::VIDEO_POLL_INTERVAL;
+        // Para imagens, dar um momento inicial para o container ser registrado
+        if (!$isVideo) {
+            sleep(2);
+            $waited += 2;
+        }
 
+        while ($waited < $maxWait) {
             $pollResponse = Http::get(self::BASE_URL . "/{$creationId}", [
                 'fields'       => 'status_code,status',
                 'access_token' => $token,
             ]);
 
-            $status = $pollResponse->json('status_code');
+            $statusCode = $pollResponse->json('status_code');
 
-            SystemLog::info('social', 'ig.video.poll', "Instagram: aguardando vídeo", [
+            SystemLog::info('social', 'ig.container.poll', "Instagram: aguardando container ({$waited}s)", [
                 'post_id'     => $post->id,
                 'creation_id' => $creationId,
                 'waited_s'    => $waited,
-                'status_code' => $status,
-                'response'    => $pollResponse->json(),
+                'status_code' => $statusCode,
+                'is_video'    => $isVideo,
             ]);
 
-            if ($status === 'FINISHED') {
+            if ($statusCode === 'FINISHED') {
                 return null;
             }
 
-            if ($status === 'ERROR') {
-                return $this->fail($post, 'Erro ao processar vídeo no Instagram.', $pollResponse->json());
+            if ($statusCode === 'ERROR') {
+                $errDetail = $pollResponse->json('status') ?? 'Unknown processing error';
+                return $this->fail($post, "Erro ao processar mídia no Instagram: {$errDetail}", $pollResponse->json());
             }
+
+            if ($statusCode === 'EXPIRED') {
+                return $this->fail($post, 'Container expirou antes de ser publicado.');
+            }
+
+            // IN_PROGRESS ou status desconhecido — continuar aguardando
+            sleep($interval);
+            $waited += $interval;
         }
 
-        return $this->fail($post, "Timeout ({$waited}s) aguardando processamento de vídeo no Instagram.");
+        return $this->fail($post, "Timeout ({$waited}s) aguardando processamento de mídia no Instagram.");
     }
 
     // ===== Helpers =====
