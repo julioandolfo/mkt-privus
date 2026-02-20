@@ -97,18 +97,29 @@ class AnalyticsSyncService
         for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
             $dateStr = $date->format('Y-m-d');
 
+            // Helper: deduplica data points pelo par (connection_id, metric_key), mantendo o mais recente.
+            // Isso previne duplicatas causadas por corrida de sincronizações paralelas
+            // ou pelo comportamento do MySQL de permitir múltiplas linhas NULL-NULL no índice único.
+            $dedup = fn($collection) => $collection
+                ->sortByDesc('updated_at')
+                ->unique(fn($dp) => $dp->analytics_connection_id . '|' . $dp->metric_key);
+
             $gaData = AnalyticsDataPoint::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('platform', 'google_analytics')
                 ->where('date', $dateStr)
                 ->whereNull('dimension_key')
+                ->orderByDesc('updated_at')
                 ->get()
+                ->pipe($dedup)
                 ->keyBy('metric_key');
 
             $adData = AnalyticsDataPoint::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->whereIn('platform', ['meta_ads', 'google_ads'])
                 ->where('date', $dateStr)
                 ->whereNull('dimension_key')
-                ->get();
+                ->orderByDesc('updated_at')
+                ->get()
+                ->pipe($dedup);
 
             // Dados de custo do Google Ads via GA4 (quando Ads está vinculado ao GA4)
             $ga4AdData = AnalyticsDataPoint::when($brandId, fn($q) => $q->where('brand_id', $brandId))
@@ -116,21 +127,27 @@ class AnalyticsSyncService
                 ->where('date', $dateStr)
                 ->whereNull('dimension_key')
                 ->whereIn('metric_key', ['ga4_ad_cost', 'ga4_ad_clicks', 'ga4_ad_impressions', 'ga4_ad_conversions', 'ga4_ad_roas', 'ga4_ad_cpc', 'ga4_ad_cost_per_conversion'])
+                ->orderByDesc('updated_at')
                 ->get()
+                ->pipe($dedup)
                 ->keyBy('metric_key');
 
             $scData = AnalyticsDataPoint::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('platform', 'google_search_console')
                 ->where('date', $dateStr)
                 ->whereNull('dimension_key')
+                ->orderByDesc('updated_at')
                 ->get()
+                ->pipe($dedup)
                 ->keyBy('metric_key');
 
             $wcData = AnalyticsDataPoint::when($brandId, fn($q) => $q->where('brand_id', $brandId))
                 ->where('platform', 'woocommerce')
                 ->where('date', $dateStr)
                 ->whereNull('dimension_key')
+                ->orderByDesc('updated_at')
                 ->get()
+                ->pipe($dedup)
                 ->keyBy('metric_key');
 
             // Agregar dados de ads diretos (soma de API Google Ads + Meta Ads)
