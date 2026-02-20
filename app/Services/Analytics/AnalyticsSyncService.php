@@ -83,6 +83,18 @@ class AnalyticsSyncService
      */
     public function rebuildDailySummaries(?int $brandId, string $startDate, string $endDate): void
     {
+        // Proteção: não recalcular summaries de brands sem nenhuma conexão ativa.
+        // Evita reescrever dados órfãos de bugs anteriores.
+        if ($brandId) {
+            $hasConnections = AnalyticsConnection::where('brand_id', $brandId)
+                ->where('is_active', true)
+                ->exists();
+            if (!$hasConnections) {
+                Log::info("[AnalyticsSyncService] rebuildDailySummaries ignorado para brand_id={$brandId}: sem conexões ativas.");
+                return;
+            }
+        }
+
         $start = Carbon::parse($startDate);
         $end = Carbon::parse($endDate);
 
