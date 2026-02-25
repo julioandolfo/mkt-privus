@@ -96,11 +96,16 @@ class InstagramPublisher extends AbstractPublisher
 
         $resolvedUrl = $this->resolveMediaUrl($post, $media, $token, $isVideo || $isReel);
 
-        // Validar acessibilidade da URL de vídeo antes de criar o container
+        // Validar URL e specs do vídeo antes de criar o container
         if ($isVideo || $isReel) {
             $urlCheck = $this->validateVideoUrl($post, $resolvedUrl);
             if ($urlCheck !== null) {
                 return $urlCheck;
+            }
+
+            $specsCheck = $this->validateVideoSpecs($post, $media);
+            if ($specsCheck !== null) {
+                return $specsCheck;
             }
         }
 
@@ -644,6 +649,114 @@ class InstagramPublisher extends AbstractPublisher
         return $response->json('error.message')
             ?? $response->json('error.error_user_msg')
             ?? substr($response->body(), 0, 300);
+    }
+
+    /**
+     * Valida specs do vídeo com ffprobe antes de enviar ao Instagram.
+     * Reels exigem: H.264 + AAC, proporção 9:16, duração 3-180s, mínimo 720px.
+     *
+     * @return PublishResult|null  null = specs OK
+     */
+    private function validateVideoSpecs(Post $post, PostMedia $media): ?PublishResult
+    {
+        $localPath = storage_path('app/public/' . $media->file_path);
+
+        if (!file_exists($localPath)) {
+            // Arquivo não está local (ex: produção com storage remoto) — pular validação
+            return null;
+        }
+
+        // Verificar se ffprobe está disponível
+        $ffprobeCheck = @shell_exec('ffprobe -version 2>&1');
+        if (!$ffprobeCheck || !str_contains($ffprobeCheck, 'ffprobe version')) {
+            return null; // ffprobe não disponível — pular validação
+        }
+
+        $cmd    = sprintf('ffprobe -v quiet -print_format json -show_streams -show_format %s 2>&1', escapeshellarg($localPath));
+        $output = shell_exec($cmd);
+
+        if (!$output) {
+            return null;
+        }
+
+        $info    = json_decode($output, true);
+        $streams = $info['streams'] ?? [];
+        $format  = $info['format'] ?? [];
+
+        $videoStream = collect($streams)->firstWhere('codec_type', 'video');
+        $audioStream = collect($streams)->firstWhere('codec_type', 'audio');
+
+        $errors = [];
+
+        // Checar codec de vídeo (deve ser h264)
+        $videoCodec = strtolower($videoStream['codec_name'] ?? '');
+        if ($videoCodec && !in_array($videoCodec, ['h264', 'avc'])) {
+            $errors[] = "codec de vídeo '{$videoCodec}' não suportado — use H.264 (x264)";
+        }
+
+        // Checar codec de áudio (deve ser aac)
+        $audioCodec = strtolower($audioStream['codec_name'] ?? '');
+        if ($audioStream && $audioCodec && $audioCodec !== 'aac') {
+            $errors[] = "codec de áudio '{$audioCodec}' não suportado — use AAC";
+        }
+
+        // Checar duração (3-180 segundos)
+        $duration = (float) ($format['duration'] ?? $videoStream['duration'] ?? 0);
+        if ($duration > 0) {
+            if ($duration < 3) {
+                $errors[] = "duração {$duration}s muito curta — mínimo 3 segundos";
+            } elseif ($duration > 180) {
+                $errors[] = "duração {$duration}s muito longa — máximo 180 segundos";
+            }
+        }
+
+        // Checar proporção (deve ser próximo de 9:16 = 0.5625 para Reels)
+        $width  = (int) ($videoStream['width'] ?? 0);
+        $height = (int) ($videoStream['height'] ?? 0);
+
+        if ($width > 0 && $height > 0) {
+            // Resolução mínima: 720px no lado menor
+            $minDimension = min($width, $height);
+            if ($minDimension < 500) {
+                $errors[] = "resolução {$width}x{$height} muito baixa — mínimo 500px no menor lado";
+            }
+
+            // Proporção: aceitar entre 4:5 (0.8) e 9:16 (1.778) em modo portrait
+            $ratio = $height > 0 ? $width / $height : 0;
+            // Para Reels: idealmente portrait (width < height), ratio ~0.5625
+            // Aceitar também landscape e square com aviso
+            if ($ratio > 1.01) {
+                $errors[] = sprintf(
+                    "proporção %dx%d (landscape %.2f:1) — Reels preferem portrait 9:16 (1080×1920). O vídeo pode ser publicado mas será cortado pelo Instagram",
+                    $width,
+                    $height,
+                    $ratio
+                );
+            }
+        }
+
+        SystemLog::info('social', 'ig.video.specs', "Instagram: specs do vídeo analisadas", [
+            'post_id'     => $post->id,
+            'media_id'    => $media->id,
+            'video_codec' => $videoCodec ?: 'unknown',
+            'audio_codec' => $audioCodec ?: 'none',
+            'duration_s'  => $duration,
+            'width'       => $width,
+            'height'      => $height,
+            'errors'      => $errors,
+        ]);
+
+        // Erros bloqueantes: codec errado ou duração fora do range
+        $blocking = array_filter($errors, fn($e) => !str_contains($e, 'proporção') && !str_contains($e, 'landscape'));
+
+        if (!empty($blocking)) {
+            $message = "Vídeo incompatível com Instagram Reels: " . implode('; ', $blocking)
+                . ". Use MP4 com H.264 + AAC, duração entre 3-180s e proporção 9:16.";
+            return $this->fail($post, $message);
+        }
+
+        // Avisos não-bloqueantes (proporção landscape): logar mas continuar
+        return null;
     }
 
     /**

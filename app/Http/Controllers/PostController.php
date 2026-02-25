@@ -968,6 +968,117 @@ class PostController extends Controller
         ]);
     }
 
+    /**
+     * Analisa specs do vídeo com ffprobe para diagnóstico de falhas no Instagram.
+     */
+    public function analyzeMedia(Request $request, Post $post): JsonResponse
+    {
+        $this->authorizePost($request, $post);
+
+        $results = [];
+
+        foreach ($post->media as $media) {
+            $localPath = storage_path('app/public/' . $media->file_path);
+            $url       = $media->file_path ? Storage::url($media->file_path) : null;
+
+            $item = [
+                'media_id'   => $media->id,
+                'type'       => $media->type,
+                'mime_type'  => $media->mime_type,
+                'file_size'  => $media->file_size,
+                'width'      => $media->width,
+                'height'     => $media->height,
+                'url'        => $url,
+                'file_exists' => file_exists($localPath),
+            ];
+
+            if ($media->type === 'video' && file_exists($localPath)) {
+                $ffprobeCheck = @shell_exec('ffprobe -version 2>&1');
+                $hasFfprobe   = $ffprobeCheck && str_contains($ffprobeCheck, 'ffprobe version');
+
+                if ($hasFfprobe) {
+                    $cmd    = sprintf('ffprobe -v quiet -print_format json -show_streams -show_format %s 2>&1', escapeshellarg($localPath));
+                    $output = shell_exec($cmd);
+                    $info   = $output ? json_decode($output, true) : null;
+
+                    if ($info) {
+                        $streams     = $info['streams'] ?? [];
+                        $format      = $info['format'] ?? [];
+                        $videoStream = collect($streams)->firstWhere('codec_type', 'video');
+                        $audioStream = collect($streams)->firstWhere('codec_type', 'audio');
+
+                        $width    = (int) ($videoStream['width'] ?? 0);
+                        $height   = (int) ($videoStream['height'] ?? 0);
+                        $duration = (float) ($format['duration'] ?? $videoStream['duration'] ?? 0);
+
+                        $item['ffprobe'] = [
+                            'video_codec' => $videoStream['codec_name'] ?? 'unknown',
+                            'audio_codec' => $audioStream['codec_name'] ?? 'none',
+                            'width'       => $width,
+                            'height'      => $height,
+                            'duration_s'  => round($duration, 2),
+                            'fps'         => $videoStream['r_frame_rate'] ?? null,
+                            'bitrate_kbps'=> isset($format['bit_rate']) ? round((int) $format['bit_rate'] / 1000) : null,
+                        ];
+
+                        $issues = [];
+
+                        $vc = strtolower($videoStream['codec_name'] ?? '');
+                        if ($vc && !in_array($vc, ['h264', 'avc'])) {
+                            $issues[] = "❌ Codec de vídeo: '{$vc}' — precisa ser H.264";
+                        } else {
+                            $issues[] = "✅ Codec de vídeo: {$vc} (OK)";
+                        }
+
+                        $ac = strtolower($audioStream['codec_name'] ?? '');
+                        if ($audioStream && $ac && $ac !== 'aac') {
+                            $issues[] = "❌ Codec de áudio: '{$ac}' — precisa ser AAC";
+                        } elseif ($ac) {
+                            $issues[] = "✅ Codec de áudio: {$ac} (OK)";
+                        } else {
+                            $issues[] = "⚠️ Sem faixa de áudio";
+                        }
+
+                        if ($duration < 3) {
+                            $issues[] = "❌ Duração: {$duration}s — mínimo 3s para Reels";
+                        } elseif ($duration > 180) {
+                            $issues[] = "❌ Duração: {$duration}s — máximo 180s para Reels";
+                        } else {
+                            $issues[] = "✅ Duração: {$duration}s (OK)";
+                        }
+
+                        if ($width && $height) {
+                            $ratio = $width / $height;
+                            if ($ratio > 1.01) {
+                                $issues[] = sprintf("⚠️ Proporção: %dx%d landscape (%.2f:1) — Reels preferem 9:16 portrait (1080×1920)", $width, $height, $ratio);
+                            } else {
+                                $issues[] = "✅ Proporção: {$width}x{$height} portrait (OK)";
+                            }
+
+                            if (min($width, $height) < 500) {
+                                $issues[] = "❌ Resolução muito baixa — mínimo 500px no menor lado";
+                            }
+                        }
+
+                        $item['instagram_check'] = $issues;
+                    }
+                } else {
+                    $item['ffprobe'] = null;
+                    $item['ffprobe_error'] = 'ffprobe não instalado no servidor';
+                }
+            }
+
+            $results[] = $item;
+        }
+
+        return response()->json([
+            'post_id'     => $post->id,
+            'post_type'   => $post->type?->value,
+            'media_count' => count($results),
+            'media'       => $results,
+        ]);
+    }
+
     // ===== PRIVATE METHODS =====
 
     private function authorizePost(Request $request, Post $post): void
