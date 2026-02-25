@@ -321,12 +321,33 @@ function getPlatformLabel(value: string): string {
                 >
                     <!-- Media Preview -->
                     <div class="relative h-40 bg-gray-800">
-                        <img
-                            v-if="post.media.length && post.media[0].file_path"
-                            :src="post.media[0].file_path"
-                            :alt="post.media[0].alt_text || 'Preview'"
-                            class="w-full h-full object-cover"
-                        />
+                        <template v-if="post.media.length && post.media[0].file_path">
+                            <!-- Vídeo: preload="metadata" carrega o primeiro frame como thumbnail -->
+                            <template v-if="post.media[0].type === 'video'">
+                                <video
+                                    :src="post.media[0].file_path"
+                                    class="w-full h-full object-cover"
+                                    preload="metadata"
+                                    muted
+                                    playsinline
+                                />
+                                <!-- Ícone de play sobre o vídeo -->
+                                <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <div class="w-10 h-10 rounded-full bg-black/50 flex items-center justify-center">
+                                        <svg class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M8 5v14l11-7z"/>
+                                        </svg>
+                                    </div>
+                                </div>
+                            </template>
+                            <!-- Imagem -->
+                            <img
+                                v-else
+                                :src="post.media[0].file_path"
+                                :alt="post.media[0].alt_text || 'Preview'"
+                                class="w-full h-full object-cover"
+                            />
+                        </template>
                         <div v-else class="flex items-center justify-center h-full">
                             <svg class="w-10 h-10 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />

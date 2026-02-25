@@ -22,9 +22,11 @@ class InstagramPublisher extends AbstractPublisher
 {
     private const API_VERSION            = 'v21.0';
     private const BASE_URL               = 'https://graph.facebook.com/' . self::API_VERSION;
-    private const VIDEO_POLL_MAX_SECONDS = 90;
+    private const VIDEO_POLL_MAX_SECONDS = 120;
     private const VIDEO_POLL_INTERVAL    = 5;
-    private const MEDIA_FETCH_ERROR      = 2207052;
+    private const MEDIA_FETCH_ERROR      = 2207052; // URL inacessível pelo Instagram
+    private const MEDIA_TIMEOUT_ERROR    = 2207003; // Timeout ao baixar a mídia
+    private const MEDIA_PROCESS_ERRORS   = [2207082, 2207053]; // Erros durante processamento/upload de vídeo
 
     /** IDs de fotos temporárias no Facebook para limpeza pós-publicação */
     private array $tempFbPhotoIds = [];
@@ -94,11 +96,20 @@ class InstagramPublisher extends AbstractPublisher
 
         $resolvedUrl = $this->resolveMediaUrl($post, $media, $token, $isVideo || $isReel);
 
+        // Validar acessibilidade da URL de vídeo antes de criar o container
+        if ($isVideo || $isReel) {
+            $urlCheck = $this->validateVideoUrl($post, $resolvedUrl);
+            if ($urlCheck !== null) {
+                return $urlCheck;
+            }
+        }
+
         $params = ['caption' => $caption, 'access_token' => $token];
 
         if ($isVideo || $isReel) {
-            $params['media_type'] = 'REELS';
-            $params['video_url']  = $resolvedUrl;
+            $params['media_type']    = 'REELS';
+            $params['video_url']     = $resolvedUrl;
+            $params['share_to_feed'] = 'true';
         } else {
             $params['image_url'] = $resolvedUrl;
         }
@@ -117,8 +128,12 @@ class InstagramPublisher extends AbstractPublisher
             'body'    => $containerResponse->json(),
         ]);
 
-        // Fallback: se a URL direta falhou, tentar via Meta CDN
-        if (!$containerResponse->successful() && !$isVideo && !$isReel) {
+        // Fallback CDN: se a URL direta falhou por inacessibilidade ou timeout
+        $shouldTryCdn = !$isVideo && !$isReel && (
+            !$containerResponse->successful() ||
+            in_array($containerResponse->json('error.error_subcode'), [self::MEDIA_FETCH_ERROR, self::MEDIA_TIMEOUT_ERROR])
+        );
+        if ($shouldTryCdn) {
             $containerResponse = $this->retryWithCdn($post, $media, $igUserId, $token, $params, $containerResponse);
         }
 
@@ -171,8 +186,12 @@ class InstagramPublisher extends AbstractPublisher
                 'body'    => $response->json(),
             ]);
 
-            // Fallback para imagens do carrossel
-            if (!$response->successful() && !$isVideo) {
+            // Fallback CDN para imagens do carrossel (inacessibilidade ou timeout)
+            $shouldTryCdnCarousel = !$isVideo && (
+                !$response->successful() ||
+                in_array($response->json('error.error_subcode'), [self::MEDIA_FETCH_ERROR, self::MEDIA_TIMEOUT_ERROR])
+            );
+            if ($shouldTryCdnCarousel) {
                 $response = $this->retryWithCdn($post, $media, $igUserId, $token, $params, $response, true);
             }
 
@@ -322,11 +341,12 @@ class InstagramPublisher extends AbstractPublisher
     {
         $errorSubcode = $originalResponse->json('error.error_subcode');
 
-        if ($errorSubcode != self::MEDIA_FETCH_ERROR) {
+        $cdnTriggerErrors = [self::MEDIA_FETCH_ERROR, self::MEDIA_TIMEOUT_ERROR];
+        if (!in_array($errorSubcode, $cdnTriggerErrors)) {
             return $originalResponse;
         }
 
-        SystemLog::warning('social', 'ig.cdn.fallback', "Instagram: URL rejeitada (2207052), tentando via Meta CDN", [
+        SystemLog::warning('social', 'ig.cdn.fallback', "Instagram: URL rejeitada ({$errorSubcode}), tentando via Meta CDN", [
             'post_id'    => $post->id,
             'media_id'   => $media->id,
             'direct_url' => $params['image_url'] ?? null,
@@ -582,8 +602,10 @@ class InstagramPublisher extends AbstractPublisher
             }
 
             if ($statusCode === 'ERROR') {
-                $errDetail = $pollResponse->json('status') ?? 'Unknown processing error';
-                return $this->fail($post, "Erro ao processar mídia no Instagram: {$errDetail}", $pollResponse->json());
+                $errDetail  = $pollResponse->json('status') ?? 'Unknown processing error';
+                $extraHint  = $this->getVideoProcessingHint($errDetail, $pollResponse->json());
+                $fullMessage = "Erro ao processar mídia no Instagram: {$errDetail}{$extraHint}";
+                return $this->fail($post, $fullMessage, $pollResponse->json());
             }
 
             if ($statusCode === 'EXPIRED') {
@@ -622,6 +644,80 @@ class InstagramPublisher extends AbstractPublisher
         return $response->json('error.message')
             ?? $response->json('error.error_user_msg')
             ?? substr($response->body(), 0, 300);
+    }
+
+    /**
+     * Valida se a URL do vídeo é acessível publicamente via HTTPS.
+     * O Instagram exige HTTPS e a URL deve ser acessível da internet.
+     *
+     * @return PublishResult|null  null = OK para prosseguir
+     */
+    private function validateVideoUrl(Post $post, string $url): ?PublishResult
+    {
+        $parsed = parse_url($url);
+        $scheme = strtolower($parsed['scheme'] ?? '');
+        $host   = strtolower($parsed['host'] ?? '');
+
+        // Instagram exige HTTPS para vídeos
+        if ($scheme !== 'https') {
+            $message = "O Instagram exige HTTPS para vídeos/Reels. A URL atual usa '{$scheme}'. "
+                . "Configure APP_URL com HTTPS no .env para publicações em produção.";
+
+            SystemLog::error('social', 'ig.video.url_not_https', "Instagram: URL de vídeo não usa HTTPS", [
+                'post_id' => $post->id,
+                'url'     => $url,
+                'scheme'  => $scheme,
+            ]);
+
+            return $this->fail($post, $message);
+        }
+
+        // Detectar domínios locais/privados inacessíveis pelo Instagram
+        $localPatterns = ['localhost', '127.0.0.1', '::1', '.local', '.test', '.dev', '.internal'];
+        foreach ($localPatterns as $pattern) {
+            if ($host === $pattern || str_ends_with($host, $pattern)) {
+                $message = "A URL do vídeo aponta para um domínio local ({$host}) que não é acessível pelos servidores do Instagram. "
+                    . "Use um domínio público com HTTPS (ex: ngrok em desenvolvimento, ou o domínio de produção).";
+
+                SystemLog::error('social', 'ig.video.url_local', "Instagram: URL de vídeo aponta para domínio local", [
+                    'post_id' => $post->id,
+                    'url'     => $url,
+                    'host'    => $host,
+                ]);
+
+                return $this->fail($post, $message);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Retorna dica adicional baseada no código de erro retornado durante processamento de vídeo.
+     */
+    private function getVideoProcessingHint(string $status, ?array $response): string
+    {
+        // Detectar código de erro no campo status (ex: "error code 2207082")
+        if (preg_match('/error code (\d+)/i', $status, $matches)) {
+            $code = (int) $matches[1];
+
+            if (in_array($code, self::MEDIA_PROCESS_ERRORS)) {
+                return " | Causas comuns: (1) formato de vídeo incorreto — use MP4 com codec H.264 e áudio AAC; "
+                    . "(2) proporção inválida — Reels exigem 9:16 (1080×1920px); "
+                    . "(3) duração fora do range — mínimo 3s, máximo 180s; "
+                    . "(4) URL do vídeo inacessível pelos servidores do Instagram (requer HTTPS público).";
+            }
+
+            if ($code === 2207026) {
+                return " | Formato de vídeo não suportado. Use MP4 com H.264 + AAC.";
+            }
+
+            if ($code === 2207003) {
+                return " | Timeout ao baixar o vídeo. Verifique se a URL é acessível e se o arquivo não é muito grande.";
+            }
+        }
+
+        return '';
     }
 
     private function fail(Post $post, string $message, ?array $apiResponse = null): PublishResult
