@@ -7,6 +7,7 @@ use App\Models\PostMedia;
 use App\Models\SocialAccount;
 use App\Models\SystemLog;
 use App\Services\Social\PublishResult;
+use App\Services\Social\VideoNormalizerService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -93,6 +94,11 @@ class InstagramPublisher extends AbstractPublisher
     {
         $isVideo = $media->type === 'video';
         $isReel  = $post->type?->value === 'reel';
+
+        // Normalizar vídeo para Reels antes de publicar (se necessário)
+        if (($isVideo || $isReel) && $media->file_path) {
+            $media = $this->ensureVideoNormalized($post, $media);
+        }
 
         $resolvedUrl = $this->resolveMediaUrl($post, $media, $token, $isVideo || $isReel);
 
@@ -649,6 +655,61 @@ class InstagramPublisher extends AbstractPublisher
         return $response->json('error.message')
             ?? $response->json('error.error_user_msg')
             ?? substr($response->body(), 0, 300);
+    }
+
+    /**
+     * Garante que o vídeo está normalizado para Instagram Reels.
+     * Se já foi normalizado (arquivo _reels existe), usa o existente.
+     * Se não, normaliza agora e atualiza o registro no banco.
+     */
+    private function ensureVideoNormalized(Post $post, PostMedia $media): PostMedia
+    {
+        $normalizer = app(VideoNormalizerService::class);
+
+        if (!$normalizer->isAvailable()) {
+            return $media;
+        }
+
+        $localPath = storage_path('app/public/' . $media->file_path);
+
+        if (!file_exists($localPath)) {
+            return $media;
+        }
+
+        $specs = $normalizer->analyze($localPath);
+
+        if (!$specs || !$normalizer->needsNormalization($specs)) {
+            return $media;
+        }
+
+        SystemLog::info('social', 'ig.video.normalizing', "Instagram: normalizando vídeo do post #{$post->id} para Reels ({$specs['width']}x{$specs['height']} → 1080x1920)", [
+            'post_id'     => $post->id,
+            'media_id'    => $media->id,
+            'current_res' => "{$specs['width']}x{$specs['height']}",
+            'video_codec' => $specs['video_codec'],
+            'audio_codec' => $specs['audio_codec'],
+        ]);
+
+        $normalizedPath = $normalizer->normalize($localPath);
+
+        if (!$normalizedPath || $normalizedPath === $localPath) {
+            return $media;
+        }
+
+        // Atualizar o file_path no banco para o arquivo normalizado
+        $dir             = dirname($media->file_path);
+        $newName         = pathinfo($normalizedPath, PATHINFO_BASENAME);
+        $newStoragePath   = $dir . '/' . $newName;
+
+        $media->update([
+            'file_path' => $newStoragePath,
+            'mime_type' => 'video/mp4',
+            'file_size' => filesize($normalizedPath),
+        ]);
+
+        $media->refresh();
+
+        return $media;
     }
 
     /**

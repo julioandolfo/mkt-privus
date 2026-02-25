@@ -181,10 +181,21 @@ class PostController extends Controller
 
         // Upload de midias
         if ($request->hasFile('media')) {
+            $normalizer = app(\App\Services\Social\VideoNormalizerService::class);
+            $isReel     = ($validated['type'] ?? '') === 'reel';
+
             foreach ($request->file('media') as $index => $file) {
                 $path = $file->store("posts/{$post->id}", 'public');
                 $mimeType = $file->getMimeType();
                 $isVideo = str_starts_with($mimeType, 'video/');
+
+                // Normalizar vídeo para Reels (1080×1920, H.264+AAC)
+                if ($isVideo && $isReel && $normalizer->isAvailable()) {
+                    $path = $this->normalizeVideoForReels($normalizer, $path);
+                    $mimeType = 'video/mp4';
+                }
+
+                $fullPath = storage_path('app/public/' . $path);
 
                 PostMedia::create([
                     'post_id' => $post->id,
@@ -192,7 +203,7 @@ class PostController extends Controller
                     'file_path' => $path,
                     'file_name' => $file->getClientOriginalName(),
                     'mime_type' => $mimeType,
-                    'file_size' => $file->getSize(),
+                    'file_size' => file_exists($fullPath) ? filesize($fullPath) : $file->getSize(),
                     'order' => $index,
                 ]);
             }
@@ -323,12 +334,21 @@ class PostController extends Controller
 
         // Upload de novas midias
         if ($request->hasFile('media')) {
-            $maxOrder = $post->media()->max('order') ?? -1;
+            $normalizer = app(\App\Services\Social\VideoNormalizerService::class);
+            $isReel     = ($validated['type'] ?? $post->type?->value) === 'reel';
+            $maxOrder   = $post->media()->max('order') ?? -1;
 
             foreach ($request->file('media') as $index => $file) {
                 $path = $file->store("posts/{$post->id}", 'public');
                 $mimeType = $file->getMimeType();
                 $isVideo = str_starts_with($mimeType, 'video/');
+
+                if ($isVideo && $isReel && $normalizer->isAvailable()) {
+                    $path = $this->normalizeVideoForReels($normalizer, $path);
+                    $mimeType = 'video/mp4';
+                }
+
+                $fullPath = storage_path('app/public/' . $path);
 
                 PostMedia::create([
                     'post_id' => $post->id,
@@ -336,7 +356,7 @@ class PostController extends Controller
                     'file_path' => $path,
                     'file_name' => $file->getClientOriginalName(),
                     'mime_type' => $mimeType,
-                    'file_size' => $file->getSize(),
+                    'file_size' => file_exists($fullPath) ? filesize($fullPath) : $file->getSize(),
                     'order' => $maxOrder + $index + 1,
                 ]);
             }
@@ -1106,6 +1126,44 @@ class PostController extends Controller
             'label' => $s->label(),
             'color' => $s->color(),
         ])->toArray();
+    }
+
+    /**
+     * Normaliza vídeo para Instagram Reels.
+     * Retorna o path normalizado ou o path original se falhar.
+     */
+    private function normalizeVideoForReels(\App\Services\Social\VideoNormalizerService $normalizer, string $storagePath): string
+    {
+        $inputPath = storage_path('app/public/' . $storagePath);
+        $specs     = $normalizer->analyze($inputPath);
+
+        if (!$specs || !$normalizer->needsNormalization($specs)) {
+            return $storagePath;
+        }
+
+        $normalized = $normalizer->normalize($inputPath);
+
+        if ($normalized && $normalized !== $inputPath) {
+            // Remover o arquivo original e substituir pelo normalizado
+            $dir  = dirname($storagePath);
+            $name = pathinfo($normalized, PATHINFO_BASENAME);
+            $newStoragePath = $dir . '/' . $name;
+
+            // Mover para o mesmo diretório no storage com nome _reels
+            if (file_exists($normalized)) {
+                // Deletar original
+                @unlink($inputPath);
+
+                // Se o normalizado já está no lugar certo
+                if (realpath($normalized) !== realpath(storage_path('app/public/' . $newStoragePath))) {
+                    rename($normalized, storage_path('app/public/' . $newStoragePath));
+                }
+
+                return $newStoragePath;
+            }
+        }
+
+        return $storagePath;
     }
 
     private function getPostTypeOptions(): array
