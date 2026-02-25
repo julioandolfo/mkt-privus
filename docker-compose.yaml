@@ -6,6 +6,8 @@ services:
       dockerfile: docker/php/Dockerfile
     restart: unless-stopped
     working_dir: /var/www/html
+    environment:
+      - TZ=America/Sao_Paulo
     volumes:
       - app_storage:/var/www/html/storage
       - public_build:/var/www/html/public/build
@@ -37,6 +39,8 @@ services:
     restart: unless-stopped
     working_dir: /var/www/html
     command: php artisan queue:work --queue=autopilot,default --sleep=3 --tries=3 --max-time=3600
+    environment:
+      - TZ=America/Sao_Paulo
     volumes:
       - app_storage:/var/www/html/storage
       - public_build:/var/www/html/public/build
@@ -55,6 +59,8 @@ services:
     working_dir: /var/www/html
     command: >
       sh -c "while true; do php artisan schedule:run --verbose --no-interaction; sleep 60; done"
+    environment:
+      - TZ=America/Sao_Paulo
     volumes:
       - app_storage:/var/www/html/storage
       - public_build:/var/www/html/public/build
@@ -75,6 +81,7 @@ services:
       MYSQL_USER: ${DB_USERNAME:-mkt_privus}
       MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootsecret}
+      TZ: America/Sao_Paulo
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -86,6 +93,7 @@ services:
       --default-authentication-plugin=mysql_native_password
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
+      --default-time-zone=-03:00
 
   # ===== CACHE / QUEUE =====
   redis:
