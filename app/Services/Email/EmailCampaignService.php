@@ -10,6 +10,7 @@ use App\Jobs\SendCampaignBatchJob;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use TijsVerkoyen\CssToInlineStyles\CssToInlineStyles;
 
 class EmailCampaignService
 {
@@ -178,6 +179,10 @@ class EmailCampaignService
     {
         $html = $campaign->html_content ?? '';
 
+        // Inline CSS (<style> no <head> → atributos style="" em cada elemento)
+        // Necessário porque clientes de email (Gmail, Outlook) removem <head>/<style>
+        $html = $this->inlineCss($html);
+
         // Adicionar tracking pixel
         $trackOpen = $campaign->getSetting('track_opens', true);
         if ($trackOpen) {
@@ -195,6 +200,33 @@ class EmailCampaignService
         $html = $this->renderMergeTags($html, $contact);
 
         return $html;
+    }
+
+    /**
+     * Converte CSS de <style> tags para inline styles nos elementos.
+     * Essencial para compatibilidade com clientes de email.
+     */
+    private function inlineCss(string $html): string
+    {
+        if (empty($html)) {
+            return $html;
+        }
+
+        try {
+            // Extrair CSS do <style> tag
+            $css = '';
+            if (preg_match('/<style[^>]*>(.*?)<\/style>/si', $html, $matches)) {
+                $css = $matches[1];
+            }
+
+            $inliner = new CssToInlineStyles();
+            $inlined = $inliner->convert($html, $css);
+
+            return $inlined ?: $html;
+        } catch (\Throwable $e) {
+            Log::warning('Email CSS inlining failed', ['error' => $e->getMessage()]);
+            return $html;
+        }
     }
 
     /**

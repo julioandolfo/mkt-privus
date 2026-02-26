@@ -142,8 +142,8 @@ class EmailProviderService
 
         $payload = [
             'email' => [
-                'html' => $html,
-                'text' => strip_tags($html),
+                'html' => base64_encode($html),
+                'text' => strip_tags(str_replace(['<br>', '<br/>', '<br />', '</p>', '</div>', '</li>', '</tr>'], "\n", $html)),
                 'subject' => $subject,
                 'from' => [
                     'name' => $name,

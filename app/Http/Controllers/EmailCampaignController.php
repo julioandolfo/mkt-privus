@@ -402,12 +402,14 @@ class EmailCampaignController extends Controller
             return response()->json(['success' => false, 'error' => 'Nenhum provedor configurado.']);
         }
 
+        $html = $this->inlineCssForEmail($campaign->html_content ?? '<p>Sem conteúdo</p>');
+
         $providerService = app(\App\Services\Email\EmailProviderService::class);
         $result = $providerService->send(
             $provider,
             $request->input('test_email'),
             '[TESTE] ' . $campaign->subject,
-            $campaign->html_content ?? '<p>Sem conteúdo</p>',
+            $html,
             $campaign->from_name ?: $provider->getFromName(),
             $campaign->from_email ?: $provider->getFromEmail(),
         );
@@ -435,12 +437,14 @@ class EmailCampaignController extends Controller
                 return response()->json(['success' => false, 'error' => 'Provedor não encontrado. ID: ' . $request->input('email_provider_id')]);
             }
 
+            $html = $this->inlineCssForEmail($request->input('html_content'));
+
             $providerService = app(\App\Services\Email\EmailProviderService::class);
             $result = $providerService->send(
                 $provider,
                 $request->input('test_email'),
                 '[TESTE] ' . $request->input('subject'),
-                $request->input('html_content'),
+                $html,
                 $request->input('from_name') ?: $provider->getFromName(),
                 $request->input('from_email') ?: $provider->getFromEmail(),
             );
@@ -460,6 +464,28 @@ class EmailCampaignController extends Controller
                 'success' => false,
                 'error' => 'Erro interno: ' . $e->getMessage(),
             ], 500);
+        }
+    }
+
+    /**
+     * Converte CSS de <style> tags para inline styles.
+     */
+    private function inlineCssForEmail(string $html): string
+    {
+        if (empty($html)) {
+            return $html;
+        }
+
+        try {
+            $css = '';
+            if (preg_match('/<style[^>]*>(.*?)<\/style>/si', $html, $matches)) {
+                $css = $matches[1];
+            }
+
+            $inliner = new \TijsVerkoyen\CssToInlineStyles\CssToInlineStyles();
+            return $inliner->convert($html, $css) ?: $html;
+        } catch (\Throwable) {
+            return $html;
         }
     }
 }
