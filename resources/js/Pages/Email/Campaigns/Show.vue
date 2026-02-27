@@ -230,6 +230,36 @@ function confirmSendNow() {
     });
 }
 
+// Verificar se há falhas por quota para reenviar
+const hasQuotaFailures = computed(() => {
+    if (!props.recentEvents) return false;
+    return props.recentEvents.some(e =>
+        e.event_type === 'failed' &&
+        (e.metadata?.reason === 'quota_exceeded' ||
+         e.metadata?.error?.includes('quota') ||
+         e.metadata?.error?.includes('Limite'))
+    );
+});
+
+const retryLoading = ref(false);
+
+function retryFailed() {
+    if (!confirm('Deseja reenviar os emails que falharam por limite de quota?')) {
+        return;
+    }
+    retryLoading.value = true;
+    router.post(route('email.campaigns.retry-failed', props.campaign.id), {}, {
+        onSuccess: () => {
+            retryLoading.value = false;
+            // Recarrega a página para mostrar o status atualizado
+            router.reload({ only: ['campaign', 'recentEvents', 'scheduleInfo'] });
+        },
+        onError: () => {
+            retryLoading.value = false;
+        },
+    });
+}
+
 const c = props.campaign || {};
 const totalRecipients = c.total_recipients ?? 0;
 const totalSent = c.total_sent ?? 0;
@@ -306,6 +336,12 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
                     <button @click="sendTestModal = true" class="rounded-lg border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 whitespace-nowrap">
                         Teste
                     </button>
+
+                    <!-- Reenviar falhas por quota -->
+                    <button v-if="hasQuotaFailures" @click="retryFailed" :disabled="retryLoading" class="rounded-lg bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-500 whitespace-nowrap disabled:opacity-50">
+                        {{ retryLoading ? 'Reprocessando...' : 'Reenviar Falhas' }}
+                    </button>
+
                     <button v-if="c.can_send && c.status !== 'scheduled'" @click="scheduleModal = true" class="rounded-lg border border-indigo-600 px-3 py-1.5 text-sm text-indigo-400 hover:bg-indigo-900/30 whitespace-nowrap">
                         Agendar
                     </button>

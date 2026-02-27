@@ -540,6 +540,89 @@ class EmailCampaignController extends Controller
     }
 
     /**
+     * Reenviar emails que falharam por quota excedida
+     */
+    public function retryFailed(EmailCampaign $campaign)
+    {
+        SystemLog::info('email', 'campaign.retry_failed.request', "Requisição para reenviar falhas da campanha \"{$campaign->name}\"", [
+            'campaign_id' => $campaign->id,
+            'current_status' => $campaign->status,
+        ]);
+
+        // Buscar eventos 'failed' que foram marcados por quota excedida
+        $failedEvents = $campaign->events()
+            ->where('event_type', 'failed')
+            ->where(function ($query) {
+                $query->where('metadata->reason', 'quota_exceeded')
+                    ->orWhere('metadata->error', 'like', '%Limite por hora atingido%')
+                    ->orWhere('metadata->error', 'like', '%quota%');
+            })
+            ->with('contact')
+            ->get();
+
+        if ($failedEvents->isEmpty()) {
+            return back()->with('error', 'Não há emails para reenviar. Todos já foram processados ou não há falhas por quota.');
+        }
+
+        $contactIds = $failedEvents->pluck('email_contact_id')->toArray();
+
+        SystemLog::info('email', 'campaign.retry_failed.found', "Encontrados {$failedEvents->count()} emails para reenviar", [
+            'campaign_id' => $campaign->id,
+            'failed_count' => $failedEvents->count(),
+            'contact_ids_sample' => array_slice($contactIds, 0, 10),
+        ]);
+
+        // Atualizar status da campanha se necessário
+        if (in_array($campaign->status, ['sent', 'cancelled'])) {
+            $campaign->update([
+                'status' => 'sending',
+                'completed_at' => null,
+            ]);
+        }
+
+        // Remover os eventos 'failed' antigos (para não duplicar)
+        foreach (array_chunk($failedEvents->pluck('id')->toArray(), 500) as $chunk) {
+            \App\Models\EmailCampaignEvent::whereIn('id', $chunk)->delete();
+        }
+
+        // Criar novos eventos 'queued' para os contatos
+        $now = now();
+        $queuedEvents = collect($contactIds)->map(fn($contactId) => [
+            'email_campaign_id' => $campaign->id,
+            'email_contact_id' => $contactId,
+            'event_type' => 'queued',
+            'occurred_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ])->toArray();
+
+        foreach (array_chunk($queuedEvents, 500) as $chunk) {
+            \App\Models\EmailCampaignEvent::insert($chunk);
+        }
+
+        // Despachar jobs em batches
+        $sendSpeed = $campaign->getSetting('send_speed', 100);
+        $batchSize = min($sendSpeed, 100);
+
+        foreach (array_chunk($contactIds, $batchSize) as $index => $batchIds) {
+            $delay = $index * 60; // 1 minuto entre batches
+            \App\Jobs\SendCampaignBatchJob::dispatch($campaign->id, $batchIds)
+                ->delay(now()->addSeconds($delay))
+                ->onQueue('email');
+        }
+
+        $batchesCount = ceil(count($contactIds) / $batchSize);
+
+        SystemLog::info('email', 'campaign.retry_failed.started', "Reenvio iniciado: {$failedEvents->count()} emails em {$batchesCount} batches", [
+            'campaign_id' => $campaign->id,
+            'retry_count' => $failedEvents->count(),
+            'batches' => $batchesCount,
+        ]);
+
+        return back()->with('success', "Reenvio iniciado! {$failedEvents->count()} emails serão reprocessados em {$batchesCount} batches.");
+    }
+
+    /**
      * Duplicar campanha
      */
     public function duplicate(EmailCampaign $campaign)
