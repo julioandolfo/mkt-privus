@@ -437,12 +437,27 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
                             <p class="text-sm text-amber-300">
                                 {{ scheduleInfo.total_processed }} de {{ scheduleInfo.total_queued }} processados
                             </p>
+                            <!-- Alerta de limite por hora -->
+                            <p v-if="scheduleInfo.hourly_limit" class="text-xs text-blue-400 mt-1">
+                                <span class="inline-flex items-center gap-1">
+                                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10" />
+                                        <polyline points="12 6 12 12 16 14" />
+                                    </svg>
+                                    Limite configurado: {{ scheduleInfo.hourly_limit }} emails/hora
+                                </span>
+                            </p>
                         </div>
                     </div>
                     <div class="text-right">
                         <p class="text-xs text-amber-400 mb-1">Tempo estimado</p>
                         <p class="text-2xl font-bold text-white">{{ scheduleInfo.eta_formatted }}</p>
-                        <p class="text-xs text-gray-400">{{ scheduleInfo.send_speed }} emails/min</p>
+                        <p class="text-xs text-gray-400">
+                            {{ scheduleInfo.hourly_limit
+                                ? scheduleInfo.hourly_limit + ' emails/hora (limitado)'
+                                : scheduleInfo.send_speed + ' emails/min'
+                            }}
+                        </p>
                     </div>
                 </div>
 

@@ -33,6 +33,7 @@ class EmailCampaignService
 
     /**
      * Inicia o envio da campanha em batches
+     * Respeita o hourly_limit do provedor se configurado
      */
     public function startCampaign(EmailCampaign $campaign): void
     {
@@ -58,13 +59,35 @@ class EmailCampaignService
             EmailCampaignEvent::insert($chunk);
         }
 
-        // Despachar jobs em batches
-        $sendSpeed = $campaign->getSetting('send_speed', 100); // emails por batch
-        $batchSize = min($sendSpeed, 100);
+        // Configurar batches respeitando quota do provedor
+        $provider = $campaign->provider;
+        $hourlyLimit = $provider?->hourly_limit;
+
+        if ($hourlyLimit && $hourlyLimit > 0) {
+            // Respeitar limite por hora do provedor
+            $batchSize = min($hourlyLimit, 100); // máximo 100 por batch
+            $delayBetweenBatches = 3600; // 1 hora entre batches (em segundos)
+
+            SystemLog::info('email', 'campaign.rate_limit_enabled', "Modo de respeito à quota ativado: {$hourlyLimit} emails/hora", [
+                'campaign_id' => $campaign->id,
+                'provider_id' => $provider->id,
+                'hourly_limit' => $hourlyLimit,
+                'batch_size' => $batchSize,
+                'delay_between_batches' => $delayBetweenBatches,
+            ]);
+        } else {
+            // Modo padrão: sem limite de quota
+            $sendSpeed = $campaign->getSetting('send_speed', 100);
+            $batchSize = min($sendSpeed, 100);
+            $delayBetweenBatches = 60; // 1 minuto entre batches
+        }
+
         $contactIds = $contacts->pluck('id')->toArray();
+        $totalBatches = ceil(count($contactIds) / $batchSize);
+        $estimatedHours = ceil($totalBatches / ($hourlyLimit ? 1 : 60)); // para logging
 
         foreach (array_chunk($contactIds, $batchSize) as $index => $batchIds) {
-            $delay = $index * 60; // 1 minuto entre batches
+            $delay = $index * $delayBetweenBatches;
             SendCampaignBatchJob::dispatch($campaign->id, $batchIds)
                 ->delay(now()->addSeconds($delay))
                 ->onQueue('email');
@@ -73,7 +96,10 @@ class EmailCampaignService
         SystemLog::info('email', 'campaign.started', "Campanha \"{$campaign->name}\" iniciada com {$contacts->count()} destinatários", [
             'campaign_id' => $campaign->id,
             'recipients' => $contacts->count(),
-            'batches' => ceil(count($contactIds) / $batchSize),
+            'batches' => $totalBatches,
+            'batch_size' => $batchSize,
+            'hourly_limit' => $hourlyLimit,
+            'estimated_hours' => $hourlyLimit ? ceil($totalBatches) : 'N/A (sem limite)',
         ]);
     }
 

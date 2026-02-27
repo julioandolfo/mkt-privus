@@ -189,6 +189,8 @@ class EmailCampaignController extends Controller
 
         // Informações de agendamento/progresso
         $scheduleInfo = null;
+        $hourlyLimit = $campaign->provider?->hourly_limit;
+
         if ($campaign->isScheduled() && $campaign->scheduled_at) {
             $scheduleInfo = [
                 'type' => 'scheduled',
@@ -196,6 +198,7 @@ class EmailCampaignController extends Controller
                 'scheduled_at_formatted' => $campaign->scheduled_at->format('d/m/Y H:i:s'),
                 'time_until' => $campaign->scheduled_at->diffForHumans(),
                 'is_overdue' => $campaign->scheduled_at->isPast(),
+                'hourly_limit' => $hourlyLimit,
             ];
         } elseif ($campaign->isSending()) {
             // Calcular progresso e ETA
@@ -205,7 +208,18 @@ class EmailCampaignController extends Controller
 
             // Velocidade de envio (padrão: 100 emails/minuto = 1 batch/min)
             $sendSpeed = $campaign->getSetting('send_speed', 100);
-            $etaMinutes = ceil($remaining / $sendSpeed);
+
+            // Se tem limite por hora, calcular ETA em horas
+            if ($hourlyLimit && $hourlyLimit > 0) {
+                $etaHours = ceil($remaining / $hourlyLimit);
+                $etaMinutes = $etaHours * 60;
+                $etaFormatted = $etaHours . ' horas (limite: ' . $hourlyLimit . '/hora)';
+            } else {
+                $etaMinutes = ceil($remaining / $sendSpeed);
+                $etaFormatted = $etaMinutes > 60
+                    ? ceil($etaMinutes / 60) . ' horas'
+                    : $etaMinutes . ' minutos';
+            }
 
             $scheduleInfo = [
                 'type' => 'sending',
@@ -214,10 +228,9 @@ class EmailCampaignController extends Controller
                 'total_processed' => $totalProcessed,
                 'remaining' => $remaining,
                 'eta_minutes' => $etaMinutes,
-                'eta_formatted' => $etaMinutes > 60
-                    ? ceil($etaMinutes / 60) . ' horas'
-                    : $etaMinutes . ' minutos',
+                'eta_formatted' => $etaFormatted,
                 'send_speed' => $sendSpeed,
+                'hourly_limit' => $hourlyLimit,
             ];
         }
 
@@ -600,26 +613,46 @@ class EmailCampaignController extends Controller
             \App\Models\EmailCampaignEvent::insert($chunk);
         }
 
-        // Despachar jobs em batches
-        $sendSpeed = $campaign->getSetting('send_speed', 100);
-        $batchSize = min($sendSpeed, 100);
+        // Configurar batches respeitando quota do provedor
+        $provider = $campaign->provider;
+        $hourlyLimit = $provider?->hourly_limit;
+
+        if ($hourlyLimit && $hourlyLimit > 0) {
+            $batchSize = min($hourlyLimit, 100);
+            $delayBetweenBatches = 3600; // 1 hora
+
+            SystemLog::info('email', 'campaign.retry_failed.rate_limit', "Modo de respeito à quota ativado para reenvio: {$hourlyLimit} emails/hora", [
+                'campaign_id' => $campaign->id,
+                'hourly_limit' => $hourlyLimit,
+                'batch_size' => $batchSize,
+            ]);
+        } else {
+            $sendSpeed = $campaign->getSetting('send_speed', 100);
+            $batchSize = min($sendSpeed, 100);
+            $delayBetweenBatches = 60; // 1 minuto
+        }
 
         foreach (array_chunk($contactIds, $batchSize) as $index => $batchIds) {
-            $delay = $index * 60; // 1 minuto entre batches
+            $delay = $index * $delayBetweenBatches;
             \App\Jobs\SendCampaignBatchJob::dispatch($campaign->id, $batchIds)
                 ->delay(now()->addSeconds($delay))
                 ->onQueue('email');
         }
 
         $batchesCount = ceil(count($contactIds) / $batchSize);
+        $etaMessage = $hourlyLimit
+            ? "~" . ceil($batchesCount) . " horas (respeitando limite de {$hourlyLimit}/hora)"
+            : "~" . ceil($batchesCount) . " minutos";
 
         SystemLog::info('email', 'campaign.retry_failed.started', "Reenvio iniciado: {$failedEvents->count()} emails em {$batchesCount} batches", [
             'campaign_id' => $campaign->id,
             'retry_count' => $failedEvents->count(),
             'batches' => $batchesCount,
+            'hourly_limit' => $hourlyLimit,
+            'eta' => $etaMessage,
         ]);
 
-        return back()->with('success', "Reenvio iniciado! {$failedEvents->count()} emails serão reprocessados em {$batchesCount} batches.");
+        return back()->with('success', "Reenvio iniciado! {$failedEvents->count()} emails serão reprocessados em {$batchesCount} batches. Tempo estimado: {$etaMessage}.");
     }
 
     /**
