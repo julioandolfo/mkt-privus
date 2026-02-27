@@ -160,7 +160,8 @@ class EmailCampaign extends Model
 
     public function canSend(): bool
     {
-        return $this->status === 'draft' && $this->html_content && $this->subject;
+        // Permite enviar campanhas em rascunho OU agendadas
+        return in_array($this->status, ['draft', 'scheduled']) && $this->html_content && $this->subject;
     }
 
     public function canPause(): bool
