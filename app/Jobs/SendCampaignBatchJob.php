@@ -20,10 +20,15 @@ class SendCampaignBatchJob implements ShouldQueue
     public $timeout = 300; // 5 minutos
     public $tries = 3;
 
-    public function __construct(
-        private int $campaignId,
-        private array $contactIds,
-    ) {}
+    // Propriedades precisam ser public para serialização correta na fila
+    public int $campaignId;
+    public array $contactIds;
+
+    public function __construct(int $campaignId, array $contactIds)
+    {
+        $this->campaignId = $campaignId;
+        $this->contactIds = $contactIds;
+    }
 
     public function handle(EmailCampaignService $service): void
     {
