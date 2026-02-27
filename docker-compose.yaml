@@ -38,7 +38,7 @@ services:
       dockerfile: docker/php/Dockerfile
     restart: unless-stopped
     working_dir: /var/www/html
-    command: php artisan queue:work --queue=autopilot,default --sleep=3 --tries=3 --max-time=3600
+    command: php artisan queue:work --queue=email,autopilot,default --sleep=3 --tries=3 --max-time=3600
     environment:
       - TZ=America/Sao_Paulo
     volumes:

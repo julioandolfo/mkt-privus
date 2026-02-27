@@ -103,15 +103,38 @@ class EmailCampaignService
      */
     public function processBatch(int $campaignId, array $contactIds): array
     {
+        SystemLog::info('email', 'batch.starting', "Iniciando processamento de batch", [
+            'campaign_id' => $campaignId,
+            'batch_size' => count($contactIds),
+            'contact_ids_sample' => array_slice($contactIds, 0, 5), // primeiros 5 para debug
+        ]);
+
         $campaign = EmailCampaign::with('provider')->find($campaignId);
         if (!$campaign || !$campaign->isSending()) {
-            return ['sent' => 0, 'failed' => 0, 'reason' => 'campaign_not_sending'];
+            $reason = !$campaign ? 'campaign_not_found' : 'campaign_not_sending';
+            SystemLog::warning('email', 'batch.aborted', "Batch abortado: {$reason}", [
+                'campaign_id' => $campaignId,
+                'reason' => $reason,
+                'campaign_status' => $campaign?->status,
+            ]);
+            return ['sent' => 0, 'failed' => 0, 'reason' => $reason];
         }
 
         $provider = $campaign->provider;
         if (!$provider) {
+            SystemLog::error('email', 'batch.no_provider', "Batch abortado: provedor não encontrado", [
+                'campaign_id' => $campaignId,
+                'provider_id' => $campaign->email_provider_id,
+            ]);
             return ['sent' => 0, 'failed' => 0, 'reason' => 'no_provider'];
         }
+
+        SystemLog::info('email', 'batch.provider_ready', "Provedor confirmado: {$provider->name} ({$provider->type})", [
+            'campaign_id' => $campaignId,
+            'provider_id' => $provider->id,
+            'provider_type' => $provider->type,
+            'quota_remaining' => $provider->getRemainingQuota(),
+        ]);
 
         // Verificar quotas antes de começar
         if (!$provider->hasQuotaRemaining()) {
@@ -223,12 +246,27 @@ class EmailCampaignService
         $totalQueued = $campaign->events()->where('event_type', 'queued')->count();
         $totalProcessed = $campaign->events()->whereIn('event_type', ['sent', 'failed'])->count();
 
+        SystemLog::info('email', 'batch.completed', "Batch finalizado", [
+            'campaign_id' => $campaign->id,
+            'sent' => $sent,
+            'failed' => $failed,
+            'total_queued' => $totalQueued,
+            'total_processed' => $totalProcessed,
+            'campaign_finished' => $totalProcessed >= $totalQueued,
+        ]);
+
         if ($totalProcessed >= $totalQueued) {
             $campaign->update([
                 'status' => 'sent',
                 'completed_at' => now(),
             ]);
             $campaign->refreshStats();
+
+            SystemLog::info('email', 'campaign.finished', "Campanha \"{$campaign->name}\" finalizada! Todos os emails processados.", [
+                'campaign_id' => $campaign->id,
+                'total_sent' => $sent,
+                'total_failed' => $failed,
+            ]);
         }
 
         return ['sent' => $sent, 'failed' => $failed];
