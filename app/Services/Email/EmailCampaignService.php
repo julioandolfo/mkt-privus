@@ -136,35 +136,24 @@ class EmailCampaignService
             'quota_remaining' => $provider->getRemainingQuota(),
         ]);
 
-        // Verificar quotas antes de começar
+        // Verificar quotas apenas para log/alerta - NÃO bloquear envio
+        // O SendPulse aceita emails mesmo "acima" do limite (processa por minuto)
+        $quotaWarning = null;
         if (!$provider->hasQuotaRemaining()) {
             $quotaInfo = $provider->getQuotaInfo();
-            $errorMsg = 'Limite de envios atingido';
-
             if ($quotaInfo['hourly_remaining'] !== null && $quotaInfo['hourly_remaining'] <= 0) {
-                $errorMsg = "Limite por hora atingido ({$provider->hourly_limit} emails/hora). Aguarde para continuar.";
+                $quotaWarning = "Quota por hora atingida ({$provider->hourly_limit}/hora), mas tentando enviar mesmo assim";
             } elseif ($quotaInfo['daily_remaining'] !== null && $quotaInfo['daily_remaining'] <= 0) {
-                $errorMsg = "Limite diário atingido ({$provider->daily_limit} emails/dia).";
+                $quotaWarning = "Quota diária atingida ({$provider->daily_limit}/dia), mas tentando enviar mesmo assim";
             }
 
-            SystemLog::warning('email', 'campaign.quota_exceeded', $errorMsg, [
-                'campaign_id' => $campaign->id,
-                'provider_id' => $provider->id,
-                'quota_info' => $quotaInfo,
-            ]);
-
-            // Marcar todos como failed por quota
-            foreach ($contactIds as $contactId) {
-                EmailCampaignEvent::create([
-                    'email_campaign_id' => $campaign->id,
-                    'email_contact_id' => $contactId,
-                    'event_type' => 'failed',
-                    'occurred_at' => now(),
-                    'metadata' => ['error' => $errorMsg, 'reason' => 'quota_exceeded'],
+            if ($quotaWarning) {
+                SystemLog::warning('email', 'campaign.quota_warning', $quotaWarning, [
+                    'campaign_id' => $campaign->id,
+                    'provider_id' => $provider->id,
+                    'quota_info' => $quotaInfo,
                 ]);
             }
-
-            return ['sent' => 0, 'failed' => count($contactIds), 'reason' => 'quota_exceeded', 'error' => $errorMsg];
         }
 
         $contacts = EmailContact::whereIn('id', $contactIds)
@@ -179,64 +168,81 @@ class EmailCampaignService
         $fromName = $campaign->from_name ?: $provider->getFromName() ?: config('app.name');
 
         foreach ($contacts as $contact) {
-            // Verificar quota a cada envio (pode ter sido esgotada no meio do batch)
-            if (!$provider->hasQuotaRemaining()) {
-                $remainingContacts = count($contacts) - $sent - $failed;
-                $errorMsg = 'Limite de envios atingido durante o processamento do batch';
+            $html = $this->renderForContact($campaign, $contact);
 
-                SystemLog::warning('email', 'campaign.quota_exceeded_mid_batch', $errorMsg, [
+            SystemLog::info('email', 'batch.sending_contact', "Enviando email para {$contact->email}", [
+                'campaign_id' => $campaign->id,
+                'contact_id' => $contact->id,
+                'contact_email' => $contact->email,
+            ]);
+
+            try {
+                $result = $this->providerService->send(
+                    $provider,
+                    $contact->email,
+                    $this->renderMergeTags($campaign->subject, $contact),
+                    $html,
+                    $fromName,
+                    $fromEmail,
+                    $campaign->reply_to,
+                    [
+                        'X-Campaign-ID' => (string) $campaign->id,
+                        'X-Contact-ID' => (string) $contact->id,
+                        'List-Unsubscribe' => '<' . $this->trackingService->generateUnsubscribeUrl($campaign->id, $contact->id) . '>',
+                    ]
+                );
+
+                SystemLog::info('email', 'batch.send_result', "Resultado do envio para {$contact->email}", [
                     'campaign_id' => $campaign->id,
-                    'provider_id' => $provider->id,
-                    'contacts_remaining' => $remainingContacts,
+                    'contact_id' => $contact->id,
+                    'contact_email' => $contact->email,
+                    'result_success' => $result['success'] ?? false,
+                    'result_message_id' => $result['message_id'] ?? null,
+                    'result_error' => $result['error'] ?? null,
+                    'result_full' => $result,
                 ]);
 
-                // Marcar restantes como failed
-                for ($i = 0; $i < $remainingContacts; $i++) {
+                if ($result['success']) {
+                    EmailCampaignEvent::create([
+                        'email_campaign_id' => $campaign->id,
+                        'email_contact_id' => $contact->id,
+                        'event_type' => 'sent',
+                        'occurred_at' => now(),
+                        'metadata' => ['message_id' => $result['message_id'] ?? null],
+                    ]);
+                    $sent++;
+
+                    // Incrementar contador de envios do provedor
+                    try {
+                        $provider->incrementSendCount();
+                    } catch (\Throwable $e) {
+                        // Ignorar erro de incremento
+                    }
+                } else {
                     EmailCampaignEvent::create([
                         'email_campaign_id' => $campaign->id,
                         'email_contact_id' => $contact->id,
                         'event_type' => 'failed',
                         'occurred_at' => now(),
-                        'metadata' => ['error' => $errorMsg, 'reason' => 'quota_exceeded'],
+                        'metadata' => ['error' => $result['error'] ?? 'Unknown error from provider'],
                     ]);
                     $failed++;
                 }
-                break;
-            }
-
-            $html = $this->renderForContact($campaign, $contact);
-
-            $result = $this->providerService->send(
-                $provider,
-                $contact->email,
-                $this->renderMergeTags($campaign->subject, $contact),
-                $html,
-                $fromName,
-                $fromEmail,
-                $campaign->reply_to,
-                [
-                    'X-Campaign-ID' => (string) $campaign->id,
-                    'X-Contact-ID' => (string) $contact->id,
-                    'List-Unsubscribe' => '<' . $this->trackingService->generateUnsubscribeUrl($campaign->id, $contact->id) . '>',
-                ]
-            );
-
-            if ($result['success']) {
-                EmailCampaignEvent::create([
-                    'email_campaign_id' => $campaign->id,
-                    'email_contact_id' => $contact->id,
-                    'event_type' => 'sent',
-                    'occurred_at' => now(),
-                    'metadata' => ['message_id' => $result['message_id'] ?? null],
+            } catch (\Throwable $e) {
+                SystemLog::error('email', 'batch.send_exception', "Exceção ao enviar para {$contact->email}: {$e->getMessage()}", [
+                    'campaign_id' => $campaign->id,
+                    'contact_id' => $contact->id,
+                    'contact_email' => $contact->email,
+                    'exception' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
                 ]);
-                $sent++;
-            } else {
+
                 EmailCampaignEvent::create([
                     'email_campaign_id' => $campaign->id,
                     'email_contact_id' => $contact->id,
                     'event_type' => 'failed',
                     'occurred_at' => now(),
-                    'metadata' => ['error' => $result['error'] ?? 'Unknown'],
+                    'metadata' => ['error' => 'Exception: ' . $e->getMessage()],
                 ]);
                 $failed++;
             }

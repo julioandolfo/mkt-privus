@@ -162,10 +162,25 @@ class EmailProviderService
         $sendResponse = Http::withToken($accessToken)
             ->post('https://api.sendpulse.com/smtp/emails', $payload);
 
+        SystemLog::info('email', 'sendpulse.api.response', "Resposta da API SendPulse para {$to}", [
+            'to' => $to,
+            'status_code' => $sendResponse->status(),
+            'is_successful' => $sendResponse->successful(),
+            'response_body' => $sendResponse->body(),
+            'response_json' => $sendResponse->json(),
+        ]);
+
         if ($sendResponse->successful()) {
+            $messageId = $sendResponse->json('id');
+            SystemLog::info('email', 'sendpulse.send.success', "Email enviado via SendPulse: {$to}", [
+                'to' => $to,
+                'message_id' => $messageId,
+                'from' => $from,
+            ]);
+
             return [
                 'success' => true,
-                'message_id' => $sendResponse->json('id'),
+                'message_id' => $messageId,
             ];
         }
 
