@@ -32,6 +32,9 @@ class EmailProviderController extends Controller
                     'daily_limit' => $p->daily_limit,
                     'sends_today' => $p->sends_today,
                     'remaining_quota' => $p->getRemainingQuota(),
+                    'hourly_limit' => $p->hourly_limit,
+                    'sends_this_hour' => $p->sends_this_hour,
+                    'quota_info' => $p->getQuotaInfo(),
                     'campaigns_count' => $p->campaigns()->count(),
                     'created_at' => $p->created_at->format('d/m/Y H:i'),
                     // Informacoes parciais do config para exibicao
@@ -96,6 +99,7 @@ class EmailProviderController extends Controller
             'brand_id' => 'nullable|exists:brands,id',
             'is_default' => 'boolean',
             'daily_limit' => 'nullable|integer|min:0',
+            'hourly_limit' => 'nullable|integer|min:0',
             // SMTP fields
             'host' => 'required_if:type,smtp|string|nullable',
             'port' => 'nullable|integer',
@@ -151,6 +155,7 @@ class EmailProviderController extends Controller
             'config' => $config,
             'is_default' => $request->boolean('is_default', false),
             'daily_limit' => $validated['daily_limit'] ?? null,
+            'hourly_limit' => $validated['hourly_limit'] ?? null,
         ]);
 
         return redirect()->route('email.providers.index')
@@ -163,6 +168,7 @@ class EmailProviderController extends Controller
             'name' => 'required|string|max:255',
             'is_default' => 'boolean',
             'daily_limit' => 'nullable|integer|min:0',
+            'hourly_limit' => 'nullable|integer|min:0',
             'is_active' => 'boolean',
             // SMTP fields
             'host' => 'nullable|string',
@@ -205,6 +211,7 @@ class EmailProviderController extends Controller
             'config' => $config,
             'is_default' => $request->boolean('is_default', false),
             'daily_limit' => $validated['daily_limit'] ?? null,
+            'hourly_limit' => $validated['hourly_limit'] ?? null,
             'is_active' => $request->boolean('is_active', true),
         ]);
 

@@ -159,63 +159,68 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
 <template>
     <AuthenticatedLayout>
         <template #header>
-            <div class="flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <a :href="route('email.campaigns.index')" class="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-white transition">
+            <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <!-- Título e status -->
+                <div class="flex items-start gap-3 min-w-0">
+                    <a :href="route('email.campaigns.index')" class="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-white transition flex-shrink-0 mt-1">
                         <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
                     </a>
-                    <div>
-                        <h1 class="text-2xl font-bold text-white">{{ c.name }}</h1>
-                        <p class="text-sm text-gray-500">{{ c.subject }}</p>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-center gap-2 mb-1">
+                            <h1 class="text-xl lg:text-2xl font-bold text-white truncate">{{ c.name }}</h1>
+                            <span
+                                :class="[
+                                    'inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium flex-shrink-0',
+                                    getStatusBadge(c.status).class,
+                                ]"
+                            >
+                                {{ getStatusBadge(c.status).label }}
+                            </span>
+                        </div>
+                        <p class="text-sm text-gray-500 truncate">{{ c.subject }}</p>
                     </div>
-                    <span
-                        :class="[
-                            'inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium',
-                            getStatusBadge(c.status).class,
-                        ]"
-                    >
-                        {{ getStatusBadge(c.status).label }}
-                    </span>
                 </div>
-                <div class="flex flex-wrap items-center gap-2">
+
+                <!-- Botões de ação -->
+                <div class="flex flex-wrap items-center gap-2 lg:justify-end">
                     <!-- Status: Draft -->
-                    <button v-if="c.can_send && c.status !== 'scheduled'" @click="sendCampaign" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+                    <button v-if="c.can_send && c.status !== 'scheduled'" @click="sendCampaign" class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 whitespace-nowrap">
                         Enviar
                     </button>
 
                     <!-- Status: Scheduled -->
                     <template v-if="c.status === 'scheduled'">
-                        <button @click="openSendNowModal" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+                        <button @click="openSendNowModal" class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 whitespace-nowrap">
                             Enviar Agora
                         </button>
-                        <button @click="openEditScheduleModal" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500">
-                            Alterar Agendamento
+                        <button @click="openEditScheduleModal" class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 whitespace-nowrap">
+                            Alterar
                         </button>
-                        <button @click="cancelCampaign" class="rounded-lg bg-red-600/80 px-4 py-2 text-sm font-medium text-white hover:bg-red-500/80">
-                            Cancelar Agendamento
+                        <button @click="cancelCampaign" class="rounded-lg bg-red-600/80 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500/80 whitespace-nowrap">
+                            Cancelar
                         </button>
                     </template>
 
                     <!-- Status: Sending -->
-                    <button v-if="c.can_pause" @click="pauseCampaign" class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-500">
+                    <button v-if="c.can_pause" @click="pauseCampaign" class="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500 whitespace-nowrap">
                         Pausar
                     </button>
 
                     <!-- Status: Sending/Scheduled -->
-                    <button v-if="c.can_cancel && c.status !== 'scheduled'" @click="cancelCampaign" class="rounded-lg bg-red-600/80 px-4 py-2 text-sm font-medium text-white hover:bg-red-500/80">
+                    <button v-if="c.can_cancel && c.status !== 'scheduled'" @click="cancelCampaign" class="rounded-lg bg-red-600/80 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500/80 whitespace-nowrap">
                         Cancelar
                     </button>
 
-                    <a v-if="c.can_edit" :href="route('email.campaigns.edit', c.id)" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
+                    <a v-if="c.can_edit" :href="route('email.campaigns.edit', c.id)" class="rounded-lg border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 whitespace-nowrap">
                         Editar
                     </a>
-                    <button @click="duplicateCampaign" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
+                    <button @click="duplicateCampaign" class="rounded-lg border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 whitespace-nowrap">
                         Duplicar
                     </button>
-                    <button @click="sendTestModal = true" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
-                        Enviar Teste
+                    <button @click="sendTestModal = true" class="rounded-lg border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 whitespace-nowrap">
+                        Teste
                     </button>
-                    <button v-if="c.can_send && c.status !== 'scheduled'" @click="scheduleModal = true" class="rounded-lg border border-indigo-600 px-4 py-2 text-sm text-indigo-400 hover:bg-indigo-900/30">
+                    <button v-if="c.can_send && c.status !== 'scheduled'" @click="scheduleModal = true" class="rounded-lg border border-indigo-600 px-3 py-1.5 text-sm text-indigo-400 hover:bg-indigo-900/30 whitespace-nowrap">
                         Agendar
                     </button>
                 </div>

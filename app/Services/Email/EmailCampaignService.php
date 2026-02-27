@@ -5,11 +5,13 @@ namespace App\Services\Email;
 use App\Models\EmailCampaign;
 use App\Models\EmailCampaignEvent;
 use App\Models\EmailContact;
+use App\Models\EmailAsset;
 use App\Models\SystemLog;
 use App\Jobs\SendCampaignBatchJob;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use TijsVerkoyen\CssToInlineStyles\CssToInlineStyles;
 
 class EmailCampaignService
@@ -111,6 +113,37 @@ class EmailCampaignService
             return ['sent' => 0, 'failed' => 0, 'reason' => 'no_provider'];
         }
 
+        // Verificar quotas antes de começar
+        if (!$provider->hasQuotaRemaining()) {
+            $quotaInfo = $provider->getQuotaInfo();
+            $errorMsg = 'Limite de envios atingido';
+
+            if ($quotaInfo['hourly_remaining'] !== null && $quotaInfo['hourly_remaining'] <= 0) {
+                $errorMsg = "Limite por hora atingido ({$provider->hourly_limit} emails/hora). Aguarde para continuar.";
+            } elseif ($quotaInfo['daily_remaining'] !== null && $quotaInfo['daily_remaining'] <= 0) {
+                $errorMsg = "Limite diário atingido ({$provider->daily_limit} emails/dia).";
+            }
+
+            SystemLog::warning('email', 'campaign.quota_exceeded', $errorMsg, [
+                'campaign_id' => $campaign->id,
+                'provider_id' => $provider->id,
+                'quota_info' => $quotaInfo,
+            ]);
+
+            // Marcar todos como failed por quota
+            foreach ($contactIds as $contactId) {
+                EmailCampaignEvent::create([
+                    'email_campaign_id' => $campaign->id,
+                    'email_contact_id' => $contactId,
+                    'event_type' => 'failed',
+                    'occurred_at' => now(),
+                    'metadata' => ['error' => $errorMsg, 'reason' => 'quota_exceeded'],
+                ]);
+            }
+
+            return ['sent' => 0, 'failed' => count($contactIds), 'reason' => 'quota_exceeded', 'error' => $errorMsg];
+        }
+
         $contacts = EmailContact::whereIn('id', $contactIds)
             ->where('status', 'active')
             ->get();
@@ -123,6 +156,31 @@ class EmailCampaignService
         $fromName = $campaign->from_name ?: $provider->getFromName() ?: config('app.name');
 
         foreach ($contacts as $contact) {
+            // Verificar quota a cada envio (pode ter sido esgotada no meio do batch)
+            if (!$provider->hasQuotaRemaining()) {
+                $remainingContacts = count($contacts) - $sent - $failed;
+                $errorMsg = 'Limite de envios atingido durante o processamento do batch';
+
+                SystemLog::warning('email', 'campaign.quota_exceeded_mid_batch', $errorMsg, [
+                    'campaign_id' => $campaign->id,
+                    'provider_id' => $provider->id,
+                    'contacts_remaining' => $remainingContacts,
+                ]);
+
+                // Marcar restantes como failed
+                for ($i = 0; $i < $remainingContacts; $i++) {
+                    EmailCampaignEvent::create([
+                        'email_campaign_id' => $campaign->id,
+                        'email_contact_id' => $contact->id,
+                        'event_type' => 'failed',
+                        'occurred_at' => now(),
+                        'metadata' => ['error' => $errorMsg, 'reason' => 'quota_exceeded'],
+                    ]);
+                    $failed++;
+                }
+                break;
+            }
+
             $html = $this->renderForContact($campaign, $contact);
 
             $result = $this->providerService->send(
@@ -186,6 +244,9 @@ class EmailCampaignService
         // Inline CSS (<style> no <head> → atributos style="" em cada elemento)
         // Necessário porque clientes de email (Gmail, Outlook) removem <head>/<style>
         $html = $this->inlineCss($html);
+
+        // Converter imagens para base64 inline (garante que funcionem no email)
+        $html = $this->embedImagesAsBase64($html);
 
         // Adicionar tracking pixel
         $trackOpen = $campaign->getSetting('track_opens', true);
@@ -280,6 +341,116 @@ class EmailCampaignService
         }
 
         return str_replace(array_keys($replacements), array_values($replacements), $content);
+    }
+
+    /**
+     * Converte imagens em URLs para base64 inline (data URI).
+     * Isso garante que as imagens sejam exibidas mesmo sem acesso externo ao storage.
+     */
+    public function embedImagesAsBase64(string $html): string
+    {
+        if (empty($html)) {
+            return $html;
+        }
+
+        // Padrão para encontrar imagens com src
+        $pattern = '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i';
+
+        return preg_replace_callback($pattern, function ($matches) {
+            $originalTag = $matches[0];
+            $src = $matches[1];
+
+            // Se já é base64, não processa
+            if (str_starts_with($src, 'data:')) {
+                return $originalTag;
+            }
+
+            // Se é URL externa (http/https), tenta baixar
+            if (str_starts_with($src, 'http://') || str_starts_with($src, 'https://')) {
+                $base64 = $this->convertUrlToBase64($src);
+                if ($base64) {
+                    return str_replace($src, $base64, $originalTag);
+                }
+                return $originalTag;
+            }
+
+            // Se é caminho relativo do storage (ex: /storage/email-assets/...)
+            if (str_starts_with($src, '/storage/')) {
+                $path = str_replace('/storage/', '', $src);
+                $base64 = $this->convertStoragePathToBase64($path);
+                if ($base64) {
+                    return str_replace($src, $base64, $originalTag);
+                }
+            }
+
+            return $originalTag;
+        }, $html);
+    }
+
+    /**
+     * Converte uma URL para base64 data URI
+     */
+    private function convertUrlToBase64(string $url): ?string
+    {
+        try {
+            // Se é uma URL local do nosso storage, extrai o path
+            $appUrl = config('app.url');
+            if (str_starts_with($url, $appUrl)) {
+                $relativePath = str_replace($appUrl . '/storage/', '', $url);
+                return $this->convertStoragePathToBase64($relativePath);
+            }
+
+            // Para URLs externas (como WooCommerce), baixa o conteúdo
+            $content = file_get_contents($url);
+            if (!$content) {
+                return null;
+            }
+
+            $mimeType = $this->getMimeTypeFromContent($content) ?? 'image/jpeg';
+            $base64 = base64_encode($content);
+
+            return "data:{$mimeType};base64,{$base64}";
+        } catch (\Throwable $e) {
+            Log::warning('Failed to convert URL to base64', ['url' => $url, 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Converte um path do storage para base64 data URI
+     */
+    private function convertStoragePathToBase64(string $path): ?string
+    {
+        try {
+            if (!Storage::disk('public')->exists($path)) {
+                return null;
+            }
+
+            $content = Storage::disk('public')->get($path);
+            $mimeType = Storage::disk('public')->mimeType($path) ?? 'image/jpeg';
+            $base64 = base64_encode($content);
+
+            return "data:{$mimeType};base64,{$base64}";
+        } catch (\Throwable $e) {
+            Log::warning('Failed to convert storage path to base64', ['path' => $path, 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Detecta mime type a partir do conteúdo binário
+     */
+    private function getMimeTypeFromContent(string $content): ?string
+    {
+        $finfo = new \finfo(FILEINFO_MIME_TYPE);
+        $mimeType = $finfo->buffer($content);
+
+        // Limpa charset se presente
+        if ($mimeType && str_contains($mimeType, ';')) {
+            $mimeType = explode(';', $mimeType)[0];
+        }
+
+        return $mimeType ?: null;
     }
 
     /**
