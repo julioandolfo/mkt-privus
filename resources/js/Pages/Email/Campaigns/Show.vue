@@ -453,10 +453,12 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
                         <p class="text-xs text-amber-400 mb-1">Tempo estimado</p>
                         <p class="text-2xl font-bold text-white">{{ scheduleInfo.eta_formatted }}</p>
                         <p class="text-xs text-gray-400">
-                            {{ scheduleInfo.hourly_limit
-                                ? scheduleInfo.hourly_limit + ' emails/hora (limitado)'
-                                : scheduleInfo.send_speed + ' emails/min'
-                            }}
+                            <template v-if="scheduleInfo.hourly_limit">
+                                <span class="text-blue-400">{{ scheduleInfo.hourly_limit }} emails/hora</span> (limite do provedor)
+                            </template>
+                            <template v-else>
+                                {{ scheduleInfo.send_speed }} emails/min
+                            </template>
                         </p>
                     </div>
                 </div>

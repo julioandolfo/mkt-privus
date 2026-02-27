@@ -156,7 +156,7 @@ class EmailCampaignController extends Controller
 
     public function show(EmailCampaign $campaign)
     {
-        $campaign->load(['provider:id,name,type', 'lists:id,name', 'template:id,name']);
+        $campaign->load(['provider:id,name,type,hourly_limit,sends_this_hour', 'lists:id,name', 'template:id,name']);
 
         // Buscar ultimos eventos
         $recentEvents = $campaign->events()
@@ -202,9 +202,18 @@ class EmailCampaignController extends Controller
             ];
         } elseif ($campaign->isSending()) {
             // Calcular progresso e ETA
-            $totalQueued = $campaign->events()->where('event_type', 'queued')->count();
-            $totalProcessed = $campaign->events()->whereIn('event_type', ['sent', 'failed'])->count();
-            $remaining = $totalQueued - $totalProcessed;
+            // Usar distinct para evitar contagens duplicadas se houver múltiplos eventos por contato
+            $totalQueued = $campaign->events()
+                ->where('event_type', 'queued')
+                ->distinct('email_contact_id')
+                ->count('email_contact_id');
+
+            $totalProcessed = $campaign->events()
+                ->whereIn('event_type', ['sent', 'failed'])
+                ->distinct('email_contact_id')
+                ->count('email_contact_id');
+
+            $remaining = max(0, $totalQueued - $totalProcessed);
 
             // Velocidade de envio (padrão: 100 emails/minuto = 1 batch/min)
             $sendSpeed = $campaign->getSetting('send_speed', 100);
@@ -593,12 +602,35 @@ class EmailCampaignController extends Controller
             ]);
         }
 
-        // Remover os eventos 'failed' antigos (para não duplicar)
-        foreach (array_chunk($failedEvents->pluck('id')->toArray(), 500) as $chunk) {
-            \App\Models\EmailCampaignEvent::whereIn('id', $chunk)->delete();
+        // Remover os eventos 'failed' antigos
+        \App\Models\EmailCampaignEvent::where('email_campaign_id', $campaign->id)
+            ->whereIn('email_contact_id', $contactIds)
+            ->where('event_type', 'failed')
+            ->delete();
+
+        // Verificar quais contatos já têm evento 'sent' e removê-los da lista
+        $alreadySent = \App\Models\EmailCampaignEvent::where('email_campaign_id', $campaign->id)
+            ->whereIn('email_contact_id', $contactIds)
+            ->where('event_type', 'sent')
+            ->pluck('email_contact_id')
+            ->toArray();
+
+        $contactIds = array_diff($contactIds, $alreadySent);
+
+        if (empty($contactIds)) {
+            SystemLog::info('email', 'campaign.retry_failed.all_sent', 'Todos os emails já foram enviados anteriormente', [
+                'campaign_id' => $campaign->id,
+            ]);
+            return back()->with('success', 'Todos os emails da lista já foram enviados anteriormente. Nenhum reenvio necessário.');
         }
 
-        // Criar novos eventos 'queued' para os contatos
+        // Remover eventos 'queued' antigos destes contatos (para evitar duplicação na contagem)
+        \App\Models\EmailCampaignEvent::where('email_campaign_id', $campaign->id)
+            ->whereIn('email_contact_id', $contactIds)
+            ->where('event_type', 'queued')
+            ->delete();
+
+        // Criar novos eventos 'queued' para os contatos que não foram enviados
         $now = now();
         $queuedEvents = collect($contactIds)->map(fn($contactId) => [
             'email_campaign_id' => $campaign->id,

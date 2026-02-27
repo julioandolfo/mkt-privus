@@ -194,6 +194,21 @@ class EmailCampaignService
         $fromName = $campaign->from_name ?: $provider->getFromName() ?: config('app.name');
 
         foreach ($contacts as $contact) {
+            // Verificar se este contato já foi enviado (evita duplicados)
+            $alreadySent = EmailCampaignEvent::where('email_campaign_id', $campaign->id)
+                ->where('email_contact_id', $contact->id)
+                ->where('event_type', 'sent')
+                ->exists();
+
+            if ($alreadySent) {
+                SystemLog::info('email', 'batch.skip_already_sent', "Pulando {$contact->email} - já foi enviado anteriormente", [
+                    'campaign_id' => $campaign->id,
+                    'contact_id' => $contact->id,
+                ]);
+                $sent++;
+                continue;
+            }
+
             $html = $this->renderForContact($campaign, $contact);
 
             SystemLog::info('email', 'batch.sending_contact', "Enviando email para {$contact->email}", [
@@ -274,9 +289,15 @@ class EmailCampaignService
             }
         }
 
-        // Verificar se campanha terminou
-        $totalQueued = $campaign->events()->where('event_type', 'queued')->count();
-        $totalProcessed = $campaign->events()->whereIn('event_type', ['sent', 'failed'])->count();
+        // Verificar se campanha terminou (usar distinct para evitar duplicados)
+        $totalQueued = $campaign->events()
+            ->where('event_type', 'queued')
+            ->distinct('email_contact_id')
+            ->count('email_contact_id');
+        $totalProcessed = $campaign->events()
+            ->whereIn('event_type', ['sent', 'failed'])
+            ->distinct('email_contact_id')
+            ->count('email_contact_id');
 
         SystemLog::info('email', 'batch.completed', "Batch finalizado", [
             'campaign_id' => $campaign->id,
