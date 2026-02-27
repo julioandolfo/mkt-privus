@@ -100,7 +100,24 @@ function prevStep() {
     if (step.value > 1) step.value--;
 }
 
+function toLocalISO(datetimeLocal) {
+    if (!datetimeLocal) return '';
+    const d = new Date(datetimeLocal);
+    const pad = (n) => String(n).padStart(2, '0');
+    const offset = -d.getTimezoneOffset();
+    const sign = offset >= 0 ? '+' : '-';
+    const hh = pad(Math.floor(Math.abs(offset) / 60));
+    const mm = pad(Math.abs(offset) % 60);
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00${sign}${hh}:${mm}`;
+}
+
 function submit() {
+    if (form.scheduled_at) {
+        form.transform((data) => ({
+            ...data,
+            scheduled_at: toLocalISO(data.scheduled_at),
+        }));
+    }
     form.post(route('sms.campaigns.store'));
 }
 

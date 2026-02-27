@@ -112,8 +112,10 @@ class SmsCampaignController extends Controller
             'name' => $validated['name'],
             'body' => $validated['body'],
             'sender_name' => $validated['sender_name'],
-            'status' => $validated['scheduled_at'] ? 'scheduled' : 'draft',
-            'scheduled_at' => $validated['scheduled_at'] ?? null,
+            'status' => !empty($validated['scheduled_at']) ? 'scheduled' : 'draft',
+            'scheduled_at' => !empty($validated['scheduled_at'])
+                ? \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'))
+                : null,
             'settings' => $validated['settings'] ?? [],
             'tags' => $validated['tags'] ?? [],
         ]);
@@ -208,12 +210,14 @@ class SmsCampaignController extends Controller
             'scheduled_at' => 'required|date|after:now',
         ]);
 
+        $scheduledAt = \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'));
+
         $campaign->update([
             'status' => 'scheduled',
-            'scheduled_at' => $validated['scheduled_at'],
+            'scheduled_at' => $scheduledAt,
         ]);
 
-        return back()->with('success', 'Campanha agendada para ' . $campaign->scheduled_at->format('d/m/Y H:i'));
+        return back()->with('success', 'Campanha agendada para ' . $scheduledAt->format('d/m/Y H:i'));
     }
 
     public function pause(SmsCampaign $campaign)

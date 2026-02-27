@@ -369,14 +369,17 @@ class EmailCampaignController extends Controller
     {
         $request->validate(['scheduled_at' => 'required|date|after:now']);
 
+        $scheduledAt = \Carbon\Carbon::parse($request->input('scheduled_at'))->setTimezone(config('app.timezone'));
+
         $campaign->update([
             'status' => 'scheduled',
-            'scheduled_at' => $request->input('scheduled_at'),
+            'scheduled_at' => $scheduledAt,
         ]);
 
-        SystemLog::info('email', 'campaign.scheduled', "Campanha \"{$campaign->name}\" agendada para " . $request->input('scheduled_at'), [
+        SystemLog::info('email', 'campaign.scheduled', "Campanha \"{$campaign->name}\" agendada para " . $scheduledAt->format('d/m/Y H:i') . ' (BRT)', [
             'campaign_id' => $campaign->id,
-            'scheduled_at' => $request->input('scheduled_at'),
+            'scheduled_at' => $scheduledAt->toIso8601String(),
+            'scheduled_at_utc' => $scheduledAt->utc()->toIso8601String(),
         ]);
 
         return back()->with('success', 'Campanha agendada!');
@@ -394,13 +397,13 @@ class EmailCampaignController extends Controller
         $request->validate(['scheduled_at' => 'required|date|after:now']);
 
         $oldSchedule = $campaign->scheduled_at;
-        $newSchedule = $request->input('scheduled_at');
+        $newSchedule = \Carbon\Carbon::parse($request->input('scheduled_at'))->setTimezone(config('app.timezone'));
 
         $campaign->update([
             'scheduled_at' => $newSchedule,
         ]);
 
-        SystemLog::info('email', 'campaign.schedule_updated', "Agendamento da campanha \"{$campaign->name}\" alterado", [
+        SystemLog::info('email', 'campaign.schedule_updated', "Agendamento da campanha \"{$campaign->name}\" alterado para " . $newSchedule->format('d/m/Y H:i') . ' (BRT)', [
             'campaign_id' => $campaign->id,
             'old_scheduled_at' => $oldSchedule,
             'new_scheduled_at' => $newSchedule,
@@ -414,28 +417,65 @@ class EmailCampaignController extends Controller
      */
     public function sendNow(EmailCampaign $campaign)
     {
+        SystemLog::info('email', 'campaign.send_now.request', "Requisição de envio imediato recebida para campanha \"{$campaign->name}\"", [
+            'campaign_id' => $campaign->id,
+            'current_status' => $campaign->status,
+            'is_scheduled' => $campaign->isScheduled(),
+            'can_send' => $campaign->canSend(),
+        ]);
+
         if (!$campaign->isScheduled()) {
+            SystemLog::warning('email', 'campaign.send_now.not_scheduled', "Tentativa de enviar agora uma campanha que não está agendada", [
+                'campaign_id' => $campaign->id,
+                'current_status' => $campaign->status,
+            ]);
             return back()->with('error', 'Esta campanha não está agendada.');
         }
 
         if (!$campaign->canSend()) {
+            SystemLog::warning('email', 'campaign.send_now.cannot_send', "Tentativa de enviar campanha que não pode ser enviada", [
+                'campaign_id' => $campaign->id,
+                'has_subject' => !empty($campaign->subject),
+                'has_content' => !empty($campaign->html_content),
+                'has_lists' => $campaign->lists()->count() > 0,
+            ]);
             return back()->with('error', 'Esta campanha não pode ser enviada. Verifique assunto, conteúdo e listas.');
         }
 
-        SystemLog::info('email', 'campaign.send_now', "Campanha \"{$campaign->name}\" enviada manualmente (cancelando agendamento)", [
+        SystemLog::info('email', 'campaign.send_now.starting', "Iniciando envio manual da campanha \"{$campaign->name}\"", [
             'campaign_id' => $campaign->id,
             'was_scheduled_for' => $campaign->scheduled_at,
+            'total_recipients' => $campaign->total_recipients,
         ]);
 
-        // Remove o agendamento e inicia o envio
-        $campaign->update([
-            'status' => 'draft',
-            'scheduled_at' => null,
-        ]);
+        try {
+            // Remove o agendamento e inicia o envio
+            $campaign->update([
+                'status' => 'draft',
+                'scheduled_at' => null,
+            ]);
 
-        $this->campaignService->startCampaign($campaign);
+            SystemLog::info('email', 'campaign.send_now.status_updated', "Status da campanha alterado para draft antes do envio", [
+                'campaign_id' => $campaign->id,
+            ]);
 
-        return back()->with('success', 'Campanha iniciada! Os envios estão sendo processados.');
+            $this->campaignService->startCampaign($campaign);
+
+            SystemLog::info('email', 'campaign.send_now.success', "Campanha \"{$campaign->name}\" iniciada com sucesso", [
+                'campaign_id' => $campaign->id,
+                'new_status' => $campaign->fresh()->status,
+            ]);
+
+            return back()->with('success', 'Campanha iniciada! Os envios estão sendo processados.');
+        } catch (\Throwable $e) {
+            SystemLog::error('email', 'campaign.send_now.failed', "Erro ao iniciar envio da campanha \"{$campaign->name}\": {$e->getMessage()}", [
+                'campaign_id' => $campaign->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return back()->with('error', 'Erro ao iniciar o envio: ' . $e->getMessage());
+        }
     }
 
     /**

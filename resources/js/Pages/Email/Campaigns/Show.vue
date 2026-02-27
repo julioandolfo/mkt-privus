@@ -28,6 +28,8 @@ const sendTestSuccess = ref('');
 const scheduleLoading = ref(false);
 const editScheduleLoading = ref(false);
 const sendNowLoading = ref(false);
+const sendNowError = ref('');
+const sendNowSuccess = ref('');
 
 const statusConfig = {
     draft: { label: 'Rascunho', class: 'bg-gray-700/50 text-gray-400 border-gray-600' },
@@ -106,13 +108,24 @@ async function submitSendTest() {
     }
 }
 
+function toLocalISO(dateStr, timeStr) {
+    const dt = timeStr ? `${dateStr}T${timeStr}` : dateStr;
+    const d = new Date(dt);
+    const pad = (n) => String(n).padStart(2, '0');
+    const offset = -d.getTimezoneOffset();
+    const sign = offset >= 0 ? '+' : '-';
+    const hh = pad(Math.floor(Math.abs(offset) / 60));
+    const mm = pad(Math.abs(offset) % 60);
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00${sign}${hh}:${mm}`;
+}
+
 function submitSchedule() {
     scheduleLoading.value = true;
-    const dt = scheduleDate.value && scheduleTime.value ? `${scheduleDate.value} ${scheduleTime.value}` : scheduleDate.value;
-    if (!dt) {
+    if (!scheduleDate.value) {
         scheduleLoading.value = false;
         return;
     }
+    const dt = toLocalISO(scheduleDate.value, scheduleTime.value || '00:00');
     router.post(route('email.campaigns.schedule', props.campaign.id), { scheduled_at: dt }, {
         onFinish: () => { scheduleLoading.value = false; scheduleModal.value = false; scheduleDate.value = ''; scheduleTime.value = ''; },
     });
@@ -130,11 +143,11 @@ function openEditScheduleModal() {
 
 function submitEditSchedule() {
     editScheduleLoading.value = true;
-    const dt = editScheduleDate.value && editScheduleTime.value ? `${editScheduleDate.value} ${editScheduleTime.value}` : editScheduleDate.value;
-    if (!dt) {
+    if (!editScheduleDate.value) {
         editScheduleLoading.value = false;
         return;
     }
+    const dt = toLocalISO(editScheduleDate.value, editScheduleTime.value || '00:00');
     router.post(route('email.campaigns.update-schedule', props.campaign.id), { scheduled_at: dt }, {
         onFinish: () => { editScheduleLoading.value = false; editScheduleModal.value = false; editScheduleDate.value = ''; editScheduleTime.value = ''; },
     });
@@ -142,12 +155,32 @@ function submitEditSchedule() {
 
 function openSendNowModal() {
     sendNowModal.value = true;
+    sendNowError.value = '';
+    sendNowSuccess.value = '';
 }
 
 function confirmSendNow() {
     sendNowLoading.value = true;
+    sendNowError.value = '';
+    sendNowSuccess.value = '';
+
     router.post(route('email.campaigns.send-now', props.campaign.id), {}, {
-        onFinish: () => { sendNowLoading.value = false; sendNowModal.value = false; },
+        onSuccess: () => {
+            sendNowSuccess.value = 'Campanha iniciada com sucesso! Os envios estão sendo processados.';
+            // Recarrega a página após 1.5 segundos para mostrar o status atualizado
+            setTimeout(() => {
+                router.reload({ only: ['campaign', 'recentEvents'] });
+                sendNowModal.value = false;
+                sendNowSuccess.value = '';
+            }, 1500);
+        },
+        onError: (errors) => {
+            sendNowLoading.value = false;
+            sendNowError.value = errors?.error || 'Erro ao iniciar o envio. Tente novamente.';
+        },
+        onFinish: () => {
+            sendNowLoading.value = false;
+        },
     });
 }
 
@@ -472,20 +505,45 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
         <div v-if="sendNowModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click.self="sendNowModal = false">
             <div class="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-6">
                 <h3 class="mb-2 text-lg font-semibold text-white">Enviar Agora?</h3>
-                <p class="mb-4 text-sm text-gray-400">
-                    Esta campanha está agendada para <span class="text-blue-400 font-medium">{{ c.scheduled_at }}</span>.
-                    Deseja enviar imediatamente e cancelar o agendamento?
-                </p>
-                <div class="rounded-lg bg-amber-900/30 border border-amber-700/50 p-3 mb-4">
-                    <p class="text-xs text-amber-400">
-                        Atenção: Esta ação não pode ser desfeita. Os emails serão enviados imediatamente.
-                    </p>
+
+                <!-- Alerta de Sucesso -->
+                <div v-if="sendNowSuccess" class="mb-4 rounded-lg border border-emerald-700/50 bg-emerald-900/30 px-4 py-3">
+                    <div class="flex items-center gap-2">
+                        <svg class="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                        <p class="text-sm text-emerald-300">{{ sendNowSuccess }}</p>
+                    </div>
                 </div>
+
+                <!-- Alerta de Erro -->
+                <div v-if="sendNowError" class="mb-4 rounded-lg border border-red-700/50 bg-red-900/30 px-4 py-3">
+                    <div class="flex items-center gap-2">
+                        <svg class="h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                        <p class="text-sm text-red-300">{{ sendNowError }}</p>
+                    </div>
+                </div>
+
+                <!-- Conteúdo original (escondido quando há sucesso) -->
+                <template v-if="!sendNowSuccess">
+                    <p class="mb-4 text-sm text-gray-400">
+                        Esta campanha está agendada para <span class="text-blue-400 font-medium">{{ c.scheduled_at }}</span>.
+                        Deseja enviar imediatamente e cancelar o agendamento?
+                    </p>
+                    <div class="rounded-lg bg-amber-900/30 border border-amber-700/50 p-3 mb-4">
+                        <p class="text-xs text-amber-400">
+                            Atenção: Esta ação não pode ser desfeita. Os emails serão enviados imediatamente.
+                        </p>
+                    </div>
+                </template>
+
                 <div class="flex justify-end gap-2">
-                    <button @click="sendNowModal = false" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-400 hover:bg-gray-800">
-                        Cancelar
+                    <button @click="sendNowModal = false; sendNowError = ''; sendNowSuccess = '';" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-400 hover:bg-gray-800">
+                        {{ sendNowSuccess ? 'Fechar' : 'Cancelar' }}
                     </button>
-                    <button @click="confirmSendNow" :disabled="sendNowLoading" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50">
+                    <button v-if="!sendNowSuccess" @click="confirmSendNow" :disabled="sendNowLoading" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50">
                         {{ sendNowLoading ? 'Iniciando...' : 'Sim, Enviar Agora' }}
                     </button>
                 </div>

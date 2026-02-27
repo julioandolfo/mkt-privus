@@ -163,7 +163,11 @@ class PostController extends Controller
             'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,mov,avi|max:51200',
         ]);
 
-        $status = $validated['scheduled_at']
+        $scheduledAt = !empty($validated['scheduled_at'])
+            ? \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'))
+            : null;
+
+        $status = $scheduledAt
             ? PostStatus::Scheduled
             : PostStatus::Draft;
 
@@ -176,7 +180,7 @@ class PostController extends Controller
             'type' => $validated['type'],
             'status' => $status,
             'platforms' => $validated['platforms'],
-            'scheduled_at' => $validated['scheduled_at'] ?? null,
+            'scheduled_at' => $scheduledAt,
         ]);
 
         // Upload de midias
@@ -302,9 +306,13 @@ class PostController extends Controller
             'remove_media.*' => 'integer',
         ]);
 
+        $scheduledAt = !empty($validated['scheduled_at'])
+            ? \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'))
+            : null;
+
         // Determinar status
         $status = $validated['status'] ?? $post->status->value;
-        if (!$validated['status'] && $validated['scheduled_at'] && $post->status === PostStatus::Draft) {
+        if (!$validated['status'] && $scheduledAt && $post->status === PostStatus::Draft) {
             $status = PostStatus::Scheduled->value;
         }
 
@@ -314,7 +322,7 @@ class PostController extends Controller
             'hashtags' => $validated['hashtags'] ?? [],
             'type' => $validated['type'],
             'platforms' => $validated['platforms'],
-            'scheduled_at' => $validated['scheduled_at'] ?? null,
+            'scheduled_at' => $scheduledAt,
             'status' => $status,
         ]);
 
