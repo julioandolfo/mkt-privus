@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { router, usePage } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import axios from 'axios';
@@ -8,6 +8,7 @@ const props = defineProps({
     campaign: Object,
     recentEvents: Array,
     hourlyStats: Object,
+    scheduleInfo: Object,
 });
 
 const page = usePage();
@@ -50,6 +51,51 @@ const eventTypeConfig = {
     failed: { class: 'bg-red-900/40 text-red-400 border-red-600/50' },
     unsubscribed: { class: 'bg-orange-900/40 text-orange-400 border-orange-600/50' },
 };
+
+// Contador regressivo para agendamento
+const countdown = ref('');
+const countdownInterval = ref(null);
+
+function updateCountdown() {
+    if (!props.scheduleInfo || props.scheduleInfo.type !== 'scheduled') {
+        countdown.value = '';
+        return;
+    }
+
+    const scheduledAt = new Date(props.scheduleInfo.scheduled_at);
+    const now = new Date();
+    const diff = scheduledAt - now;
+
+    if (diff <= 0) {
+        countdown.value = 'Aguardando início...';
+        return;
+    }
+
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+    if (hours > 0) {
+        countdown.value = `${hours}h ${minutes}m ${seconds}s`;
+    } else if (minutes > 0) {
+        countdown.value = `${minutes}m ${seconds}s`;
+    } else {
+        countdown.value = `${seconds}s`;
+    }
+}
+
+onMounted(() => {
+    if (props.scheduleInfo?.type === 'scheduled') {
+        updateCountdown();
+        countdownInterval.value = setInterval(updateCountdown, 1000);
+    }
+});
+
+onUnmounted(() => {
+    if (countdownInterval.value) {
+        clearInterval(countdownInterval.value);
+    }
+});
 
 function getStatusBadge(status) {
     return statusConfig[status] || statusConfig.draft;
@@ -309,6 +355,73 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
                 <p class="text-xs text-gray-500">Descadastros</p>
                 <p class="text-xl font-bold text-orange-400">{{ formatNumber(totalUnsubscribed) }}</p>
                 <p class="text-xs text-gray-400">{{ c.unsubscribe_rate ?? '-' }}%</p>
+            </div>
+        </div>
+
+        <!-- Agendamento / Progresso -->
+        <div v-if="scheduleInfo" class="mb-8">
+            <!-- Status: Agendado -->
+            <div v-if="scheduleInfo.type === 'scheduled'" class="rounded-xl border border-blue-700/50 bg-blue-900/20 p-6">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <div class="flex h-14 w-14 items-center justify-center rounded-xl bg-blue-600/30">
+                            <svg class="h-7 w-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <circle cx="12" cy="12" r="10" />
+                                <polyline points="12 6 12 12 16 14" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold text-white">Campanha Agendada</h3>
+                            <p class="text-sm text-blue-300">
+                                Envio programado para <span class="font-medium text-white">{{ scheduleInfo.scheduled_at_formatted }}</span>
+                            </p>
+                            <p v-if="scheduleInfo.is_overdue" class="text-xs text-amber-400 mt-1">
+                                ⚠️ Horário do agendamento já passou - será enviado assim que o scheduler executar
+                            </p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs text-blue-400 mb-1">Faltam</p>
+                        <p class="text-3xl font-bold text-white font-mono">{{ countdown }}</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Status: Enviando -->
+            <div v-if="scheduleInfo.type === 'sending'" class="rounded-xl border border-amber-700/50 bg-amber-900/20 p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-4">
+                        <div class="flex h-14 w-14 items-center justify-center rounded-xl bg-amber-600/30 animate-pulse">
+                            <svg class="h-7 w-7 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold text-white">Enviando Emails...</h3>
+                            <p class="text-sm text-amber-300">
+                                {{ scheduleInfo.total_processed }} de {{ scheduleInfo.total_queued }} processados
+                            </p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs text-amber-400 mb-1">Tempo estimado</p>
+                        <p class="text-2xl font-bold text-white">{{ scheduleInfo.eta_formatted }}</p>
+                        <p class="text-xs text-gray-400">{{ scheduleInfo.send_speed }} emails/min</p>
+                    </div>
+                </div>
+
+                <!-- Progress bar -->
+                <div class="mb-2 flex justify-between text-xs">
+                    <span class="text-gray-400">Progresso</span>
+                    <span class="text-white font-medium">{{ scheduleInfo.progress_percent }}%</span>
+                </div>
+                <div class="h-3 rounded-full bg-gray-800 overflow-hidden">
+                    <div class="h-full rounded-full bg-amber-500 transition-all duration-500" :style="{ width: scheduleInfo.progress_percent + '%' }"></div>
+                </div>
+                <div class="mt-2 flex justify-between text-xs text-gray-500">
+                    <span>{{ scheduleInfo.remaining }} restantes</span>
+                    <span v-if="scheduleInfo.progress_percent >= 99">Quase lá...</span>
+                </div>
             </div>
         </div>
 

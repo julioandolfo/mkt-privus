@@ -86,6 +86,8 @@ const categoryLabels: Record<string, string> = {
     icon: 'Ícones',
     watermark: 'Marcas d\'água',
     reference: 'Referências Visuais',
+    mascot: 'Mascotes',
+    product: 'Produtos',
 };
 
 const categoryDescriptions: Record<string, string> = {
@@ -93,11 +95,13 @@ const categoryDescriptions: Record<string, string> = {
     icon: 'Ícones e favicons da marca',
     watermark: 'Marcas d\'água para aplicar em imagens',
     reference: 'Imagens de referência visual para a IA',
+    mascot: 'Mascote ou personagem da marca — usado nas sugestões de conteúdo',
+    product: 'Fotos de produtos — usadas para sugestões de posts e campanhas',
 };
 
 const assetsByCategory = computed(() => {
     const grouped: Record<string, BrandAsset[]> = {};
-    for (const cat of ['logo', 'icon', 'watermark', 'reference']) {
+    for (const cat of ['logo', 'icon', 'watermark', 'reference', 'mascot', 'product']) {
         grouped[cat] = assets.value.filter(a => a.category === cat);
     }
     return grouped;
@@ -415,7 +419,7 @@ const urlTypeOptions = [
                 <!-- Assets da Marca -->
                 <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
                     <h2 class="text-lg font-semibold text-white mb-2">Assets da Marca</h2>
-                    <p class="text-sm text-gray-500 mb-6">Logotipos, ícones e imagens de referência para uso em posts e como contexto para a IA.</p>
+                    <p class="text-sm text-gray-500 mb-6">Logotipos, ícones, mascotes, produtos e referências visuais. A IA usará essas imagens como contexto para gerar sugestões de conteúdo.</p>
 
                     <!-- Upload Area -->
                     <div class="mb-6 rounded-xl border-2 border-dashed transition"
@@ -435,6 +439,8 @@ const urlTypeOptions = [
                                     <option value="icon">Ícone</option>
                                     <option value="watermark">Marca d'água</option>
                                     <option value="reference">Referência</option>
+                                    <option value="mascot">Mascote</option>
+                                    <option value="product">Produto</option>
                                 </select>
                                 <input v-model="uploadLabel" type="text" placeholder="Nome (opcional)" class="rounded-lg bg-gray-700 border-gray-600 text-white text-sm px-3 py-1.5 w-40" />
                                 <label class="cursor-pointer rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 transition">

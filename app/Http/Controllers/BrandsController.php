@@ -207,7 +207,7 @@ class BrandsController extends Controller
         try {
             $request->validate([
                 'file' => 'required|image|mimes:jpeg,jpg,png,gif,webp,svg|max:10240', // 10MB
-                'category' => 'required|string|in:logo,icon,watermark,reference',
+                'category' => 'required|string|in:logo,icon,watermark,reference,mascot,product',
                 'label' => 'nullable|string|max:255',
             ]);
 

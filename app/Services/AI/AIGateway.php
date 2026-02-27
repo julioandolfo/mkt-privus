@@ -248,6 +248,16 @@ class AIGateway
             $prompt .= ". ";
         }
 
+        $mascot = $brand->mascots()->primary()->first() ?? $brand->mascots()->first();
+        if ($mascot) {
+            $prompt .= "The brand has a mascot/character named \"{$mascot->label}\". When relevant to the topic, include a friendly character or mascot figure in the image. ";
+        }
+
+        $hasProducts = $brand->products()->exists();
+        if ($hasProducts) {
+            $prompt .= "The brand sells physical/digital products. When the topic is product-related, create a product showcase-style composition. ";
+        }
+
         $captionEssence = mb_substr(strip_tags($caption), 0, 150);
         if ($captionEssence) {
             $prompt .= "Content context: \"{$captionEssence}\". ";

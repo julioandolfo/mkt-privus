@@ -125,6 +125,13 @@ class GenerateSmsAiSuggestionsJob implements ShouldQueue
         $links = $brand->links ?? [];
         $context['links'] = collect($links)->map(fn($l) => ($l['label'] ?? '') . ': ' . ($l['url'] ?? ''))->implode(', ');
 
+        // Mascotes e produtos
+        $mascots = $brand->mascots()->pluck('label')->filter();
+        $context['mascot'] = $mascots->isNotEmpty() ? $mascots->implode(', ') : '';
+
+        $products = $brand->products()->pluck('label')->filter();
+        $context['products'] = $products->isNotEmpty() ? $products->implode(', ') : '';
+
         return $context;
     }
 
@@ -139,6 +146,8 @@ TOM: {$context['tone']}
 DESCRIÇÃO: {$context['description']}
 REDES SOCIAIS: {$context['social']}
 LINKS: {$context['links']}
+MASCOTE: {$context['mascot']}
+PRODUTOS: {$context['products']}
 
 TAREFA: Gere 3 sugestões de campanhas SMS para esta marca.
 
@@ -150,6 +159,8 @@ REGRAS:
 - Adapte ao tom de voz e segmento da marca
 - Crie campanhas variadas: promoção, engajamento, lembrete
 - Considere o contexto das redes sociais para manter coerência
+- Se a marca tem mascote, pode usar o personagem para humanizar a mensagem
+- Se a marca tem produtos cadastrados, crie pelo menos 1 SMS focado em produto
 - Responda APENAS em formato JSON válido
 
 FORMATO DE RESPOSTA (JSON array):

@@ -61,7 +61,7 @@ const brandCreateTips = [
     'Palavras-chave: Orientam a IA sobre os principais temas e termos relevantes para seu negócio.',
     'Público-alvo: Ajuda a IA a adaptar a linguagem e abordagem para atingir as pessoas certas.',
     'URLs de sites: Adicione URLs do site, e-commerce ou catálogo para que a IA possa utilizar links de produtos nos posts.',
-    'Logotipos e imagens: Após criar a marca, você será redirecionado para adicionar logotipos, ícones e referências visuais.',
+    'Logotipos e imagens: Após criar a marca, você será redirecionado para adicionar logotipos, ícones, mascotes, produtos e referências visuais.',
 ];
 
 const toneOptions = [
@@ -357,14 +357,14 @@ const urlTypeOptions = [
 
                 <!-- Assets (disponivel apos criar) -->
                 <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
-                    <h2 class="text-lg font-semibold text-white mb-2">Logotipos e Referências Visuais</h2>
-                    <p class="text-sm text-gray-500 mb-4">Logotipos, ícones e imagens de referência para a geração de conteúdo pela IA.</p>
+                    <h2 class="text-lg font-semibold text-white mb-2">Assets da Marca</h2>
+                    <p class="text-sm text-gray-500 mb-4">Logotipos, ícones, mascotes, produtos e referências visuais para a geração de conteúdo pela IA.</p>
                     <div class="rounded-xl border-2 border-dashed border-gray-700 p-8 text-center">
                         <svg class="mx-auto h-12 w-12 text-gray-600 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
                         </svg>
                         <p class="text-sm font-medium text-gray-400 mb-1">Upload disponível após criar a marca</p>
-                        <p class="text-xs text-gray-600">Ao clicar em "Criar Marca", você será redirecionado para adicionar logotipos, ícones, marcas d'água e referências visuais para a IA.</p>
+                        <p class="text-xs text-gray-600">Ao clicar em "Criar Marca", você será redirecionado para adicionar logotipos, ícones, mascotes, fotos de produtos e referências visuais para a IA.</p>
                     </div>
                 </div>
 

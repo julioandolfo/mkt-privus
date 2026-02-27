@@ -82,6 +82,16 @@ class Brand extends Model
         return $this->assets()->where('category', 'reference');
     }
 
+    public function mascots(): HasMany
+    {
+        return $this->assets()->where('category', 'mascot');
+    }
+
+    public function products(): HasMany
+    {
+        return $this->assets()->where('category', 'product');
+    }
+
     public function contentRules(): HasMany
     {
         return $this->hasMany(ContentRule::class);
@@ -152,6 +162,8 @@ class Brand extends Model
         - Considere o público-alvo ao criar conteúdo.
         - Use as palavras-chave naturalmente no conteúdo.
         - Quando relevante, utilize as URLs da marca para direcionar o público (links de produtos, site, etc).
+        - Se a marca possuir mascote, incorpore-o nas sugestões de conteúdo quando fizer sentido (storytelling, interação, humor).
+        - Se a marca possuir fotos de produtos cadastrados, sugira conteúdos que destaquem esses produtos (fotos, reviews, promoções, unboxing, comparativos).
         EOT;
 
         return $context;
@@ -176,6 +188,8 @@ class Brand extends Model
             'icon' => 'Ícones',
             'watermark' => 'Marcas d\'água',
             'reference' => 'Referências visuais',
+            'mascot' => 'Mascotes',
+            'product' => 'Produtos',
         ];
 
         foreach ($grouped as $category => $items) {

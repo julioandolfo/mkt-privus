@@ -202,6 +202,15 @@ class EmailAiSuggestionService
             'date' => $c->started_at?->format('d/m/Y'),
         ])->toArray();
 
+        $mascots = $brand->mascots()->get();
+        $context['has_mascot'] = $mascots->isNotEmpty();
+        $context['mascot_names'] = $mascots->pluck('label')->filter()->values()->toArray();
+
+        $products = $brand->products()->get();
+        $context['has_products'] = $products->isNotEmpty();
+        $context['product_names'] = $products->pluck('label')->filter()->values()->toArray();
+        $context['product_count'] = $products->count();
+
         return $context;
     }
 
@@ -250,6 +259,18 @@ class EmailAiSuggestionService
             }
         }
 
+        if (!empty($context['has_mascot'])) {
+            $mascotNames = implode(', ', $context['mascot_names']);
+            $prompt .= "\n=== MASCOTE DA MARCA ===\n";
+            $prompt .= "A marca possui mascote/personagem: {$mascotNames}. Considere usar o mascote em pelo menos 1 sugestão (storytelling, humanização, humor).\n";
+        }
+
+        if (!empty($context['has_products'])) {
+            $productNames = implode(', ', $context['product_names']);
+            $prompt .= "\n=== PRODUTOS CADASTRADOS ({$context['product_count']}) ===\n";
+            $prompt .= "Produtos: {$productNames}. Considere incluir pelo menos 1 sugestão focada em produto (destaque, lançamento, promoção, review).\n";
+        }
+
         $prompt .= "\n=== INSTRUÇÕES ===\n";
         $prompt .= "Hoje é {$dayOfWeek}, {$today}.\n";
         $prompt .= "Gere 3-5 sugestões de emails que a marca deveria enviar nos próximos dias.\n";
@@ -258,7 +279,9 @@ class EmailAiSuggestionService
         $prompt .= "- Conteúdo que performou bem nas redes sociais\n";
         $prompt .= "- Links e páginas disponíveis da marca\n";
         $prompt .= "- Evitar repetir assuntos de campanhas recentes\n";
-        $prompt .= "- Variar entre tipos: newsletter, promocional, educacional, engajamento, sazonal\n\n";
+        $prompt .= "- Variar entre tipos: newsletter, promocional, educacional, engajamento, sazonal\n";
+        $prompt .= "- Se a marca tem mascote, use-o para humanizar e engajar em pelo menos 1 email\n";
+        $prompt .= "- Se a marca tem produtos cadastrados, crie sugestões que destaquem esses produtos\n\n";
 
         $prompt .= "Responda APENAS com um JSON array, SEM formatação markdown, no seguinte formato:\n";
         $prompt .= '[{"title":"Titulo da pauta","description":"Descrição completa do conteúdo sugerido, com ideias de seções e abordagem","subject":"Linha de assunto sugerida","preview":"Texto de preview do email","audience":"Público-alvo específico","type":"newsletter|promotional|educational|seasonal|engagement","send_date":"YYYY-MM-DD"}]';

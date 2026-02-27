@@ -62,6 +62,16 @@ class BrandAsset extends Model
         return $query->where('category', 'reference');
     }
 
+    public function scopeMascots($query)
+    {
+        return $query->where('category', 'mascot');
+    }
+
+    public function scopeProducts($query)
+    {
+        return $query->where('category', 'product');
+    }
+
     public function scopePrimary($query)
     {
         return $query->where('is_primary', true);

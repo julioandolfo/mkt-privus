@@ -291,6 +291,8 @@ Responda APENAS com um array JSON, sem markdown, sem explicações:
 - Hashtags: 5 a 10 por sugestão, sem acentos
 - Plataformas disponíveis: instagram, facebook, linkedin, tiktok, youtube, pinterest
 - Tipos de post: feed, carousel, story, reel, video, pin
+- Se a marca possui mascote, inclua pelo menos 1 sugestão que use o mascote como personagem (storytelling, humor, interação)
+- Se a marca possui fotos de produtos, inclua pelo menos 1 sugestão focada em produto (destaque, review, promoção, comparativo, unboxing)
 - Responda APENAS com o JSON
 PROMPT;
     }

@@ -187,6 +187,40 @@ class EmailCampaignController extends Controller
             }
         }
 
+        // Informações de agendamento/progresso
+        $scheduleInfo = null;
+        if ($campaign->isScheduled() && $campaign->scheduled_at) {
+            $scheduleInfo = [
+                'type' => 'scheduled',
+                'scheduled_at' => $campaign->scheduled_at->toISOString(),
+                'scheduled_at_formatted' => $campaign->scheduled_at->format('d/m/Y H:i:s'),
+                'time_until' => $campaign->scheduled_at->diffForHumans(),
+                'is_overdue' => $campaign->scheduled_at->isPast(),
+            ];
+        } elseif ($campaign->isSending()) {
+            // Calcular progresso e ETA
+            $totalQueued = $campaign->events()->where('event_type', 'queued')->count();
+            $totalProcessed = $campaign->events()->whereIn('event_type', ['sent', 'failed'])->count();
+            $remaining = $totalQueued - $totalProcessed;
+
+            // Velocidade de envio (padrão: 100 emails/minuto = 1 batch/min)
+            $sendSpeed = $campaign->getSetting('send_speed', 100);
+            $etaMinutes = ceil($remaining / $sendSpeed);
+
+            $scheduleInfo = [
+                'type' => 'sending',
+                'progress_percent' => $totalQueued > 0 ? round(($totalProcessed / $totalQueued) * 100, 1) : 0,
+                'total_queued' => $totalQueued,
+                'total_processed' => $totalProcessed,
+                'remaining' => $remaining,
+                'eta_minutes' => $etaMinutes,
+                'eta_formatted' => $etaMinutes > 60
+                    ? ceil($etaMinutes / 60) . ' horas'
+                    : $etaMinutes . ' minutos',
+                'send_speed' => $sendSpeed,
+            ];
+        }
+
         return Inertia::render('Email/Campaigns/Show', [
             'campaign' => [
                 'id' => $campaign->id,
@@ -230,6 +264,7 @@ class EmailCampaignController extends Controller
             ],
             'recentEvents' => $recentEvents,
             'hourlyStats' => $hourlyStats,
+            'scheduleInfo' => $scheduleInfo,
         ]);
     }
 
