@@ -186,6 +186,21 @@ class EmailCampaignService
             ->where('status', 'active')
             ->get();
 
+        SystemLog::info('email', 'batch.contacts_loaded', "Contatos carregados: {$contacts->count()} de " . count($contactIds) . " IDs", [
+            'campaign_id' => $campaignId,
+            'requested_count' => count($contactIds),
+            'loaded_count' => $contacts->count(),
+            'contact_ids' => $contactIds,
+        ]);
+
+        if ($contacts->isEmpty()) {
+            SystemLog::warning('email', 'batch.no_active_contacts', "Nenhum contato ativo encontrado para o batch", [
+                'campaign_id' => $campaignId,
+                'contact_ids' => $contactIds,
+            ]);
+            return ['sent' => 0, 'failed' => 0, 'reason' => 'no_active_contacts'];
+        }
+
         $sent = 0;
         $failed = 0;
 
@@ -205,7 +220,7 @@ class EmailCampaignService
                     'campaign_id' => $campaign->id,
                     'contact_id' => $contact->id,
                 ]);
-                $sent++;
+                // Não incrementa $sent aqui - este email já foi contado antes
                 continue;
             }
 
