@@ -118,6 +118,10 @@ class EmailCampaignService
         $sent = 0;
         $failed = 0;
 
+        // Determinar o email do remetente correto (especialmente para SendPulse)
+        $fromEmail = $this->resolveFromEmail($campaign);
+        $fromName = $campaign->from_name ?: $provider->getFromName() ?: config('app.name');
+
         foreach ($contacts as $contact) {
             $html = $this->renderForContact($campaign, $contact);
 
@@ -126,8 +130,8 @@ class EmailCampaignService
                 $contact->email,
                 $this->renderMergeTags($campaign->subject, $contact),
                 $html,
-                $campaign->from_name,
-                $campaign->from_email,
+                $fromName,
+                $fromEmail,
                 $campaign->reply_to,
                 [
                     'X-Campaign-ID' => (string) $campaign->id,
@@ -200,6 +204,29 @@ class EmailCampaignService
         $html = $this->renderMergeTags($html, $contact);
 
         return $html;
+    }
+
+    /**
+     * Retorna o email do remetente correto para envio.
+     * Para SendPulse, SEMPRE usa o email configurado no provedor para evitar erros.
+     */
+    public function resolveFromEmail(EmailCampaign $campaign): string
+    {
+        $provider = $campaign->provider;
+
+        if (!$provider) {
+            return $campaign->from_email ?: config('mail.from.address');
+        }
+
+        // SendPulse: sempre usar o email verificado do provedor
+        if ($provider->type === 'sendpulse') {
+            $configFromEmail = $provider->config['from_email'] ?? $provider->config['from_address'] ?? null;
+            if ($configFromEmail) {
+                return $configFromEmail;
+            }
+        }
+
+        return $campaign->from_email ?: $provider->getFromEmail() ?: config('mail.from.address');
     }
 
     /**

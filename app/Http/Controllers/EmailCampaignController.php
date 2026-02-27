@@ -6,6 +6,7 @@ use App\Models\EmailCampaign;
 use App\Models\EmailList;
 use App\Models\EmailProvider;
 use App\Models\EmailTemplate;
+use App\Models\SystemLog;
 use App\Services\Email\EmailCampaignService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -351,7 +352,68 @@ class EmailCampaignController extends Controller
             'scheduled_at' => $request->input('scheduled_at'),
         ]);
 
+        SystemLog::info('email', 'campaign.scheduled', "Campanha \"{$campaign->name}\" agendada para " . $request->input('scheduled_at'), [
+            'campaign_id' => $campaign->id,
+            'scheduled_at' => $request->input('scheduled_at'),
+        ]);
+
         return back()->with('success', 'Campanha agendada!');
+    }
+
+    /**
+     * Editar agendamento
+     */
+    public function updateSchedule(Request $request, EmailCampaign $campaign)
+    {
+        if (!$campaign->isScheduled()) {
+            return back()->with('error', 'Esta campanha não está agendada.');
+        }
+
+        $request->validate(['scheduled_at' => 'required|date|after:now']);
+
+        $oldSchedule = $campaign->scheduled_at;
+        $newSchedule = $request->input('scheduled_at');
+
+        $campaign->update([
+            'scheduled_at' => $newSchedule,
+        ]);
+
+        SystemLog::info('email', 'campaign.schedule_updated', "Agendamento da campanha \"{$campaign->name}\" alterado", [
+            'campaign_id' => $campaign->id,
+            'old_scheduled_at' => $oldSchedule,
+            'new_scheduled_at' => $newSchedule,
+        ]);
+
+        return back()->with('success', 'Agendamento atualizado!');
+    }
+
+    /**
+     * Enviar agora (cancela agendamento e envia imediatamente)
+     */
+    public function sendNow(EmailCampaign $campaign)
+    {
+        if (!$campaign->isScheduled()) {
+            return back()->with('error', 'Esta campanha não está agendada.');
+        }
+
+        if (!$campaign->canSend()) {
+            return back()->with('error', 'Esta campanha não pode ser enviada. Verifique assunto, conteúdo e listas.');
+        }
+
+        SystemLog::info('email', 'campaign.send_now', "Campanha \"{$campaign->name}\" enviada manualmente (cancelando agendamento)", [
+            'campaign_id' => $campaign->id,
+            'was_scheduled_for' => $campaign->scheduled_at,
+        ]);
+
+        // Remove o agendamento e inicia o envio
+        $campaign->update([
+            'status' => 'draft',
+            'scheduled_at' => null,
+        ]);
+
+        $this->campaignService->startCampaign($campaign);
+
+        return back()->with('success', 'Campanha iniciada! Os envios estão sendo processados.');
     }
 
     /**
@@ -404,15 +466,45 @@ class EmailCampaignController extends Controller
 
         $html = $this->inlineCssForEmail($campaign->html_content ?? '<p>Sem conteúdo</p>');
 
+        // Usar o email correto do provedor (especialmente para SendPulse)
+        $campaignService = app(\App\Services\Email\EmailCampaignService::class);
+        $fromEmail = $campaignService->resolveFromEmail($campaign);
+        $fromName = $campaign->from_name ?: $provider->getFromName() ?: config('app.name');
+
+        SystemLog::info('email', 'campaign.test.start', "Iniciando envio de teste da campanha \"{$campaign->name}\"", [
+            'campaign_id' => $campaign->id,
+            'test_email' => $request->input('test_email'),
+            'from_email' => $fromEmail,
+            'from_name' => $fromName,
+            'provider_type' => $provider->type,
+            'provider_id' => $provider->id,
+        ]);
+
         $providerService = app(\App\Services\Email\EmailProviderService::class);
         $result = $providerService->send(
             $provider,
             $request->input('test_email'),
             '[TESTE] ' . $campaign->subject,
             $html,
-            $campaign->from_name ?: $provider->getFromName(),
-            $campaign->from_email ?: $provider->getFromEmail(),
+            $fromName,
+            $fromEmail,
         );
+
+        if ($result['success']) {
+            SystemLog::info('email', 'campaign.test.success', "Envio de teste da campanha \"{$campaign->name}\" realizado com sucesso", [
+                'campaign_id' => $campaign->id,
+                'test_email' => $request->input('test_email'),
+                'from_email' => $fromEmail,
+                'message_id' => $result['message_id'] ?? null,
+            ]);
+        } else {
+            SystemLog::error('email', 'campaign.test.failed', "Falha no envio de teste da campanha \"{$campaign->name}\"", [
+                'campaign_id' => $campaign->id,
+                'test_email' => $request->input('test_email'),
+                'from_email' => $fromEmail,
+                'error' => $result['error'] ?? 'Unknown error',
+            ]);
+        }
 
         return response()->json($result);
     }
@@ -434,10 +526,31 @@ class EmailCampaignController extends Controller
 
             $provider = EmailProvider::find($request->input('email_provider_id'));
             if (!$provider) {
+                SystemLog::warning('email', 'campaign.test_preview.provider_not_found', 'Provedor não encontrado para envio de teste', [
+                    'provider_id' => $request->input('email_provider_id'),
+                ]);
                 return response()->json(['success' => false, 'error' => 'Provedor não encontrado. ID: ' . $request->input('email_provider_id')]);
             }
 
             $html = $this->inlineCssForEmail($request->input('html_content'));
+
+            // Para SendPulse, sempre usar o email configurado no provedor
+            $configFromEmail = $provider->config['from_email'] ?? $provider->config['from_address'] ?? null;
+            if ($provider->type === 'sendpulse' && $configFromEmail) {
+                $fromEmail = $configFromEmail;
+            } else {
+                $fromEmail = $request->input('from_email') ?: $provider->getFromEmail() ?: config('mail.from.address');
+            }
+            $fromName = $request->input('from_name') ?: $provider->getFromName() ?: config('app.name');
+
+            SystemLog::info('email', 'campaign.test_preview.start', 'Iniciando envio de teste (preview)', [
+                'test_email' => $request->input('test_email'),
+                'from_email' => $fromEmail,
+                'from_name' => $fromName,
+                'provider_type' => $provider->type,
+                'provider_id' => $provider->id,
+                'subject' => $request->input('subject'),
+            ]);
 
             $providerService = app(\App\Services\Email\EmailProviderService::class);
             $result = $providerService->send(
@@ -445,20 +558,38 @@ class EmailCampaignController extends Controller
                 $request->input('test_email'),
                 '[TESTE] ' . $request->input('subject'),
                 $html,
-                $request->input('from_name') ?: $provider->getFromName(),
-                $request->input('from_email') ?: $provider->getFromEmail(),
+                $fromName,
+                $fromEmail,
             );
+
+            if ($result['success']) {
+                SystemLog::info('email', 'campaign.test_preview.success', 'Envio de teste (preview) realizado com sucesso', [
+                    'test_email' => $request->input('test_email'),
+                    'from_email' => $fromEmail,
+                    'message_id' => $result['message_id'] ?? null,
+                ]);
+            } else {
+                SystemLog::error('email', 'campaign.test_preview.failed', 'Falha no envio de teste (preview)', [
+                    'test_email' => $request->input('test_email'),
+                    'from_email' => $fromEmail,
+                    'error' => $result['error'] ?? 'Unknown error',
+                ]);
+            }
 
             return response()->json($result);
         } catch (\Illuminate\Validation\ValidationException $e) {
+            SystemLog::warning('email', 'campaign.test_preview.validation_failed', 'Validação falhou no envio de teste preview', [
+                'errors' => $e->errors(),
+            ]);
             return response()->json([
                 'success' => false,
                 'error' => 'Validação: ' . collect($e->errors())->flatten()->implode(', '),
             ], 422);
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::error('sendTestPreview error', [
+            SystemLog::error('email', 'campaign.test_preview.error', 'Erro interno no envio de teste preview', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile() . ':' . $e->getLine(),
+                'trace' => $e->getTraceAsString(),
             ]);
             return response()->json([
                 'success' => false,

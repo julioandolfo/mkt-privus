@@ -78,11 +78,25 @@ class InstagramPublisher extends AbstractPublisher
         ]);
 
         try {
+            // Instagram exige 2-10 itens para carrossel; com 1 item, sempre publica como single
+            // Vídeos standalone SEMPRE usam REELS (media_type=VIDEO é apenas para carousel items)
             if ($mediaItems->count() === 1) {
                 return $this->publishSingle($post, $igUserId, $token, $caption, $mediaItems->first());
             }
 
-            return $this->publishCarousel($post, $igUserId, $token, $caption, $mediaItems);
+            // Se todos os itens são vídeos e há apenas 1, publicar como single (Reels)
+            // Isso pode acontecer se mídias foram removidas deixando apenas 1
+            $validItems = $mediaItems->filter(fn($m) => !empty($m->file_path));
+            if ($validItems->count() === 1) {
+                SystemLog::info('social', 'ig.publish.single_fallback', "Instagram: apenas 1 mídia válida, publicando como single ao invés de carrossel", [
+                    'post_id'     => $post->id,
+                    'total_media' => $mediaItems->count(),
+                    'valid_media' => $validItems->count(),
+                ]);
+                return $this->publishSingle($post, $igUserId, $token, $caption, $validItems->first());
+            }
+
+            return $this->publishCarousel($post, $igUserId, $token, $caption, $validItems);
         } finally {
             $this->cleanupTempPhotos($token);
         }
@@ -131,7 +145,7 @@ class InstagramPublisher extends AbstractPublisher
             'url'        => $resolvedUrl,
         ]);
 
-        $containerResponse = Http::post(self::BASE_URL . "/{$igUserId}/media", $params);
+        $containerResponse = Http::asForm()->post(self::BASE_URL . "/{$igUserId}/media", $params);
 
         SystemLog::info('social', 'ig.container.response', "Instagram: resposta container", [
             'post_id' => $post->id,
@@ -173,7 +187,10 @@ class InstagramPublisher extends AbstractPublisher
             $isVideo = $media->type === 'video';
             $resolvedUrl = $this->resolveMediaUrl($post, $media, $token, $isVideo);
 
-            $params = ['is_carousel_item' => 'true', 'access_token' => $token];
+            $params = [
+                'is_carousel_item' => 'true',
+                'access_token'     => $token,
+            ];
 
             if ($isVideo) {
                 $params['media_type'] = 'VIDEO';
@@ -183,13 +200,14 @@ class InstagramPublisher extends AbstractPublisher
             }
 
             SystemLog::info('social', 'ig.carousel.item', "Instagram: criando item carrossel #{$index}", [
-                'post_id'    => $post->id,
-                'media_id'   => $media->id,
-                'media_type' => $params['media_type'] ?? 'IMAGE',
-                'url'        => $resolvedUrl,
+                'post_id'           => $post->id,
+                'media_id'          => $media->id,
+                'media_type'        => $params['media_type'] ?? 'IMAGE',
+                'is_carousel_item'  => true,
+                'url'               => $resolvedUrl,
             ]);
 
-            $response = Http::post(self::BASE_URL . "/{$igUserId}/media", $params);
+            $response = Http::asForm()->post(self::BASE_URL . "/{$igUserId}/media", $params);
 
             SystemLog::info('social', 'ig.carousel.item.response', "Instagram: resposta item carrossel #{$index}", [
                 'post_id' => $post->id,
@@ -221,7 +239,7 @@ class InstagramPublisher extends AbstractPublisher
             $childIds[] = $childId;
         }
 
-        $carouselResponse = Http::post(self::BASE_URL . "/{$igUserId}/media", [
+        $carouselResponse = Http::asForm()->post(self::BASE_URL . "/{$igUserId}/media", [
             'media_type'   => 'CAROUSEL',
             'children'     => implode(',', $childIds),
             'caption'      => $caption,
@@ -229,9 +247,10 @@ class InstagramPublisher extends AbstractPublisher
         ]);
 
         SystemLog::info('social', 'ig.carousel.container.response', "Instagram: resposta container carrossel", [
-            'post_id' => $post->id,
-            'status'  => $carouselResponse->status(),
-            'body'    => $carouselResponse->json(),
+            'post_id'    => $post->id,
+            'status'     => $carouselResponse->status(),
+            'body'       => $carouselResponse->json(),
+            'child_ids'  => $childIds,
         ]);
 
         if (!$carouselResponse->successful()) {
@@ -239,6 +258,15 @@ class InstagramPublisher extends AbstractPublisher
         }
 
         $carouselId = $carouselResponse->json('id');
+
+        // Verificar que o carousel ID é diferente dos child IDs (sanity check)
+        if (in_array($carouselId, $childIds)) {
+            SystemLog::warning('social', 'ig.carousel.id_conflict', "Instagram: carousel ID igual a um child ID", [
+                'post_id'     => $post->id,
+                'carousel_id' => $carouselId,
+                'child_ids'   => $childIds,
+            ]);
+        }
 
         // Aguardar container do carrossel ficar pronto
         $waitResult = $this->waitForContainerReady($post, $carouselId, $token, false);
@@ -263,7 +291,7 @@ class InstagramPublisher extends AbstractPublisher
         $lastResponse = null;
 
         for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
-            $response = Http::post(self::BASE_URL . "/{$igUserId}/media_publish", [
+            $response = Http::asForm()->post(self::BASE_URL . "/{$igUserId}/media_publish", [
                 'creation_id'  => $creationId,
                 'access_token' => $token,
             ]);
@@ -281,8 +309,20 @@ class InstagramPublisher extends AbstractPublisher
                 break;
             }
 
-            // "Media ID is not available" (2207027) — container ainda processando
             $subcode = $response->json('error.error_subcode');
+
+            // "Carousel Item Cannot Be Published Standalone" (2207089)
+            // Container foi criado como VIDEO (carousel item) mas está sendo publicado standalone.
+            // Isso não deveria acontecer se o carousel flow funcionou corretamente.
+            if ($subcode == 2207089) {
+                SystemLog::error('social', 'ig.publish.carousel_standalone', "Instagram: tentativa de publicar item de carrossel como standalone", [
+                    'post_id'     => $post->id,
+                    'creation_id' => $creationId,
+                ]);
+                break;
+            }
+
+            // "Media ID is not available" (2207027) — container ainda processando
             if ($subcode == 2207027 && $attempt < $maxRetries) {
                 SystemLog::info('social', 'ig.publish.wait', "Instagram: container não pronto, aguardando {$retryDelay}s (tentativa {$attempt})", [
                     'post_id'     => $post->id,
@@ -376,7 +416,7 @@ class InstagramPublisher extends AbstractPublisher
 
         $params['image_url'] = $cdnUrl;
 
-        $retryResponse = Http::post(self::BASE_URL . "/{$igUserId}/media", $params);
+        $retryResponse = Http::asForm()->post(self::BASE_URL . "/{$igUserId}/media", $params);
 
         SystemLog::info('social', 'ig.cdn.retry_response', "Instagram: resposta retry com CDN", [
             'post_id'  => $post->id,

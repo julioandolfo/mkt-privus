@@ -15,12 +15,18 @@ const flash = page.props.flash || {};
 
 const sendTestModal = ref(false);
 const scheduleModal = ref(false);
+const editScheduleModal = ref(false);
+const sendNowModal = ref(false);
 const testEmail = ref('');
 const scheduleDate = ref('');
 const scheduleTime = ref('');
+const editScheduleDate = ref('');
+const editScheduleTime = ref('');
 const sendTestLoading = ref(false);
 const sendTestError = ref('');
 const scheduleLoading = ref(false);
+const editScheduleLoading = ref(false);
+const sendNowLoading = ref(false);
 
 const statusConfig = {
     draft: { label: 'Rascunho', class: 'bg-gray-700/50 text-gray-400 border-gray-600' },
@@ -105,6 +111,39 @@ function submitSchedule() {
     });
 }
 
+function openEditScheduleModal() {
+    // Preenche com o valor atual do agendamento
+    if (props.campaign.scheduled_at) {
+        const date = new Date(props.campaign.scheduled_at);
+        editScheduleDate.value = date.toISOString().split('T')[0];
+        editScheduleTime.value = date.toTimeString().slice(0, 5);
+    }
+    editScheduleModal.value = true;
+}
+
+function submitEditSchedule() {
+    editScheduleLoading.value = true;
+    const dt = editScheduleDate.value && editScheduleTime.value ? `${editScheduleDate.value} ${editScheduleTime.value}` : editScheduleDate.value;
+    if (!dt) {
+        editScheduleLoading.value = false;
+        return;
+    }
+    router.post(route('email.campaigns.update-schedule', props.campaign.id), { scheduled_at: dt }, {
+        onFinish: () => { editScheduleLoading.value = false; editScheduleModal.value = false; editScheduleDate.value = ''; editScheduleTime.value = ''; },
+    });
+}
+
+function openSendNowModal() {
+    sendNowModal.value = true;
+}
+
+function confirmSendNow() {
+    sendNowLoading.value = true;
+    router.post(route('email.campaigns.send-now', props.campaign.id), {}, {
+        onFinish: () => { sendNowLoading.value = false; sendNowModal.value = false; },
+    });
+}
+
 const c = props.campaign || {};
 const totalRecipients = c.total_recipients ?? 0;
 const totalSent = c.total_sent ?? 0;
@@ -139,15 +178,34 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
                     </span>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
-                    <button v-if="c.can_send" @click="sendCampaign" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+                    <!-- Status: Draft -->
+                    <button v-if="c.can_send && c.status !== 'scheduled'" @click="sendCampaign" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
                         Enviar
                     </button>
+
+                    <!-- Status: Scheduled -->
+                    <template v-if="c.status === 'scheduled'">
+                        <button @click="openSendNowModal" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+                            Enviar Agora
+                        </button>
+                        <button @click="openEditScheduleModal" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500">
+                            Alterar Agendamento
+                        </button>
+                        <button @click="cancelCampaign" class="rounded-lg bg-red-600/80 px-4 py-2 text-sm font-medium text-white hover:bg-red-500/80">
+                            Cancelar Agendamento
+                        </button>
+                    </template>
+
+                    <!-- Status: Sending -->
                     <button v-if="c.can_pause" @click="pauseCampaign" class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-500">
                         Pausar
                     </button>
-                    <button v-if="c.can_cancel" @click="cancelCampaign" class="rounded-lg bg-red-600/80 px-4 py-2 text-sm font-medium text-white hover:bg-red-500/80">
+
+                    <!-- Status: Sending/Scheduled -->
+                    <button v-if="c.can_cancel && c.status !== 'scheduled'" @click="cancelCampaign" class="rounded-lg bg-red-600/80 px-4 py-2 text-sm font-medium text-white hover:bg-red-500/80">
                         Cancelar
                     </button>
+
                     <a v-if="c.can_edit" :href="route('email.campaigns.edit', c.id)" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
                         Editar
                     </a>
@@ -157,7 +215,7 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
                     <button @click="sendTestModal = true" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800">
                         Enviar Teste
                     </button>
-                    <button v-if="c.can_send" @click="scheduleModal = true" class="rounded-lg border border-indigo-600 px-4 py-2 text-sm text-indigo-400 hover:bg-indigo-900/30">
+                    <button v-if="c.can_send && c.status !== 'scheduled'" @click="scheduleModal = true" class="rounded-lg border border-indigo-600 px-4 py-2 text-sm text-indigo-400 hover:bg-indigo-900/30">
                         Agendar
                     </button>
                 </div>
@@ -346,6 +404,56 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
                     </button>
                     <button @click="submitSchedule" :disabled="scheduleLoading || !scheduleDate" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
                         {{ scheduleLoading ? 'Agendando...' : 'Agendar' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit Schedule Modal -->
+        <div v-if="editScheduleModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click.self="editScheduleModal = false">
+            <div class="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-6">
+                <h3 class="mb-4 text-lg font-semibold text-white">Alterar Agendamento</h3>
+                <p class="mb-4 text-sm text-gray-400">Agendado atualmente para: <span class="text-blue-400 font-medium">{{ c.scheduled_at }}</span></p>
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-sm font-medium text-gray-300">Nova Data</label>
+                        <input v-model="editScheduleDate" type="date" class="mt-1 w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 text-white" />
+                    </div>
+                    <div>
+                        <label class="text-sm font-medium text-gray-300">Novo Horário</label>
+                        <input v-model="editScheduleTime" type="time" class="mt-1 w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 text-white" />
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-2">
+                    <button @click="editScheduleModal = false" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-400 hover:bg-gray-800">
+                        Cancelar
+                    </button>
+                    <button @click="submitEditSchedule" :disabled="editScheduleLoading || !editScheduleDate" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50">
+                        {{ editScheduleLoading ? 'Salvando...' : 'Salvar Alteração' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Send Now Confirmation Modal -->
+        <div v-if="sendNowModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click.self="sendNowModal = false">
+            <div class="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-6">
+                <h3 class="mb-2 text-lg font-semibold text-white">Enviar Agora?</h3>
+                <p class="mb-4 text-sm text-gray-400">
+                    Esta campanha está agendada para <span class="text-blue-400 font-medium">{{ c.scheduled_at }}</span>.
+                    Deseja enviar imediatamente e cancelar o agendamento?
+                </p>
+                <div class="rounded-lg bg-amber-900/30 border border-amber-700/50 p-3 mb-4">
+                    <p class="text-xs text-amber-400">
+                        Atenção: Esta ação não pode ser desfeita. Os emails serão enviados imediatamente.
+                    </p>
+                </div>
+                <div class="flex justify-end gap-2">
+                    <button @click="sendNowModal = false" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-400 hover:bg-gray-800">
+                        Cancelar
+                    </button>
+                    <button @click="confirmSendNow" :disabled="sendNowLoading" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50">
+                        {{ sendNowLoading ? 'Iniciando...' : 'Sim, Enviar Agora' }}
                     </button>
                 </div>
             </div>

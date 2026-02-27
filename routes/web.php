@@ -345,6 +345,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/{campaign}', [EmailCampaignController::class, 'destroy'])->name('destroy');
             Route::post('/{campaign}/send', [EmailCampaignController::class, 'send'])->name('send');
             Route::post('/{campaign}/schedule', [EmailCampaignController::class, 'schedule'])->name('schedule');
+            Route::post('/{campaign}/update-schedule', [EmailCampaignController::class, 'updateSchedule'])->name('update-schedule');
+            Route::post('/{campaign}/send-now', [EmailCampaignController::class, 'sendNow'])->name('send-now');
             Route::post('/{campaign}/pause', [EmailCampaignController::class, 'pause'])->name('pause');
             Route::post('/{campaign}/cancel', [EmailCampaignController::class, 'cancel'])->name('cancel');
             Route::post('/{campaign}/duplicate', [EmailCampaignController::class, 'duplicate'])->name('duplicate');
