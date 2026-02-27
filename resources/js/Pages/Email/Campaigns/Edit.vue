@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useForm, router } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import GrapesEditor from '@/Components/Email/GrapesEditor.vue';
@@ -10,6 +10,15 @@ const props = defineProps({
     providers: Array,
     lists: Array,
     templates: Array,
+});
+
+// Provedor selecionado com informações de quota
+const selectedProvider = computed(() => {
+    return props.providers?.find(p => p.id === form.email_provider_id);
+});
+
+const selectedProviderQuota = computed(() => {
+    return selectedProvider.value?.quota_info;
 });
 
 const form = useForm({
@@ -96,15 +105,28 @@ const estimatedRecipients = computed(() => {
                     <label class="text-sm text-gray-400">Preview Text</label>
                     <input v-model="form.preview_text" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white" />
                 </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="text-sm text-gray-400">Nome do Remetente</label>
-                        <input v-model="form.from_name" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white" />
+                <!-- Remetente - Não editável (usa o configurado no provedor) -->
+                <div class="rounded-lg border border-gray-700/50 bg-gray-800/30 p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="text-sm text-gray-400">Remetente</label>
+                        <span class="text-xs text-indigo-400 bg-indigo-900/20 px-2 py-0.5 rounded">Configurado no Provedor</span>
                     </div>
-                    <div>
-                        <label class="text-sm text-gray-400">Email do Remetente</label>
-                        <input v-model="form.from_email" type="email" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white" />
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <input v-model="form.from_name" disabled
+                                class="mt-1 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2.5 text-gray-400 cursor-not-allowed"
+                                title="Usa o nome configurado no provedor" />
+                        </div>
+                        <div>
+                            <input v-model="form.from_email" type="email" disabled
+                                class="mt-1 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2.5 text-gray-400 cursor-not-allowed"
+                                title="Usa o email verificado no provedor (obrigatório para SendPulse)" />
+                        </div>
                     </div>
+                    <p class="mt-2 text-xs text-gray-500">
+                        O remetente é definido automaticamente pelo provedor selecionado para garantir a entregabilidade.
+                        <a :href="route('email.providers.index')" class="text-indigo-400 hover:text-indigo-300">Editar provedor →</a>
+                    </p>
                 </div>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
@@ -116,6 +138,23 @@ const estimatedRecipients = computed(() => {
                         <select v-model="form.email_provider_id" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white">
                             <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }} ({{ p.type }})</option>
                         </select>
+
+                        <!-- Informações de quota do provedor -->
+                        <div v-if="selectedProviderQuota" class="mt-2 space-y-1">
+                            <div v-if="selectedProviderQuota.hourly_limit" class="flex items-center gap-2 text-xs">
+                                <span class="text-gray-500">Limite/hora:</span>
+                                <span :class="selectedProviderQuota.hourly_remaining === 0 ? 'text-red-400' : selectedProviderQuota.hourly_remaining < 10 ? 'text-amber-400' : 'text-emerald-400'">
+                                    {{ selectedProviderQuota.sends_this_hour }}/{{ selectedProviderQuota.hourly_limit }}
+                                </span>
+                                <span v-if="selectedProviderQuota.hourly_remaining === 0" class="text-red-500 text-[10px] bg-red-900/20 px-1.5 py-0.5 rounded">Limite atingido</span>
+                            </div>
+                            <div v-if="selectedProviderQuota.daily_limit" class="flex items-center gap-2 text-xs">
+                                <span class="text-gray-500">Limite/dia:</span>
+                                <span :class="selectedProviderQuota.daily_remaining === 0 ? 'text-red-400' : selectedProviderQuota.daily_remaining < 50 ? 'text-amber-400' : 'text-emerald-400'">
+                                    {{ selectedProviderQuota.sends_today }}/{{ selectedProviderQuota.daily_limit }}
+                                </span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

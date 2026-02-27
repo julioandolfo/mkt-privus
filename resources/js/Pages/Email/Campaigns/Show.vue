@@ -24,6 +24,7 @@ const editScheduleDate = ref('');
 const editScheduleTime = ref('');
 const sendTestLoading = ref(false);
 const sendTestError = ref('');
+const sendTestSuccess = ref('');
 const scheduleLoading = ref(false);
 const editScheduleLoading = ref(false);
 const sendNowLoading = ref(false);
@@ -81,14 +82,20 @@ function duplicateCampaign() {
 
 async function submitSendTest() {
     sendTestError.value = '';
+    sendTestSuccess.value = '';
     sendTestLoading.value = true;
     try {
         const { data } = await axios.post(route('email.campaigns.send-test', props.campaign.id), {
             test_email: testEmail.value,
         });
         if (data.success !== false) {
-            sendTestModal.value = false;
-            testEmail.value = '';
+            sendTestSuccess.value = `Email de teste enviado com sucesso para ${testEmail.value}!`;
+            // Fecha o modal após 2 segundos para o usuário ver a mensagem
+            setTimeout(() => {
+                sendTestModal.value = false;
+                testEmail.value = '';
+                sendTestSuccess.value = '';
+            }, 2000);
         } else {
             sendTestError.value = data.error || 'Falha ao enviar teste.';
         }
@@ -371,18 +378,39 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
         <div v-if="sendTestModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click.self="sendTestModal = false">
             <div class="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-6">
                 <h3 class="mb-4 text-lg font-semibold text-white">Enviar Teste</h3>
-                <div class="space-y-4">
+
+                <!-- Alerta de Sucesso -->
+                <div v-if="sendTestSuccess" class="mb-4 rounded-lg border border-emerald-700/50 bg-emerald-900/30 px-4 py-3">
+                    <div class="flex items-center gap-2">
+                        <svg class="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                        <p class="text-sm text-emerald-300">{{ sendTestSuccess }}</p>
+                    </div>
+                </div>
+
+                <!-- Alerta de Erro -->
+                <div v-if="sendTestError" class="mb-4 rounded-lg border border-red-700/50 bg-red-900/30 px-4 py-3">
+                    <div class="flex items-center gap-2">
+                        <svg class="h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                        <p class="text-sm text-red-300">{{ sendTestError }}</p>
+                    </div>
+                </div>
+
+                <div class="space-y-4" v-if="!sendTestSuccess">
                     <div>
                         <label class="text-sm font-medium text-gray-300">Email</label>
                         <input v-model="testEmail" type="email" class="mt-1 w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 text-white" placeholder="seu@email.com" />
                     </div>
-                    <p v-if="sendTestError" class="text-sm text-red-400">{{ sendTestError }}</p>
                 </div>
+
                 <div class="mt-6 flex justify-end gap-2">
-                    <button @click="sendTestModal = false" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-400 hover:bg-gray-800">
-                        Cancelar
+                    <button @click="sendTestModal = false; sendTestError = ''; sendTestSuccess = '';" class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-400 hover:bg-gray-800">
+                        {{ sendTestSuccess ? 'Fechar' : 'Cancelar' }}
                     </button>
-                    <button @click="submitSendTest" :disabled="sendTestLoading || !testEmail" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
+                    <button v-if="!sendTestSuccess" @click="submitSendTest" :disabled="sendTestLoading || !testEmail" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
                         {{ sendTestLoading ? 'Enviando...' : 'Enviar' }}
                     </button>
                 </div>

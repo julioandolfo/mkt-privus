@@ -38,6 +38,11 @@ const form = useForm({
     status: 'draft',
 });
 
+// Provedor selecionado com informações de quota
+const selectedProvider = computed(() => {
+    return props.providers?.find(p => p.id === form.email_provider_id);
+});
+
 // AI generation state
 const aiPrompt = ref('');
 const aiSubjectPrompt = ref('');
@@ -372,6 +377,23 @@ function submit() {
                             <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }} ({{ p.type }})</option>
                         </select>
                         <p v-if="form.errors.email_provider_id" class="mt-1 text-xs text-red-400">{{ form.errors.email_provider_id }}</p>
+
+                        <!-- Informações de quota do provedor -->
+                        <div v-if="selectedProvider?.quota_info" class="mt-2 space-y-1">
+                            <div v-if="selectedProvider.quota_info.hourly_limit" class="flex items-center gap-2 text-xs">
+                                <span class="text-gray-500">Limite/hora:</span>
+                                <span :class="selectedProvider.quota_info.hourly_remaining === 0 ? 'text-red-400' : selectedProvider.quota_info.hourly_remaining < 10 ? 'text-amber-400' : 'text-emerald-400'">
+                                    {{ selectedProvider.quota_info.sends_this_hour }}/{{ selectedProvider.quota_info.hourly_limit }}
+                                </span>
+                                <span v-if="selectedProvider.quota_info.hourly_remaining === 0" class="text-red-500 text-[10px] bg-red-900/20 px-1.5 py-0.5 rounded">Limite atingido</span>
+                            </div>
+                            <div v-if="selectedProvider.quota_info.daily_limit" class="flex items-center gap-2 text-xs">
+                                <span class="text-gray-500">Limite/dia:</span>
+                                <span :class="selectedProvider.quota_info.daily_remaining === 0 ? 'text-red-400' : selectedProvider.quota_info.daily_remaining < 50 ? 'text-amber-400' : 'text-emerald-400'">
+                                    {{ selectedProvider.quota_info.sends_today }}/{{ selectedProvider.quota_info.daily_limit }}
+                                </span>
+                            </div>
+                        </div>
                     </div>
                     <div>
                         <label class="text-sm font-medium text-gray-300">Tipo</label>

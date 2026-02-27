@@ -57,7 +57,16 @@ class EmailCampaignController extends Controller
 
         $providers = EmailProvider::active()
             ->forBrand($brandId)
-            ->get(['id', 'name', 'type', 'is_default']);
+            ->get(['id', 'name', 'type', 'is_default', 'hourly_limit', 'sends_this_hour', 'daily_limit', 'sends_today', 'last_hour_reset_at', 'last_reset_at'])
+            ->map(function ($p) {
+                return [
+                    'id' => $p->id,
+                    'name' => $p->name,
+                    'type' => $p->type,
+                    'is_default' => $p->is_default,
+                    'quota_info' => $p->getQuotaInfo(),
+                ];
+            });
 
         $lists = EmailList::active()
             ->forBrand($brandId)
@@ -232,6 +241,19 @@ class EmailCampaignController extends Controller
 
         $brandId = session('current_brand_id');
 
+        $providers = EmailProvider::active()
+            ->forBrand($brandId)
+            ->get(['id', 'name', 'type', 'is_default', 'hourly_limit', 'sends_this_hour', 'daily_limit', 'sends_today', 'last_hour_reset_at', 'last_reset_at'])
+            ->map(function ($p) {
+                return [
+                    'id' => $p->id,
+                    'name' => $p->name,
+                    'type' => $p->type,
+                    'is_default' => $p->is_default,
+                    'quota_info' => $p->getQuotaInfo(),
+                ];
+            });
+
         return Inertia::render('Email/Campaigns/Edit', [
             'campaign' => [
                 'id' => $campaign->id,
@@ -252,7 +274,7 @@ class EmailCampaignController extends Controller
                 'lists' => $campaign->includeLists()->pluck('email_lists.id'),
                 'exclude_lists' => $campaign->excludeLists()->pluck('email_lists.id'),
             ],
-            'providers' => EmailProvider::active()->forBrand($brandId)->get(['id', 'name', 'type', 'is_default']),
+            'providers' => $providers,
             'lists' => EmailList::active()->forBrand($brandId)->withCount('contacts')->get(['id', 'name']),
             'templates' => EmailTemplate::forBrand($brandId)->active()->get(['id', 'name', 'subject', 'category']),
         ]);
