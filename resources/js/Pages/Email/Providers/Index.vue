@@ -15,6 +15,7 @@ const form = useForm({
     type: 'smtp',
     is_default: false,
     daily_limit: null,
+    hourly_limit: null, // Limite por hora (ex: 50 para SendPulse gratis)
     // SMTP
     host: '',
     port: 587,
@@ -44,6 +45,7 @@ function openEdit(provider) {
     form.type = provider.type;
     form.is_default = provider.is_default;
     form.daily_limit = provider.daily_limit;
+    form.hourly_limit = provider.hourly_limit;
 
     const cfg = provider.config_edit || {};
 
@@ -144,7 +146,8 @@ function copyWebhook(url) {
                         </div>
                         <p class="text-xs text-gray-500 mt-0.5">
                             {{ typeLabels[p.type] || p.type }} · {{ p.config_summary?.host || p.config_summary?.from || p.config_summary?.sender_name || '-' }}
-                            <span v-if="p.daily_limit"> · Limite: {{ p.sends_today }}/{{ p.daily_limit }}</span>
+                            <span v-if="p.hourly_limit" class="text-blue-400"> · {{ p.sends_this_hour }}/{{ p.hourly_limit }}/hora</span>
+                            <span v-if="p.daily_limit"> · {{ p.sends_today }}/{{ p.daily_limit }}/dia</span>
                         </p>
                     </div>
                 </div>
@@ -351,15 +354,33 @@ function copyWebhook(url) {
                             </div>
                         </template>
 
-                        <div class="grid grid-cols-2 gap-3">
+                        <!-- Limites de Envio -->
+                        <div class="border-t border-gray-800 pt-4 mt-4">
+                            <h4 class="text-sm font-medium text-gray-300 mb-3">Limites de Envio</h4>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="text-sm text-gray-400 flex items-center gap-1">
+                                        Limite por Hora
+                                        <span class="text-[10px] text-gray-500">(ex: 50)</span>
+                                    </label>
+                                    <input v-model.number="form.hourly_limit" type="number" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" placeholder="Sem limite" />
+                                    <p class="text-[10px] text-gray-500 mt-1">Ex: 50 para SendPulse grátis</p>
+                                </div>
+                                <div>
+                                    <label class="text-sm text-gray-400 flex items-center gap-1">
+                                        Limite Diário
+                                        <span class="text-[10px] text-gray-500">(ex: 1000)</span>
+                                    </label>
+                                    <input v-model.number="form.daily_limit" type="number" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" placeholder="Sem limite" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="pt-2">
                             <label class="flex items-center gap-2 text-sm text-gray-400">
                                 <input v-model="form.is_default" type="checkbox" class="rounded bg-gray-800 border-gray-700 text-indigo-600" />
-                                Provedor Padrão
+                                Definir como Provedor Padrão
                             </label>
-                            <div>
-                                <label class="text-sm text-gray-400">Limite Diário</label>
-                                <input v-model.number="form.daily_limit" type="number" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" placeholder="Sem limite" />
-                            </div>
                         </div>
 
                         <div class="flex justify-end gap-3 pt-4 border-t border-gray-800">

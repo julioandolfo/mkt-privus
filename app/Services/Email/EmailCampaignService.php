@@ -275,14 +275,34 @@ class EmailCampaignService
                         // Ignorar erro de incremento
                     }
                 } else {
-                    EmailCampaignEvent::create([
-                        'email_campaign_id' => $campaign->id,
-                        'email_contact_id' => $contact->id,
-                        'event_type' => 'failed',
-                        'occurred_at' => now(),
-                        'metadata' => ['error' => $result['error'] ?? 'Unknown error from provider'],
-                    ]);
-                    $failed++;
+                    $errorMessage = $result['error'] ?? 'Unknown error from provider';
+
+                    // Verificar se é erro de quota (limite diário/hora atingido)
+                    $isQuotaError = $this->isQuotaError($errorMessage);
+
+                    if ($isQuotaError) {
+                        // Erro de quota: não marcar como failed, apenas logar
+                        // O email permanece na fila (queued) para próxima tentativa
+                        SystemLog::warning('email', 'batch.quota_exceeded', "Quota excedida para {$contact->email}: {$errorMessage}", [
+                            'campaign_id' => $campaign->id,
+                            'contact_id' => $contact->id,
+                            'error' => $errorMessage,
+                            'provider_id' => $provider->id,
+                        ]);
+
+                        // NÃO criar evento 'failed' - deixa na fila para reprocessar
+                        // NÃO incrementa $failed - não conta como falha permanente
+                    } else {
+                        // Erro definitivo: marcar como failed
+                        EmailCampaignEvent::create([
+                            'email_campaign_id' => $campaign->id,
+                            'email_contact_id' => $contact->id,
+                            'event_type' => 'failed',
+                            'occurred_at' => now(),
+                            'metadata' => ['error' => $errorMessage],
+                        ]);
+                        $failed++;
+                    }
                 }
             } catch (\Throwable $e) {
                 SystemLog::error('email', 'batch.send_exception', "Exceção ao enviar para {$contact->email}: {$e->getMessage()}", [
@@ -557,6 +577,38 @@ class EmailCampaignService
         }
 
         return $mimeType ?: null;
+    }
+
+    /**
+     * Verifica se o erro é relacionado a quota (limite diário/hora atingido)
+     */
+    private function isQuotaError(string $errorMessage): bool
+    {
+        $quotaKeywords = [
+            'limite diário',
+            'limite diario',
+            'daily limit',
+            'quota exceeded',
+            'quota excedida',
+            'limit reached',
+            'limite atingido',
+            'too many requests',
+            'rate limit',
+            'limite de envio',
+            'maximum limit',
+            '429',
+            '403',
+        ];
+
+        $errorLower = strtolower($errorMessage);
+
+        foreach ($quotaKeywords as $keyword) {
+            if (str_contains($errorLower, $keyword)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
