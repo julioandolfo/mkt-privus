@@ -90,81 +90,157 @@ class EmailCampaignController extends Controller
     public function store(Request $request)
     {
         $isDraft = $request->input('status') === 'draft';
+        $brandId = session('current_brand_id');
+        $userId = Auth::id();
 
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'subject' => 'nullable|string|max:255',
-            'preview_text' => 'nullable|string|max:255',
-            'from_name' => 'nullable|string|max:255',
-            'from_email' => 'nullable|email',
-            'reply_to' => 'nullable|email',
-            'email_provider_id' => ($isDraft ? 'nullable' : 'required') . '|exists:email_providers,id',
-            'email_template_id' => 'nullable|exists:email_templates,id',
-            'html_content' => 'nullable|string',
-            'mjml_content' => 'nullable|string',
-            'json_content' => 'nullable|array',
-            'type' => 'nullable|in:regular,ab_test',
-            'lists' => $isDraft ? 'nullable|array' : 'required|array|min:1',
-            'lists.*' => 'exists:email_lists,id',
-            'exclude_lists' => 'nullable|array',
-            'exclude_lists.*' => 'exists:email_lists,id',
-            'settings' => 'nullable|array',
-            'tags' => 'nullable|array',
-            'status' => 'nullable|in:draft,scheduled',
+        SystemLog::info('email', 'campaign.store.started', "Iniciando criação de campanha", [
+            'brand_id' => $brandId,
+            'user_id' => $userId,
+            'is_draft' => $isDraft,
+            'request_data' => $request->only(['name', 'subject', 'status']),
         ]);
+
+        try {
+            $validated = $request->validate([
+                'name' => 'required|string|max:255',
+                'subject' => 'nullable|string|max:255',
+                'preview_text' => 'nullable|string|max:255',
+                'from_name' => 'nullable|string|max:255',
+                'from_email' => 'nullable|email',
+                'reply_to' => 'nullable|email',
+                'email_provider_id' => ($isDraft ? 'nullable' : 'required') . '|exists:email_providers,id',
+                'email_template_id' => 'nullable|exists:email_templates,id',
+                'html_content' => 'nullable|string',
+                'mjml_content' => 'nullable|string',
+                'json_content' => 'nullable|array',
+                'type' => 'nullable|in:regular,ab_test',
+                'lists' => $isDraft ? 'nullable|array' : 'required|array|min:1',
+                'lists.*' => 'exists:email_lists,id',
+                'exclude_lists' => 'nullable|array',
+                'exclude_lists.*' => 'exists:email_lists,id',
+                'settings' => 'nullable|array',
+                'tags' => 'nullable|array',
+                'status' => 'nullable|in:draft,scheduled',
+            ]);
+
+            SystemLog::info('email', 'campaign.store.validated', "Validação passou", [
+                'brand_id' => $brandId,
+                'campaign_name' => $validated['name'],
+                'has_html' => !empty($validated['html_content']),
+            ]);
+        } catch (\Throwable $e) {
+            SystemLog::error('email', 'campaign.store.validation_failed', "Erro na validação: {$e->getMessage()}", [
+                'brand_id' => $brandId,
+                'user_id' => $userId,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
 
         // Processa imagens externas no HTML, baixando-as para o servidor
         $htmlContent = $validated['html_content'] ?? null;
         if ($htmlContent) {
-            $brandId = session('current_brand_id');
-            $htmlContent = $this->imageService->processHtmlAndStoreImages(
-                $htmlContent,
-                $brandId,
-                Auth::id()
-            );
+            SystemLog::info('email', 'campaign.store.processing_images', "Processando imagens externas", [
+                'brand_id' => $brandId,
+                'html_length' => strlen($htmlContent),
+            ]);
+
+            try {
+                $htmlContent = $this->imageService->processHtmlAndStoreImages(
+                    $htmlContent,
+                    $brandId,
+                    $userId
+                );
+
+                SystemLog::info('email', 'campaign.store.images_processed', "Imagens processadas", [
+                    'brand_id' => $brandId,
+                    'original_length' => strlen($validated['html_content'] ?? ''),
+                    'processed_length' => strlen($htmlContent),
+                ]);
+            } catch (\Throwable $e) {
+                SystemLog::error('email', 'campaign.store.image_processing_failed', "Erro ao processar imagens: {$e->getMessage()}", [
+                    'brand_id' => $brandId,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+                // Continua mesmo se falhar o processamento de imagens
+            }
         }
 
-        $campaign = EmailCampaign::create([
-            'brand_id' => session('current_brand_id'),
-            'user_id' => Auth::id(),
-            'email_provider_id' => $validated['email_provider_id'] ?? null,
-            'email_template_id' => $validated['email_template_id'] ?? null,
-            'name' => $validated['name'],
-            'subject' => $validated['subject'] ?? '',
-            'preview_text' => $validated['preview_text'] ?? null,
-            'from_name' => $validated['from_name'] ?? null,
-            'from_email' => $validated['from_email'] ?? null,
-            'reply_to' => $validated['reply_to'] ?? null,
-            'html_content' => $htmlContent,
-            'mjml_content' => $validated['mjml_content'] ?? null,
-            'json_content' => $validated['json_content'] ?? null,
-            'type' => $validated['type'] ?? 'regular',
-            'status' => $validated['status'] ?? 'draft',
-            'tags' => $validated['tags'] ?? null,
-            'settings' => array_merge([
-                'track_opens' => true,
-                'track_clicks' => true,
-                'send_speed' => 100,
-            ], $validated['settings'] ?? []),
-        ]);
+        try {
+            $campaign = EmailCampaign::create([
+                'brand_id' => $brandId,
+                'user_id' => $userId,
+                'email_provider_id' => $validated['email_provider_id'] ?? null,
+                'email_template_id' => $validated['email_template_id'] ?? null,
+                'name' => $validated['name'],
+                'subject' => $validated['subject'] ?? '',
+                'preview_text' => $validated['preview_text'] ?? null,
+                'from_name' => $validated['from_name'] ?? null,
+                'from_email' => $validated['from_email'] ?? null,
+                'reply_to' => $validated['reply_to'] ?? null,
+                'html_content' => $htmlContent,
+                'mjml_content' => $validated['mjml_content'] ?? null,
+                'json_content' => $validated['json_content'] ?? null,
+                'type' => $validated['type'] ?? 'regular',
+                'status' => $validated['status'] ?? 'draft',
+                'tags' => $validated['tags'] ?? null,
+                'settings' => array_merge([
+                    'track_opens' => true,
+                    'track_clicks' => true,
+                    'send_speed' => 100,
+                ], $validated['settings'] ?? []),
+            ]);
 
-        // Vincular listas
-        foreach ($validated['lists'] as $listId) {
-            $campaign->lists()->attach($listId, ['type' => 'include']);
+            SystemLog::info('email', 'campaign.store.created', "Campanha criada com sucesso", [
+                'brand_id' => $brandId,
+                'user_id' => $userId,
+                'campaign_id' => $campaign->id,
+                'campaign_name' => $campaign->name,
+                'status' => $campaign->status,
+            ]);
+
+            // Vincular listas
+            foreach ($validated['lists'] as $listId) {
+                $campaign->lists()->attach($listId, ['type' => 'include']);
+            }
+            foreach ($validated['exclude_lists'] ?? [] as $listId) {
+                $campaign->lists()->attach($listId, ['type' => 'exclude']);
+            }
+
+            SystemLog::info('email', 'campaign.store.lists_attached', "Listas vinculadas", [
+                'campaign_id' => $campaign->id,
+                'include_lists' => count($validated['lists'] ?? []),
+                'exclude_lists' => count($validated['exclude_lists'] ?? []),
+            ]);
+
+            // Calcular total (apenas se não for rascunho sem listas)
+            if (!empty($validated['lists'])) {
+                $this->campaignService->prepareCampaign($campaign);
+                SystemLog::info('email', 'campaign.store.prepared', "Campanha preparada", [
+                    'campaign_id' => $campaign->id,
+                    'total_recipients' => $campaign->total_recipients,
+                ]);
+            }
+
+            $message = $isDraft ? 'Rascunho salvo com sucesso!' : 'Campanha criada com sucesso!';
+
+            SystemLog::info('email', 'campaign.store.completed', "Processo de criação finalizado", [
+                'campaign_id' => $campaign->id,
+                'message' => $message,
+            ]);
+
+            return redirect()->route('email.campaigns.show', $campaign)
+                ->with('success', $message);
+        } catch (\Throwable $e) {
+            SystemLog::error('email', 'campaign.store.failed', "Erro ao criar campanha: {$e->getMessage()}", [
+                'brand_id' => $brandId,
+                'user_id' => $userId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            throw $e;
         }
-        foreach ($validated['exclude_lists'] ?? [] as $listId) {
-            $campaign->lists()->attach($listId, ['type' => 'exclude']);
-        }
-
-        // Calcular total (apenas se não for rascunho sem listas)
-        if (!empty($validated['lists'])) {
-            $this->campaignService->prepareCampaign($campaign);
-        }
-
-        $message = $isDraft ? 'Rascunho salvo com sucesso!' : 'Campanha criada com sucesso!';
-
-        return redirect()->route('email.campaigns.show', $campaign)
-            ->with('success', $message);
     }
 
     public function show(EmailCampaign $campaign)
@@ -353,69 +429,140 @@ class EmailCampaignController extends Controller
     public function update(Request $request, EmailCampaign $campaign)
     {
         if (!$campaign->canEdit()) {
+            SystemLog::warning('email', 'campaign.update.cannot_edit', "Tentativa de editar campanha bloqueada", [
+                'campaign_id' => $campaign->id,
+                'campaign_status' => $campaign->status,
+                'user_id' => Auth::id(),
+            ]);
             return back()->with('error', 'Esta campanha não pode ser editada.');
         }
 
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'subject' => 'required|string|max:255',
-            'preview_text' => 'nullable|string|max:255',
-            'from_name' => 'nullable|string|max:255',
-            'from_email' => 'nullable|email',
-            'reply_to' => 'nullable|email',
-            'email_provider_id' => 'required|exists:email_providers,id',
-            'html_content' => 'nullable|string',
-            'mjml_content' => 'nullable|string',
-            'json_content' => 'nullable|array',
-            'lists' => 'required|array|min:1',
-            'exclude_lists' => 'nullable|array',
-            'settings' => 'nullable|array',
-            'tags' => 'nullable|array',
+        $brandId = session('current_brand_id');
+        $userId = Auth::id();
+
+        SystemLog::info('email', 'campaign.update.started', "Iniciando atualização de campanha", [
+            'campaign_id' => $campaign->id,
+            'campaign_name' => $campaign->name,
+            'brand_id' => $brandId,
+            'user_id' => $userId,
         ]);
+
+        try {
+            $validated = $request->validate([
+                'name' => 'required|string|max:255',
+                'subject' => 'required|string|max:255',
+                'preview_text' => 'nullable|string|max:255',
+                'from_name' => 'nullable|string|max:255',
+                'from_email' => 'nullable|email',
+                'reply_to' => 'nullable|email',
+                'email_provider_id' => 'required|exists:email_providers,id',
+                'html_content' => 'nullable|string',
+                'mjml_content' => 'nullable|string',
+                'json_content' => 'nullable|array',
+                'lists' => 'required|array|min:1',
+                'exclude_lists' => 'nullable|array',
+                'settings' => 'nullable|array',
+                'tags' => 'nullable|array',
+            ]);
+
+            SystemLog::info('email', 'campaign.update.validated', "Validação passou", [
+                'campaign_id' => $campaign->id,
+                'new_name' => $validated['name'],
+                'has_html' => !empty($validated['html_content']),
+            ]);
+        } catch (\Throwable $e) {
+            SystemLog::error('email', 'campaign.update.validation_failed', "Erro na validação: {$e->getMessage()}", [
+                'campaign_id' => $campaign->id,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
 
         // Processa imagens externas no HTML, baixando-as para o servidor
         $htmlContent = $validated['html_content'] ?? null;
         if ($htmlContent) {
-            $brandId = session('current_brand_id');
-            $htmlContent = $this->imageService->processHtmlAndStoreImages(
-                $htmlContent,
-                $brandId,
-                Auth::id()
-            );
+            SystemLog::info('email', 'campaign.update.processing_images', "Processando imagens externas", [
+                'campaign_id' => $campaign->id,
+                'html_length' => strlen($htmlContent),
+            ]);
+
+            try {
+                $htmlContent = $this->imageService->processHtmlAndStoreImages(
+                    $htmlContent,
+                    $brandId,
+                    $userId
+                );
+
+                SystemLog::info('email', 'campaign.update.images_processed', "Imagens processadas", [
+                    'campaign_id' => $campaign->id,
+                    'original_length' => strlen($validated['html_content'] ?? ''),
+                    'processed_length' => strlen($htmlContent),
+                ]);
+            } catch (\Throwable $e) {
+                SystemLog::error('email', 'campaign.update.image_processing_failed', "Erro ao processar imagens: {$e->getMessage()}", [
+                    'campaign_id' => $campaign->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
-        $campaign->update([
-            'name' => $validated['name'],
-            'subject' => $validated['subject'],
-            'preview_text' => $validated['preview_text'] ?? null,
-            'from_name' => $validated['from_name'],
-            'from_email' => $validated['from_email'],
-            'reply_to' => $validated['reply_to'] ?? null,
-            'email_provider_id' => $validated['email_provider_id'],
-            'html_content' => $htmlContent,
-            'mjml_content' => $validated['mjml_content'] ?? null,
-            'json_content' => $validated['json_content'] ?? null,
-            'settings' => $validated['settings'] ?? $campaign->settings,
-            'tags' => $validated['tags'] ?? null,
-        ]);
+        try {
+            $campaign->update([
+                'name' => $validated['name'],
+                'subject' => $validated['subject'],
+                'preview_text' => $validated['preview_text'] ?? null,
+                'from_name' => $validated['from_name'],
+                'from_email' => $validated['from_email'],
+                'reply_to' => $validated['reply_to'] ?? null,
+                'email_provider_id' => $validated['email_provider_id'],
+                'html_content' => $htmlContent,
+                'mjml_content' => $validated['mjml_content'] ?? null,
+                'json_content' => $validated['json_content'] ?? null,
+                'settings' => $validated['settings'] ?? $campaign->settings,
+                'tags' => $validated['tags'] ?? null,
+            ]);
 
-        // Atualizar listas
-        $campaign->lists()->detach();
-        foreach ($validated['lists'] as $listId) {
-            $campaign->lists()->attach($listId, ['type' => 'include']);
+            SystemLog::info('email', 'campaign.update.saved', "Campanha atualizada no banco", [
+                'campaign_id' => $campaign->id,
+                'new_name' => $campaign->name,
+            ]);
+
+            // Atualizar listas
+            $campaign->lists()->detach();
+            foreach ($validated['lists'] as $listId) {
+                $campaign->lists()->attach($listId, ['type' => 'include']);
+            }
+            foreach ($validated['exclude_lists'] ?? [] as $listId) {
+                $campaign->lists()->attach($listId, ['type' => 'exclude']);
+            }
+
+            SystemLog::info('email', 'campaign.update.lists_attached', "Listas atualizadas", [
+                'campaign_id' => $campaign->id,
+                'include_lists' => count($validated['lists']),
+                'exclude_lists' => count($validated['exclude_lists'] ?? []),
+            ]);
+
+            $this->campaignService->prepareCampaign($campaign);
+
+            SystemLog::info('email', 'campaign.update.completed', "Atualização finalizada com sucesso", [
+                'campaign_id' => $campaign->id,
+                'total_recipients' => $campaign->total_recipients,
+            ]);
+
+            if ($request->expectsJson()) {
+                return response()->json(['success' => true]);
+            }
+
+            return redirect()->route('email.campaigns.show', $campaign)
+                ->with('success', 'Campanha atualizada!');
+        } catch (\Throwable $e) {
+            SystemLog::error('email', 'campaign.update.failed', "Erro ao atualizar campanha: {$e->getMessage()}", [
+                'campaign_id' => $campaign->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            throw $e;
         }
-        foreach ($validated['exclude_lists'] ?? [] as $listId) {
-            $campaign->lists()->attach($listId, ['type' => 'exclude']);
-        }
-
-        $this->campaignService->prepareCampaign($campaign);
-
-        if ($request->expectsJson()) {
-            return response()->json(['success' => true]);
-        }
-
-        return redirect()->route('email.campaigns.show', $campaign)
-            ->with('success', 'Campanha atualizada!');
     }
 
     public function destroy(EmailCampaign $campaign)
