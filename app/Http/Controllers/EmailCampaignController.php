@@ -140,28 +140,30 @@ class EmailCampaignController extends Controller
         // Processa imagens externas no HTML, baixando-as para o servidor
         $htmlContent = $validated['html_content'] ?? null;
         if ($htmlContent) {
+            // Garante que brandId nunca seja null
+            $effectiveBrandId = $brandId ?? 1;
+
             SystemLog::info('email', 'campaign.store.processing_images', "Processando imagens externas", [
-                'brand_id' => $brandId,
+                'brand_id' => $effectiveBrandId,
                 'html_length' => strlen($htmlContent),
             ]);
 
             try {
                 $htmlContent = $this->imageService->processHtmlAndStoreImages(
                     $htmlContent,
-                    $brandId,
+                    $effectiveBrandId,
                     $userId
                 );
 
                 SystemLog::info('email', 'campaign.store.images_processed', "Imagens processadas", [
-                    'brand_id' => $brandId,
+                    'brand_id' => $effectiveBrandId,
                     'original_length' => strlen($validated['html_content'] ?? ''),
                     'processed_length' => strlen($htmlContent),
                 ]);
             } catch (\Throwable $e) {
                 SystemLog::error('email', 'campaign.store.image_processing_failed', "Erro ao processar imagens: {$e->getMessage()}", [
-                    'brand_id' => $brandId,
+                    'brand_id' => $effectiveBrandId,
                     'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString(),
                 ]);
                 // Continua mesmo se falhar o processamento de imagens
             }
@@ -481,15 +483,21 @@ class EmailCampaignController extends Controller
         // Processa imagens externas no HTML, baixando-as para o servidor
         $htmlContent = $validated['html_content'] ?? null;
         if ($htmlContent) {
+            // Usa brand_id da campanha se session não estiver disponível
+            $effectiveBrandId = $brandId ?? $campaign->brand_id ?? 1;
+
             SystemLog::info('email', 'campaign.update.processing_images', "Processando imagens externas", [
                 'campaign_id' => $campaign->id,
                 'html_length' => strlen($htmlContent),
+                'brand_id' => $effectiveBrandId,
+                'session_brand_id' => $brandId,
+                'campaign_brand_id' => $campaign->brand_id,
             ]);
 
             try {
                 $htmlContent = $this->imageService->processHtmlAndStoreImages(
                     $htmlContent,
-                    $brandId,
+                    $effectiveBrandId,
                     $userId
                 );
 
