@@ -8,6 +8,7 @@ use App\Models\EmailProvider;
 use App\Models\EmailTemplate;
 use App\Models\SystemLog;
 use App\Services\Email\EmailCampaignService;
+use App\Services\Email\EmailImageService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
@@ -16,6 +17,7 @@ class EmailCampaignController extends Controller
 {
     public function __construct(
         private EmailCampaignService $campaignService,
+        private EmailImageService $imageService,
     ) {}
 
     public function index(Request $request)
@@ -111,6 +113,17 @@ class EmailCampaignController extends Controller
             'status' => 'nullable|in:draft,scheduled',
         ]);
 
+        // Processa imagens externas no HTML, baixando-as para o servidor
+        $htmlContent = $validated['html_content'] ?? null;
+        if ($htmlContent) {
+            $brandId = session('current_brand_id');
+            $htmlContent = $this->imageService->processHtmlAndStoreImages(
+                $htmlContent,
+                $brandId,
+                Auth::id()
+            );
+        }
+
         $campaign = EmailCampaign::create([
             'brand_id' => session('current_brand_id'),
             'user_id' => Auth::id(),
@@ -122,7 +135,7 @@ class EmailCampaignController extends Controller
             'from_name' => $validated['from_name'] ?? null,
             'from_email' => $validated['from_email'] ?? null,
             'reply_to' => $validated['reply_to'] ?? null,
-            'html_content' => $validated['html_content'] ?? null,
+            'html_content' => $htmlContent,
             'mjml_content' => $validated['mjml_content'] ?? null,
             'json_content' => $validated['json_content'] ?? null,
             'type' => $validated['type'] ?? 'regular',
@@ -360,6 +373,17 @@ class EmailCampaignController extends Controller
             'tags' => 'nullable|array',
         ]);
 
+        // Processa imagens externas no HTML, baixando-as para o servidor
+        $htmlContent = $validated['html_content'] ?? null;
+        if ($htmlContent) {
+            $brandId = session('current_brand_id');
+            $htmlContent = $this->imageService->processHtmlAndStoreImages(
+                $htmlContent,
+                $brandId,
+                Auth::id()
+            );
+        }
+
         $campaign->update([
             'name' => $validated['name'],
             'subject' => $validated['subject'],
@@ -368,7 +392,7 @@ class EmailCampaignController extends Controller
             'from_email' => $validated['from_email'],
             'reply_to' => $validated['reply_to'] ?? null,
             'email_provider_id' => $validated['email_provider_id'],
-            'html_content' => $validated['html_content'] ?? null,
+            'html_content' => $htmlContent,
             'mjml_content' => $validated['mjml_content'] ?? null,
             'json_content' => $validated['json_content'] ?? null,
             'settings' => $validated['settings'] ?? $campaign->settings,

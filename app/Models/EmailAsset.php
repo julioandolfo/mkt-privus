@@ -14,6 +14,7 @@ class EmailAsset extends Model
     protected $fillable = [
         'brand_id', 'user_id', 'file_path', 'file_name',
         'mime_type', 'file_size', 'dimensions', 'alt_text',
+        'source_url', // URL original da imagem (se foi baixada de externo)
     ];
 
     protected $casts = [

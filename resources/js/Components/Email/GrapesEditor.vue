@@ -225,7 +225,8 @@ function getDefaultBlocks() {
             label: 'Imagem',
             category: 'Mídia',
             media: `<svg viewBox="0 0 24 24" width="38" height="38"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15l-5-5L5 21" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>`,
-            content: '<img src="https://placehold.co/600x300/6366f1/ffffff?text=Sua+Imagem" style="width:100%;max-width:600px;height:auto;display:block;" alt="Imagem" />',
+            // Usar SVG inline como placeholder ao invés de URL externa
+            content: '<img src="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27600%27 height=%27300%27%3E%3Crect fill=%27%236366f1%27 width=%27600%27 height=%27300%27/%3E%3Ctext x=%2750%25%27 y=%2750%25%27 dominant-baseline=%27middle%27 text-anchor=%27middle%27 font-family=%27sans-serif%27 font-size=%2724%27 fill=%27white%27%3EClique para fazer upload%3C/text%3E%3C/svg%3E" style="width:100%;max-width:600px;height:auto;display:block;" alt="Imagem" />',
         },
         {
             id: 'button-cta',
@@ -727,6 +728,67 @@ function triggerSave() {
     // Pequeno delay para garantir que os dados foram emitidos
     setTimeout(() => emit('save'), 200);
 }
+
+// Processa imagens externas no HTML, baixando-as para o servidor
+// Retorna o HTML processado com URLs locais
+async function processExternalImages() {
+    if (!editor) return null;
+
+    const html = editor.getHtml();
+    const css = editor.getCss();
+    const fullHtml = `<!DOCTYPE html><html><head><style>${css}</style></head><body>${html}</body></html>`;
+
+    try {
+        const resp = await axios.post(route('email.editor.process-images'), {
+            html: fullHtml,
+        });
+
+        if (resp.data?.success) {
+            // Se houve imagens processadas, atualiza o conteúdo do editor
+            if (resp.data?.html && resp.data.html !== fullHtml) {
+                // Extrai apenas o body do HTML retornado
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(resp.data.html, 'text/html');
+                const bodyContent = doc.body.innerHTML;
+
+                // Atualiza o editor apenas se necessário
+                if (resp.data.external_images_found > 0) {
+                    editor.setComponents(bodyContent);
+                    console.log(`[GrapesEditor] ${resp.data.external_images_found} imagem(ns) externa(s) processada(s)`);
+                }
+            }
+
+            return {
+                html: resp.data.html,
+                externalImages: resp.data.external_images,
+                externalImagesFound: resp.data.external_images_found,
+            };
+        }
+    } catch (e) {
+        console.warn('[GrapesEditor] Erro ao processar imagens externas:', e);
+        // Retorna o HTML original em caso de erro
+        return {
+            html: fullHtml,
+            externalImages: [],
+            externalImagesFound: 0,
+            error: e.message,
+        };
+    }
+
+    return null;
+}
+
+// Expõe métodos para o componente pai via defineExpose
+defineExpose({
+    processExternalImages,
+    getHtml: () => editor?.getHtml(),
+    getCss: () => editor?.getCss(),
+    getFullHtml: () => {
+        const html = editor?.getHtml() || '';
+        const css = editor?.getCss() || '';
+        return `<!DOCTYPE html><html><head><style>${css}</style></head><body>${html}</body></html>`;
+    },
+});
 
 // Upload via asset manager
 async function uploadImage(event) {

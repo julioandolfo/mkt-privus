@@ -365,6 +365,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/saved-blocks/{block}', [EmailEditorController::class, 'destroySavedBlock'])->name('delete-saved-block');
             Route::get('/woo-products', [EmailEditorController::class, 'wooProducts'])->name('woo-products');
             Route::post('/generate-ai', [EmailEditorController::class, 'generateWithAI'])->name('generate-ai');
+            // Processamento de imagens externas
+            Route::post('/process-images', [EmailEditorController::class, 'processExternalImages'])->name('process-images');
+            Route::post('/download-image', [EmailEditorController::class, 'downloadExternalImage'])->name('download-image');
         });
 
         // Sugestões IA

@@ -9,6 +9,7 @@ use App\Models\AnalyticsConnection;
 use App\Models\Brand;
 use App\Models\SystemLog;
 use App\Services\AI\AIGateway;
+use App\Services\Email\EmailImageService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
@@ -345,5 +346,88 @@ class EmailEditorController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * Processa HTML de email, baixando imagens externas e armazenando localmente
+     * POST /email/editor/process-images
+     */
+    public function processExternalImages(Request $request, EmailImageService $imageService)
+    {
+        $validated = $request->validate([
+            'html' => 'required|string',
+        ]);
+
+        $brandId = session('current_brand_id');
+        $userId = Auth::id();
+
+        try {
+            // Processa o HTML e baixa imagens externas
+            $processedHtml = $imageService->processHtmlAndStoreImages(
+                $validated['html'],
+                $brandId,
+                $userId
+            );
+
+            // Encontra imagens externas que ainda não foram processadas
+            $externalImages = $imageService->findExternalImages($processedHtml);
+
+            return response()->json([
+                'success' => true,
+                'html' => $processedHtml,
+                'external_images_found' => count($externalImages),
+                'external_images' => $externalImages,
+            ]);
+        } catch (\Throwable $e) {
+            SystemLog::error('email', 'image.process_error', "Erro ao processar imagens: {$e->getMessage()}", [
+                'brand_id' => $brandId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Erro ao processar imagens: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Baixa uma imagem externa específica
+     * POST /email/editor/download-image
+     */
+    public function downloadExternalImage(Request $request, EmailImageService $imageService)
+    {
+        $validated = $request->validate([
+            'url' => 'required|url',
+        ]);
+
+        $brandId = session('current_brand_id');
+        $userId = Auth::id();
+
+        try {
+            $localUrl = $imageService->downloadAndStoreImage(
+                $validated['url'],
+                $brandId,
+                $userId
+            );
+
+            if ($localUrl) {
+                return response()->json([
+                    'success' => true,
+                    'url' => $localUrl,
+                    'original_url' => $validated['url'],
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Não foi possível baixar a imagem. Verifique se a URL está acessível.',
+            ], 400);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Erro ao baixar imagem: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 }
