@@ -892,6 +892,10 @@ class EmailCampaignController extends Controller
 
         // Usar o email correto do provedor (especialmente para SendPulse)
         $campaignService = app(\App\Services\Email\EmailCampaignService::class);
+
+        // Converter imagens para base64 inline (ESSENCIAL para funcionar no email)
+        $html = $campaignService->embedImagesAsBase64($html);
+
         $fromEmail = $campaignService->resolveFromEmail($campaign);
         $fromName = $campaign->from_name ?: $provider->getFromName() ?: config('app.name');
 
@@ -957,6 +961,10 @@ class EmailCampaignController extends Controller
             }
 
             $html = $this->inlineCssForEmail($request->input('html_content'));
+
+            // Converter imagens para base64 inline (ESSENCIAL para funcionar no email)
+            $campaignService = app(\App\Services\Email\EmailCampaignService::class);
+            $html = $campaignService->embedImagesAsBase64($html);
 
             // Para SendPulse, sempre usar o email configurado no provedor
             $configFromEmail = $provider->config['from_email'] ?? $provider->config['from_address'] ?? null;
