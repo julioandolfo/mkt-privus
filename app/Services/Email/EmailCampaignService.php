@@ -465,16 +465,34 @@ class EmailCampaignService
         }
 
         try {
-            // Extrair CSS do <style> tag
+            // Extrai CSS do <style> tag
             $css = '';
             if (preg_match('/<style[^>]*>(.*?)<\/style>/si', $html, $matches)) {
                 $css = $matches[1];
             }
 
-            $inliner = new CssToInlineStyles();
-            $inlined = $inliner->convert($html, $css);
+            // Protege os atributos src das imagens antes do inliner
+            // O CssToInlineStyles pode corromper/remover src em alguns casos
+            $srcMap = [];
+            $html = preg_replace_callback('/<img([^>]*)>/i', function ($m) use (&$srcMap) {
+                $attrs = $m[1];
+                if (preg_match('/src=["\']([^"\']+)["\']/i', $attrs, $srcMatch)) {
+                    $placeholder = '__IMG_SRC_' . count($srcMap) . '__';
+                    $srcMap[$placeholder] = $srcMatch[0]; // guarda o atributo src completo
+                    $attrs = preg_replace('/src=["\'][^"\']+["\']/i', 'src="' . $placeholder . '"', $attrs);
+                }
+                return '<img' . $attrs . '>';
+            }, $html);
 
-            return $inlined ?: $html;
+            $inliner = new CssToInlineStyles();
+            $inlined = $inliner->convert($html, $css) ?: $html;
+
+            // Restaura os srcs originais
+            foreach ($srcMap as $placeholder => $originalSrc) {
+                $inlined = str_replace('src="' . $placeholder . '"', $originalSrc, $inlined);
+            }
+
+            return $inlined;
         } catch (\Throwable $e) {
             Log::warning('Email CSS inlining failed', ['error' => $e->getMessage()]);
             return $html;
