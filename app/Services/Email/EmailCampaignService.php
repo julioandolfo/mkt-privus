@@ -530,6 +530,15 @@ class EmailCampaignService
 
             SystemLog::info('email', 'render.found_image', "Tag img encontrada", ['src' => substr($src, 0, 100)]);
 
+            // Verificar se é SVG - avisar que não é suportado
+            if (str_ends_with(strtolower($src), '.svg') || str_contains(strtolower($src), '.svg?')) {
+                SystemLog::warning('email', 'render.svg_detected', "Imagem SVG detectada - não será convertida (formato não suportado em emails)", [
+                    'src' => $src,
+                ]);
+                $failedCount++;
+                return $originalTag; // Mantém original mas não converte
+            }
+
             // Se já é base64, não processa
             if (str_starts_with($src, 'data:')) {
                 $skippedCount++;
@@ -593,6 +602,16 @@ class EmailCampaignService
             }
 
             $mimeType = $this->getMimeTypeFromContent($content) ?? 'image/jpeg';
+
+            // Verificar se é SVG - não é suportado pela maioria dos clientes de email
+            if ($mimeType === 'image/svg+xml' || str_ends_with(strtolower($url), '.svg')) {
+                SystemLog::warning('email', 'render.svg_not_supported_url', "Imagem SVG de URL externa não é suportada em emails.", [
+                    'url' => $url,
+                    'mime_type' => $mimeType,
+                ]);
+                return null;
+            }
+
             $base64 = base64_encode($content);
 
             return "data:{$mimeType};base64,{$base64}";
@@ -617,6 +636,17 @@ class EmailCampaignService
 
             $content = Storage::disk('public')->get($path);
             $mimeType = Storage::disk('public')->mimeType($path) ?? 'image/jpeg';
+
+            // Verificar se é SVG - não é suportado pela maioria dos clientes de email
+            if ($mimeType === 'image/svg+xml' || str_ends_with(strtolower($path), '.svg')) {
+                SystemLog::warning('email', 'render.svg_not_supported', "Imagem SVG não é suportada em emails. Converta para PNG/JPEG antes de fazer upload.", [
+                    'path' => $path,
+                    'mime_type' => $mimeType,
+                ]);
+                // Retorna null para não incluir a imagem quebrada no email
+                return null;
+            }
+
             $base64 = base64_encode($content);
 
             SystemLog::info('email', 'render.base64_created', "Imagem convertida para base64", [
