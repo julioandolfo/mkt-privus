@@ -471,14 +471,15 @@ class EmailCampaignService
                 $css = $matches[1];
             }
 
-            // Protege os atributos src das imagens antes do inliner
-            // O CssToInlineStyles pode corromper/remover src em alguns casos
+            // Protege os src antes do inliner — o CssToInlineStyles usa DOMDocument
+            // que pode remover/corromper atributos src com URLs longas
             $srcMap = [];
             $html = preg_replace_callback('/<img([^>]*)>/i', function ($m) use (&$srcMap) {
                 $attrs = $m[1];
-                if (preg_match('/src=["\']([^"\']+)["\']/i', $attrs, $srcMatch)) {
-                    $placeholder = '__IMG_SRC_' . count($srcMap) . '__';
-                    $srcMap[$placeholder] = $srcMatch[0]; // guarda o atributo src completo
+                if (preg_match('/src=(["\'])([^"\']+)\1/i', $attrs, $srcMatch)) {
+                    $idx          = count($srcMap);
+                    $placeholder  = 'IMGSRC' . $idx . 'PLACEHOLDER';
+                    $srcMap[$idx] = ['quote' => $srcMatch[1], 'url' => $srcMatch[2]];
                     $attrs = preg_replace('/src=["\'][^"\']+["\']/i', 'src="' . $placeholder . '"', $attrs);
                 }
                 return '<img' . $attrs . '>';
@@ -487,9 +488,14 @@ class EmailCampaignService
             $inliner = new CssToInlineStyles();
             $inlined = $inliner->convert($html, $css) ?: $html;
 
-            // Restaura os srcs originais
-            foreach ($srcMap as $placeholder => $originalSrc) {
-                $inlined = str_replace('src="' . $placeholder . '"', $originalSrc, $inlined);
+            // Restaura os srcs originais (trata aspas simples e duplas)
+            foreach ($srcMap as $idx => $data) {
+                $placeholder = 'IMGSRC' . $idx . 'PLACEHOLDER';
+                $inlined = str_replace(
+                    ['src="' . $placeholder . '"', "src='" . $placeholder . "'"],
+                    'src="' . $data['url'] . '"',
+                    $inlined
+                );
             }
 
             return $inlined;

@@ -1045,8 +1045,34 @@ class EmailCampaignController extends Controller
                 $css = $matches[1];
             }
 
+            // Protege os src antes do inliner — o CssToInlineStyles usa DOMDocument
+            // que pode remover/corromper atributos src com URLs longas
+            $srcMap = [];
+            $html = preg_replace_callback('/<img([^>]*)>/i', function ($m) use (&$srcMap) {
+                $attrs = $m[1];
+                if (preg_match('/src=(["\'])([^"\']+)\1/i', $attrs, $srcMatch)) {
+                    $idx         = count($srcMap);
+                    $placeholder = 'IMGSRC' . $idx . 'PLACEHOLDER';
+                    $srcMap[$idx] = ['quote' => $srcMatch[1], 'url' => $srcMatch[2]];
+                    $attrs = preg_replace('/src=["\'][^"\']+["\']/i', 'src="' . $placeholder . '"', $attrs);
+                }
+                return '<img' . $attrs . '>';
+            }, $html);
+
             $inliner = new \TijsVerkoyen\CssToInlineStyles\CssToInlineStyles();
-            return $inliner->convert($html, $css) ?: $html;
+            $inlined = $inliner->convert($html, $css) ?: $html;
+
+            // Restaura os srcs originais (trata aspas simples e duplas)
+            foreach ($srcMap as $idx => $data) {
+                $placeholder = 'IMGSRC' . $idx . 'PLACEHOLDER';
+                $inlined = str_replace(
+                    ['src="' . $placeholder . '"', "src='" . $placeholder . "'"],
+                    'src="' . $data['url'] . '"',
+                    $inlined
+                );
+            }
+
+            return $inlined;
         } catch (\Throwable) {
             return $html;
         }
