@@ -366,13 +366,29 @@ class EmailCampaignService
     public function renderForContact(EmailCampaign $campaign, EmailContact $contact): string
     {
         $html = $campaign->html_content ?? '';
+        $originalLength = strlen($html);
+
+        SystemLog::debug('email', 'render.start', "Iniciando renderização para contato", [
+            'campaign_id' => $campaign->id,
+            'contact_id' => $contact->id,
+            'contact_email' => $contact->email,
+            'html_length' => $originalLength,
+        ]);
 
         // Inline CSS (<style> no <head> → atributos style="" em cada elemento)
         // Necessário porque clientes de email (Gmail, Outlook) removem <head>/<style>
         $html = $this->inlineCss($html);
+        SystemLog::debug('email', 'render.css_inlined', "CSS inline aplicado", [
+            'campaign_id' => $campaign->id,
+            'contact_id' => $contact->id,
+        ]);
 
         // Converter imagens para base64 inline (garante que funcionem no email)
         $html = $this->embedImagesAsBase64($html);
+        SystemLog::debug('email', 'render.images_embedded', "Imagens convertidas para base64", [
+            'campaign_id' => $campaign->id,
+            'contact_id' => $contact->id,
+        ]);
 
         // Adicionar tracking pixel
         $trackOpen = $campaign->getSetting('track_opens', true);
@@ -389,6 +405,13 @@ class EmailCampaignService
 
         // Substituir merge tags
         $html = $this->renderMergeTags($html, $contact);
+
+        SystemLog::debug('email', 'render.complete', "Renderização concluída", [
+            'campaign_id' => $campaign->id,
+            'contact_id' => $contact->id,
+            'original_length' => $originalLength,
+            'final_length' => strlen($html),
+        ]);
 
         return $html;
     }
@@ -481,13 +504,18 @@ class EmailCampaignService
 
         // Padrão para encontrar imagens com src
         $pattern = '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i';
+        
+        $processedCount = 0;
+        $skippedCount = 0;
+        $failedCount = 0;
 
-        return preg_replace_callback($pattern, function ($matches) {
+        $result = preg_replace_callback($pattern, function ($matches) use (&$processedCount, &$skippedCount, &$failedCount) {
             $originalTag = $matches[0];
             $src = $matches[1];
 
             // Se já é base64, não processa
             if (str_starts_with($src, 'data:')) {
+                $skippedCount++;
                 return $originalTag;
             }
 
@@ -495,8 +523,10 @@ class EmailCampaignService
             if (str_starts_with($src, 'http://') || str_starts_with($src, 'https://')) {
                 $base64 = $this->convertUrlToBase64($src);
                 if ($base64) {
+                    $processedCount++;
                     return str_replace($src, $base64, $originalTag);
                 }
+                $failedCount++;
                 return $originalTag;
             }
 
@@ -505,12 +535,24 @@ class EmailCampaignService
                 $path = str_replace('/storage/', '', $src);
                 $base64 = $this->convertStoragePathToBase64($path);
                 if ($base64) {
+                    $processedCount++;
                     return str_replace($src, $base64, $originalTag);
                 }
+                $failedCount++;
+                return $originalTag;
             }
 
+            $skippedCount++;
             return $originalTag;
         }, $html);
+
+        SystemLog::info('email', 'render.embed_images', "Imagens convertidas para base64", [
+            'processed' => $processedCount,
+            'skipped' => $skippedCount,
+            'failed' => $failedCount,
+        ]);
+
+        return $result;
     }
 
     /**
@@ -548,7 +590,10 @@ class EmailCampaignService
     private function convertStoragePathToBase64(string $path): ?string
     {
         try {
+            SystemLog::debug('email', 'render.convert_storage', "Convertendo path para base64", ['path' => $path]);
+
             if (!Storage::disk('public')->exists($path)) {
+                SystemLog::warning('email', 'render.storage_not_found', "Arquivo não encontrado no storage", ['path' => $path]);
                 return null;
             }
 
@@ -556,9 +601,19 @@ class EmailCampaignService
             $mimeType = Storage::disk('public')->mimeType($path) ?? 'image/jpeg';
             $base64 = base64_encode($content);
 
+            SystemLog::info('email', 'render.base64_created', "Imagem convertida para base64", [
+                'path' => $path,
+                'mime_type' => $mimeType,
+                'size' => strlen($content),
+                'base64_length' => strlen($base64),
+            ]);
+
             return "data:{$mimeType};base64,{$base64}";
         } catch (\Throwable $e) {
-            Log::warning('Failed to convert storage path to base64', ['path' => $path, 'error' => $e->getMessage()]);
+            SystemLog::error('email', 'render.base64_failed', "Erro ao converter para base64", [
+                'path' => $path,
+                'error' => $e->getMessage(),
+            ]);
             return null;
         }
     }
