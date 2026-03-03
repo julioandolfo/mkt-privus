@@ -1053,20 +1053,18 @@ class EmailCampaignController extends Controller
     }
 
     /**
-     * Verificar e converter imagens SVG para PNG
+     * Verificar imagens SVG na campanha
      */
     public function checkSvgImages(EmailCampaign $campaign)
     {
         $svgService = new \App\Services\Email\SvgConverterService();
 
-        // Encontra todas as imagens no HTML
         $pattern = '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i';
         preg_match_all($pattern, $campaign->html_content ?? '', $matches);
 
         $svgImages = [];
         foreach ($matches[1] as $src) {
-            if (str_ends_with(strtolower($src), '.svg') ||
-                str_contains(strtolower($src), '.svg?')) {
+            if (str_ends_with(strtolower($src), '.svg') || str_contains(strtolower($src), '.svg?')) {
                 $svgImages[] = $src;
             }
         }
@@ -1074,17 +1072,129 @@ class EmailCampaignController extends Controller
         $conversionAvailable = $svgService->isConversionAvailable();
 
         return response()->json([
-            'has_svg' => !empty($svgImages),
-            'svg_count' => count($svgImages),
-            'svg_images' => array_slice($svgImages, 0, 10),
+            'has_svg'            => !empty($svgImages),
+            'svg_count'          => count($svgImages),
+            'svg_images'         => array_slice($svgImages, 0, 10),
             'conversion_available' => $conversionAvailable,
-            'conversion_method' => $conversionAvailable ? $svgService->getAvailableMethod() : null,
-            'message' => empty($svgImages)
-                ? 'Nenhuma imagem SVG encontrada'
-                : (count($svgImages) . ' imagem(s) SVG encontrada(s). ' .
-                   ($conversionAvailable
-                       ? 'Conversão automática está disponível.'
-                       : '⚠️ Conversão automática NÃO está disponível. Instale Imagick ou ImageMagick.')),
+            'conversion_method'  => $svgService->getAvailableMethod(),
+        ]);
+    }
+
+    /**
+     * Converter imagens SVG para PNG diretamente na campanha
+     */
+    public function convertSvgImages(EmailCampaign $campaign)
+    {
+        $svgService  = new \App\Services\Email\SvgConverterService();
+        $imageService = app(\App\Services\Email\EmailImageService::class);
+
+        SystemLog::info('email', 'svg.convert.manual', "Conversão manual de SVG iniciada", [
+            'campaign_id' => $campaign->id,
+            'method'      => $svgService->getAvailableMethod(),
+        ]);
+
+        // Encontra todos os SVGs no HTML
+        $pattern = '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i';
+        preg_match_all($pattern, $campaign->html_content ?? '', $matches);
+
+        $svgUrls = [];
+        foreach ($matches[1] as $src) {
+            if (str_ends_with(strtolower($src), '.svg') || str_contains(strtolower($src), '.svg?')) {
+                $svgUrls[] = $src;
+            }
+        }
+
+        if (empty($svgUrls)) {
+            return response()->json(['success' => true, 'message' => 'Nenhum SVG encontrado na campanha.', 'converted' => 0]);
+        }
+
+        $appUrl     = config('app.url');
+        $html       = $campaign->html_content;
+        $converted  = 0;
+        $failed     = 0;
+        $details    = [];
+
+        foreach ($svgUrls as $svgUrl) {
+            // Extrai caminho relativo do storage
+            if (str_starts_with($svgUrl, $appUrl)) {
+                $relativePath = ltrim(str_replace([$appUrl . '/storage/', $appUrl . '/storage'], '', $svgUrl), '/');
+            } elseif (str_starts_with($svgUrl, '/storage/')) {
+                $relativePath = ltrim(str_replace('/storage/', '', $svgUrl), '/');
+            } else {
+                $details[] = ['url' => $svgUrl, 'status' => 'skipped', 'reason' => 'URL externa não suportada'];
+                $failed++;
+                continue;
+            }
+
+            SystemLog::info('email', 'svg.convert.attempt', "Tentando converter SVG", [
+                'campaign_id'   => $campaign->id,
+                'svg_url'       => $svgUrl,
+                'relative_path' => $relativePath,
+                'file_exists'   => \Illuminate\Support\Facades\Storage::disk('public')->exists($relativePath),
+            ]);
+
+            if (!\Illuminate\Support\Facades\Storage::disk('public')->exists($relativePath)) {
+                $details[] = ['url' => $svgUrl, 'status' => 'error', 'reason' => 'Arquivo não encontrado no storage'];
+                $failed++;
+                continue;
+            }
+
+            $pngPath = $svgService->convertToPng($relativePath);
+
+            if ($pngPath) {
+                $pngUrl = \Illuminate\Support\Facades\Storage::disk('public')->url($pngPath);
+
+                // Substitui todas as ocorrências no HTML
+                $html = str_replace($svgUrl, $pngUrl, $html);
+
+                // Atualiza o asset no banco se existir
+                $asset = \App\Models\EmailAsset::where('file_path', $relativePath)->first();
+                if ($asset) {
+                    $fullPngPath  = \Illuminate\Support\Facades\Storage::disk('public')->path($pngPath);
+                    $pngContent   = file_get_contents($fullPngPath);
+                    $imgSize      = getimagesizefromstring($pngContent);
+
+                    $asset->update([
+                        'file_path'  => $pngPath,
+                        'mime_type'  => 'image/png',
+                        'file_size'  => strlen($pngContent),
+                        'dimensions' => $imgSize ? ['width' => $imgSize[0], 'height' => $imgSize[1]] : null,
+                    ]);
+                }
+
+                $converted++;
+                $details[] = ['url' => $svgUrl, 'status' => 'converted', 'png_url' => $pngUrl];
+
+                SystemLog::info('email', 'svg.convert.success', "SVG convertido com sucesso", [
+                    'campaign_id' => $campaign->id,
+                    'svg_url'     => $svgUrl,
+                    'png_url'     => $pngUrl,
+                ]);
+            } else {
+                $failed++;
+                $details[] = ['url' => $svgUrl, 'status' => 'error', 'reason' => 'Conversão falhou - verifique os logs do sistema'];
+
+                SystemLog::error('email', 'svg.convert.failed', "Falha ao converter SVG", [
+                    'campaign_id'    => $campaign->id,
+                    'svg_url'        => $svgUrl,
+                    'method_tried'   => $svgService->getAvailableMethod(),
+                ]);
+            }
+        }
+
+        // Salva o HTML atualizado se houve conversões
+        if ($converted > 0) {
+            $campaign->update(['html_content' => $html]);
+        }
+
+        return response()->json([
+            'success'   => $failed === 0,
+            'converted' => $converted,
+            'failed'    => $failed,
+            'details'   => $details,
+            'message'   => $converted > 0
+                ? "{$converted} imagem(s) convertida(s) com sucesso!"
+                : "Falha ao converter. Verifique os logs em /logs",
         ]);
     }
 }

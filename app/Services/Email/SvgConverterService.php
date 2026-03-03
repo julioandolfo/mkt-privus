@@ -36,13 +36,20 @@ class SvgConverterService
                 return null;
             }
 
-            // Verificar qual método de conversão está disponível
+            // rsvg-convert é o mais confiável para SVGs complexos (CorelDRAW, Illustrator, etc.)
+            if ($this->hasRsvgConvert()) {
+                $result = $this->convertUsingRsvg($svgPath, $width, $height);
+                if ($result) return $result;
+            }
+
             if ($this->hasImagick()) {
-                return $this->convertUsingImagick($svgPath, $width, $height);
+                $result = $this->convertUsingImagick($svgPath, $width, $height);
+                if ($result) return $result;
             }
 
             if ($this->hasImageMagickCli()) {
-                return $this->convertUsingCli($svgPath, $width, $height);
+                $result = $this->convertUsingCli($svgPath, $width, $height);
+                if ($result) return $result;
             }
 
             if ($this->hasInkscape()) {
@@ -50,7 +57,7 @@ class SvgConverterService
             }
 
             // Se nenhum método disponível, loga e retorna null
-            SystemLog::warning('email', 'svg.convert.no_converter', "Nenhum conversor SVG disponível. Instale Imagick PHP extension, ImageMagick CLI ou Inkscape.", [
+            SystemLog::warning('email', 'svg.convert.no_converter', "Nenhum conversor SVG disponível. Instale librsvg (rsvg-convert), Imagick PHP extension, ImageMagick CLI ou Inkscape.", [
                 'svg_path' => $svgPath,
             ]);
 
@@ -61,6 +68,100 @@ class SvgConverterService
                 'svg_path' => $svgPath,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Verifica se rsvg-convert está disponível (librsvg - método mais confiável para SVG)
+     */
+    private function hasRsvgConvert(): bool
+    {
+        $output = shell_exec('which rsvg-convert 2>/dev/null');
+        return !empty(trim($output ?? ''));
+    }
+
+    /**
+     * Remove DOCTYPE e namespaces problemáticos do SVG antes de converter
+     * SVGs do CorelDRAW/Illustrator têm DOCTYPE que causa timeout ao converter
+     */
+    private function sanitizeSvgForConversion(string $svgContent): string
+    {
+        // Remove DOCTYPE (causa tentativa de buscar DTD externo e timeout)
+        $svgContent = preg_replace('/<!DOCTYPE[^>]*>/i', '', $svgContent);
+
+        // Remove namespace CorelDRAW (não reconhecido por conversores)
+        $svgContent = str_replace(' xmlns:xodm="http://www.corel.com/coreldraw/odm/2003"', '', $svgContent);
+
+        // Remove processing instructions problemáticas
+        $svgContent = preg_replace('/<\?[^>]*\?>\s*/', '', $svgContent);
+
+        return trim($svgContent);
+    }
+
+    /**
+     * Converte usando rsvg-convert (librsvg) - melhor suporte a SVG complexos
+     */
+    private function convertUsingRsvg(string $svgPath, ?int $width, ?int $height): ?string
+    {
+        try {
+            $fullPath    = Storage::disk('public')->path($svgPath);
+            $pngPath     = preg_replace('/\.svg$/i', '.png', $svgPath);
+            $pngFullPath = Storage::disk('public')->path($pngPath);
+
+            $directory = dirname($pngFullPath);
+            if (!is_dir($directory)) {
+                mkdir($directory, 0755, true);
+            }
+
+            // Cria SVG sanitizado temporário (sem DOCTYPE que causa timeout)
+            $svgContent  = file_get_contents($fullPath);
+            $cleanContent = $this->sanitizeSvgForConversion($svgContent);
+            $tmpSvg = $fullPath . '.tmp.svg';
+            file_put_contents($tmpSvg, $cleanContent);
+
+            $sizeOption = '';
+            if ($width && $height) {
+                $sizeOption = " -w {$width} -h {$height}";
+            } elseif ($width) {
+                $sizeOption = " -w {$width}";
+            } elseif ($height) {
+                $sizeOption = " -h {$height}";
+            }
+
+            // Tenta converter o SVG sanitizado
+            $cmd    = "rsvg-convert{$sizeOption} -o \"{$pngFullPath}\" \"{$tmpSvg}\" 2>&1";
+            $output = shell_exec($cmd);
+
+            // Remove o temporário
+            if (file_exists($tmpSvg)) {
+                unlink($tmpSvg);
+            }
+
+            if (!file_exists($pngFullPath) || filesize($pngFullPath) < 100) {
+                SystemLog::error('email', 'svg.convert.rsvg_failed', "rsvg-convert falhou", [
+                    'svg_path' => $svgPath,
+                    'command'  => $cmd,
+                    'output'   => $output,
+                    'png_exists' => file_exists($pngFullPath),
+                    'png_size'   => file_exists($pngFullPath) ? filesize($pngFullPath) : 0,
+                ]);
+                return null;
+            }
+
+            SystemLog::info('email', 'svg.convert.rsvg_success', "SVG convertido com sucesso via rsvg-convert", [
+                'svg_path' => $svgPath,
+                'png_path' => $pngPath,
+                'png_size' => filesize($pngFullPath),
+            ]);
+
+            return $pngPath;
+
+        } catch (\Throwable $e) {
+            SystemLog::error('email', 'svg.convert.rsvg_error', "Erro rsvg-convert: {$e->getMessage()}", [
+                'svg_path' => $svgPath,
+                'error'    => $e->getMessage(),
             ]);
             return null;
         }
@@ -302,7 +403,7 @@ class SvgConverterService
      */
     public function isConversionAvailable(): bool
     {
-        return $this->hasImagick() || $this->hasImageMagickCli() || $this->hasInkscape();
+        return $this->hasRsvgConvert() || $this->hasImagick() || $this->hasImageMagickCli() || $this->hasInkscape();
     }
 
     /**
@@ -310,11 +411,14 @@ class SvgConverterService
      */
     public function getAvailableMethod(): ?string
     {
+        if ($this->hasRsvgConvert()) {
+            return 'rsvg-convert';
+        }
         if ($this->hasImagick()) {
             return 'imagick';
         }
         if ($this->hasImageMagickCli()) {
-            return 'cli';
+            return 'imagemagick-cli';
         }
         if ($this->hasInkscape()) {
             return 'inkscape';

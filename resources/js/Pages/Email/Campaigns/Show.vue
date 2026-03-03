@@ -34,6 +34,8 @@ const sendNowSuccess = ref('');
 
 // Info de SVG
 const svgInfo = ref(null);
+const svgConverting = ref(false);
+const svgConvertResult = ref(null);
 
 const statusConfig = {
     draft: { label: 'Rascunho', class: 'bg-gray-700/50 text-gray-400 border-gray-600' },
@@ -102,8 +104,27 @@ async function checkSvgImages() {
         const response = await axios.get(route('email.campaigns.check-svg', props.campaign.id));
         svgInfo.value = response.data;
     } catch (e) {
-        // Silencioso - não é crítico
         console.error('Erro ao verificar SVGs:', e);
+    }
+}
+
+async function convertSvgImages() {
+    svgConverting.value = true;
+    svgConvertResult.value = null;
+    try {
+        const response = await axios.post(route('email.campaigns.convert-svg', props.campaign.id));
+        svgConvertResult.value = response.data;
+        if (response.data.converted > 0) {
+            // Re-verifica após conversão bem-sucedida
+            await checkSvgImages();
+        }
+    } catch (e) {
+        svgConvertResult.value = {
+            success: false,
+            message: 'Erro ao converter: ' + (e.response?.data?.message || e.message),
+        };
+    } finally {
+        svgConverting.value = false;
     }
 }
 
@@ -373,30 +394,49 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
         </div>
 
         <!-- Alerta de SVG -->
-        <div v-if="svgInfo?.has_svg" class="mb-6 rounded-lg border border-orange-700/50 bg-orange-900/20 px-4 py-3">
+        <div v-if="svgInfo?.has_svg" class="mb-6 rounded-lg border border-orange-700/50 bg-orange-900/20 px-4 py-4">
             <div class="flex items-start gap-3">
                 <svg class="h-5 w-5 text-orange-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                <div>
+                <div class="flex-1">
                     <p class="text-sm font-medium text-orange-300">
-                        ⚠️ {{ svgInfo.svg_count }} imagem(s) SVG detectada(s)
+                        {{ svgInfo.svg_count }} imagem(s) SVG detectada(s) — não exibem no Gmail/Outlook
                     </p>
-                    <p class="text-xs text-orange-400/80 mt-1">
-                        Clientes de email (Gmail, Outlook) não suportam SVG.
-                        <span v-if="svgInfo.conversion_available">
-                            ✅ A conversão automática está ativa - ao re-salvar a campanha, os SVGs serão convertidos para PNG automaticamente.
-                        </span>
-                        <span v-else>
-                            ⚠️ Conversão automática não disponível. Instale PHP Imagick ou ImageMagick no servidor.
-                        </span>
-                    </p>
-                    <div v-if="svgInfo.svg_images?.length" class="mt-2 flex flex-wrap gap-2">
-                        <span v-for="(img, idx) in svgInfo.svg_images.slice(0, 5)" :key="idx" class="text-xs px-2 py-1 bg-orange-950/50 text-orange-400 rounded truncate max-w-xs">
+                    <div v-if="svgInfo.svg_images?.length" class="mt-1 flex flex-wrap gap-2">
+                        <span v-for="(img, idx) in svgInfo.svg_images" :key="idx" class="text-xs px-2 py-0.5 bg-orange-950/60 text-orange-400 rounded font-mono">
                             {{ img.split('/').pop() }}
                         </span>
-                        <span v-if="svgInfo.svg_images.length > 5" class="text-xs px-2 py-1 text-orange-500">
-                            +{{ svgInfo.svg_images.length - 5 }} mais
+                    </div>
+
+                    <!-- Resultado da conversão -->
+                    <div v-if="svgConvertResult" class="mt-3 rounded-lg px-3 py-2 text-sm"
+                        :class="svgConvertResult.success ? 'bg-emerald-900/40 border border-emerald-700/50 text-emerald-300' : 'bg-red-900/40 border border-red-700/50 text-red-300'">
+                        {{ svgConvertResult.message }}
+                        <div v-if="svgConvertResult.details?.length" class="mt-1 space-y-1">
+                            <div v-for="(d, i) in svgConvertResult.details" :key="i" class="text-xs opacity-80">
+                                <span v-if="d.status === 'converted'">✅ {{ d.url.split('/').pop() }} → PNG</span>
+                                <span v-else-if="d.status === 'error'">❌ {{ d.url.split('/').pop() }}: {{ d.reason }}</span>
+                                <span v-else>⚠️ {{ d.url.split('/').pop() }}: {{ d.reason }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3 flex items-center gap-3">
+                        <button
+                            v-if="svgInfo.conversion_available"
+                            @click="convertSvgImages"
+                            :disabled="svgConverting"
+                            class="rounded-lg bg-orange-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-orange-500 disabled:opacity-50 flex items-center gap-2"
+                        >
+                            <svg v-if="svgConverting" class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                            </svg>
+                            {{ svgConverting ? 'Convertendo...' : 'Converter para PNG agora' }}
+                        </button>
+                        <span class="text-xs text-orange-500/80">
+                            Conversor: {{ svgInfo.conversion_method ?? 'nenhum disponível' }}
                         </span>
                     </div>
                 </div>

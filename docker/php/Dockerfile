@@ -1,6 +1,8 @@
 FROM php:8.3-fpm-alpine
 
-# Instalar dependencias do sistema (inclui su-exec para drop de privilegios + ImageMagick para conversao SVG)
+# Instalar dependencias do sistema
+# librsvg: conversor SVG nativo (rsvg-convert) - mais confiavel que ImageMagick para SVG
+# imagemagick: utilitario geral de imagens
 RUN apk add --no-cache \
     git \
     curl \
@@ -17,8 +19,17 @@ RUN apk add --no-cache \
     su-exec \
     imagemagick \
     imagemagick-dev \
+    librsvg \
     libgomp \
     $PHPIZE_DEPS
+
+# Habilitar SVG no ImageMagick (bloqueado por padrao no Alpine por seguranca)
+RUN if [ -f /etc/ImageMagick-7/policy.xml ]; then \
+        sed -i 's/rights="none" pattern="SVG"/rights="read|write" pattern="SVG"/' /etc/ImageMagick-7/policy.xml; \
+    fi; \
+    if [ -f /etc/ImageMagick-6/policy.xml ]; then \
+        sed -i 's/rights="none" pattern="SVG"/rights="read|write" pattern="SVG"/' /etc/ImageMagick-6/policy.xml; \
+    fi
 
 # Instalar extensoes PHP
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
@@ -37,7 +48,7 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
 # Instalar Redis extension
 RUN pecl install redis && docker-php-ext-enable redis
 
-# Instalar Imagick extension (para conversao SVG -> PNG)
+# Instalar Imagick extension (para conversao de imagens via PHP)
 RUN pecl install imagick && docker-php-ext-enable imagick
 
 # Instalar Composer
