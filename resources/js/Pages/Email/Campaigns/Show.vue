@@ -32,6 +32,9 @@ const sendNowLoading = ref(false);
 const sendNowError = ref('');
 const sendNowSuccess = ref('');
 
+// Info de SVG
+const svgInfo = ref(null);
+
 const statusConfig = {
     draft: { label: 'Rascunho', class: 'bg-gray-700/50 text-gray-400 border-gray-600' },
     scheduled: { label: 'Agendado', class: 'bg-blue-900/40 text-blue-400 border-blue-600/50' },
@@ -89,7 +92,20 @@ onMounted(() => {
         updateCountdown();
         countdownInterval.value = setInterval(updateCountdown, 1000);
     }
+
+    // Verificar SVGs na campanha
+    checkSvgImages();
 });
+
+async function checkSvgImages() {
+    try {
+        const response = await axios.get(route('email.campaigns.check-svg', props.campaign.id));
+        svgInfo.value = response.data;
+    } catch (e) {
+        // Silencioso - não é crítico
+        console.error('Erro ao verificar SVGs:', e);
+    }
+}
 
 onUnmounted(() => {
     if (countdownInterval.value) {
@@ -354,6 +370,37 @@ const progressMax = Math.max(totalRecipients, totalSent, 1);
         </div>
         <div v-if="flash?.error" class="mb-6 rounded-lg border border-red-700/50 bg-red-900/30 px-4 py-3 text-sm text-red-300">
             {{ flash.error }}
+        </div>
+
+        <!-- Alerta de SVG -->
+        <div v-if="svgInfo?.has_svg" class="mb-6 rounded-lg border border-orange-700/50 bg-orange-900/20 px-4 py-3">
+            <div class="flex items-start gap-3">
+                <svg class="h-5 w-5 text-orange-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div>
+                    <p class="text-sm font-medium text-orange-300">
+                        ⚠️ {{ svgInfo.svg_count }} imagem(s) SVG detectada(s)
+                    </p>
+                    <p class="text-xs text-orange-400/80 mt-1">
+                        Clientes de email (Gmail, Outlook) não suportam SVG.
+                        <span v-if="svgInfo.conversion_available">
+                            ✅ A conversão automática está ativa - ao re-salvar a campanha, os SVGs serão convertidos para PNG automaticamente.
+                        </span>
+                        <span v-else>
+                            ⚠️ Conversão automática não disponível. Instale PHP Imagick ou ImageMagick no servidor.
+                        </span>
+                    </p>
+                    <div v-if="svgInfo.svg_images?.length" class="mt-2 flex flex-wrap gap-2">
+                        <span v-for="(img, idx) in svgInfo.svg_images.slice(0, 5)" :key="idx" class="text-xs px-2 py-1 bg-orange-950/50 text-orange-400 rounded truncate max-w-xs">
+                            {{ img.split('/').pop() }}
+                        </span>
+                        <span v-if="svgInfo.svg_images.length > 5" class="text-xs px-2 py-1 text-orange-500">
+                            +{{ svgInfo.svg_images.length - 5 }} mais
+                        </span>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- KPI Cards -->

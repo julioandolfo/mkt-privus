@@ -13,9 +13,16 @@ use Illuminate\Support\Str;
  */
 class EmailImageService
 {
+    private SvgConverterService $svgConverter;
+
+    public function __construct()
+    {
+        $this->svgConverter = new SvgConverterService();
+    }
+
     /**
      * Processa o HTML de uma campanha, baixando todas as imagens externas
-     * e convertendo-as para assets locais.
+     * e convertendo-as para assets locais. Converte SVG para PNG automaticamente.
      *
      * @param string $html O conteúdo HTML da campanha
      * @param int $brandId ID da marca para organização
@@ -269,19 +276,70 @@ class EmailImageService
                 // Ignora erro de dimensão
             }
 
+            // Se for SVG, tenta converter para PNG
+            $finalPath = $fullPath;
+            $finalMimeType = $mimeType;
+            $finalExtension = $extension;
+            $converted = false;
+
+            if ($mimeType === 'image/svg+xml' || $extension === 'svg') {
+                SystemLog::info('email', 'image.svg_detected', "SVG detectado, tentando converter para PNG", [
+                    'url' => $url,
+                    'path' => $fullPath,
+                ]);
+
+                $pngPath = $this->svgConverter->convertToPng($fullPath, $dimensions['width'] ?? null, $dimensions['height'] ?? null);
+
+                if ($pngPath) {
+                    // Conversão bem-sucedida, usar o PNG
+                    $finalPath = $pngPath;
+                    $finalMimeType = 'image/png';
+                    $finalExtension = 'png';
+                    $converted = true;
+
+                    // Obter tamanho do PNG
+                    $fullPngPath = Storage::disk('public')->path($pngPath);
+                    $imageContent = file_get_contents($fullPngPath);
+
+                    SystemLog::info('email', 'image.svg_converted', "SVG convertido com sucesso para PNG", [
+                        'svg_path' => $fullPath,
+                        'png_path' => $pngPath,
+                    ]);
+
+                    // Atualizar dimensões se não tínhamos antes
+                    if (!$dimensions) {
+                        $img = getimagesizefromstring($imageContent);
+                        if ($img) {
+                            $dimensions = ['width' => $img[0], 'height' => $img[1]];
+                        }
+                    }
+                } else {
+                    // Falhou na conversão - tenta detectar dimensões SVG para criar um placeholder
+                    SystemLog::warning('email', 'image.svg_conversion_failed', "Falha ao converter SVG. Clientes de email não suportam SVG.", [
+                        'url' => $url,
+                        'path' => $fullPath,
+                    ]);
+
+                    // Ainda assim salva o SVG, mas retorna null para que a imagem não seja usada
+                    // ou retornamos o SVG e deixamos o embedImagesAsBase64 tratar
+                    return null;
+                }
+            }
+
             // Cria registro no banco
             SystemLog::info('email', 'image.creating_asset', "Criando registro no banco", [
                 'url' => $url,
-                'path' => $fullPath,
+                'path' => $finalPath,
+                'converted' => $converted,
             ]);
 
             try {
                 $asset = EmailAsset::create([
                     'brand_id' => $brandId,
                     'user_id' => $userId,
-                    'file_path' => $fullPath,
+                    'file_path' => $finalPath,
                     'file_name' => basename($url),
-                    'mime_type' => $mimeType,
+                    'mime_type' => $finalMimeType,
                     'file_size' => strlen($imageContent),
                     'dimensions' => $dimensions,
                     'source_url' => $url,
@@ -291,6 +349,7 @@ class EmailImageService
                 SystemLog::info('email', 'image.asset_created', "Asset criado com sucesso", [
                     'asset_id' => $asset->id,
                     'url' => $asset->url,
+                    'converted' => $converted,
                 ]);
 
                 return $asset->url;

@@ -1051,4 +1051,40 @@ class EmailCampaignController extends Controller
             return $html;
         }
     }
+
+    /**
+     * Verificar e converter imagens SVG para PNG
+     */
+    public function checkSvgImages(EmailCampaign $campaign)
+    {
+        $svgService = new \App\Services\Email\SvgConverterService();
+
+        // Encontra todas as imagens no HTML
+        $pattern = '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i';
+        preg_match_all($pattern, $campaign->html_content ?? '', $matches);
+
+        $svgImages = [];
+        foreach ($matches[1] as $src) {
+            if (str_ends_with(strtolower($src), '.svg') ||
+                str_contains(strtolower($src), '.svg?')) {
+                $svgImages[] = $src;
+            }
+        }
+
+        $conversionAvailable = $svgService->isConversionAvailable();
+
+        return response()->json([
+            'has_svg' => !empty($svgImages),
+            'svg_count' => count($svgImages),
+            'svg_images' => array_slice($svgImages, 0, 10),
+            'conversion_available' => $conversionAvailable,
+            'conversion_method' => $conversionAvailable ? $svgService->getAvailableMethod() : null,
+            'message' => empty($svgImages)
+                ? 'Nenhuma imagem SVG encontrada'
+                : (count($svgImages) . ' imagem(s) SVG encontrada(s). ' .
+                   ($conversionAvailable
+                       ? 'Conversão automática está disponível.'
+                       : '⚠️ Conversão automática NÃO está disponível. Instale Imagick ou ImageMagick.')),
+        ]);
+    }
 }

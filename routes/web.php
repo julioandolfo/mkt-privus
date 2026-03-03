@@ -352,6 +352,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{campaign}/cancel', [EmailCampaignController::class, 'cancel'])->name('cancel');
             Route::post('/{campaign}/duplicate', [EmailCampaignController::class, 'duplicate'])->name('duplicate');
             Route::post('/{campaign}/send-test', [EmailCampaignController::class, 'sendTest'])->name('send-test');
+            Route::get('/{campaign}/check-svg', [EmailCampaignController::class, 'checkSvgImages'])->name('check-svg');
         });
 
         // Editor (API JSON)
