@@ -465,37 +465,27 @@ class EmailCampaignService
         }
 
         try {
-            // Extrai CSS do <style> tag
             $css = '';
             if (preg_match('/<style[^>]*>(.*?)<\/style>/si', $html, $matches)) {
                 $css = $matches[1];
             }
 
-            // Protege os src antes do inliner — o CssToInlineStyles usa DOMDocument
-            // que pode remover/corromper atributos src com URLs longas
-            $srcMap = [];
-            $html = preg_replace_callback('/<img([^>]*)>/i', function ($m) use (&$srcMap) {
-                $attrs = $m[1];
-                if (preg_match('/src=(["\'])([^"\']+)\1/i', $attrs, $srcMatch)) {
-                    $idx          = count($srcMap);
-                    $placeholder  = 'IMGSRC' . $idx . 'PLACEHOLDER';
-                    $srcMap[$idx] = ['quote' => $srcMatch[1], 'url' => $srcMatch[2]];
-                    $attrs = preg_replace('/src=["\'][^"\']+["\']/i', 'src="' . $placeholder . '"', $attrs);
-                }
-                return '<img' . $attrs . '>';
+            // Remove tags <img> inteiras antes do inliner e substitui por comentários HTML.
+            // O DOMDocument interno do CssToInlineStyles remove atributos src de <img>,
+            // e nem placeholders sobrevivem. Comentários HTML passam intactos.
+            $imgMap = [];
+            $html = preg_replace_callback('/<img[^>]*\/?>/i', function ($m) use (&$imgMap) {
+                $key = '<!--IMGHOLD' . count($imgMap) . '-->';
+                $imgMap[$key] = $m[0];
+                return $key;
             }, $html);
 
             $inliner = new CssToInlineStyles();
             $inlined = $inliner->convert($html, $css) ?: $html;
 
-            // Restaura os srcs originais (trata aspas simples e duplas)
-            foreach ($srcMap as $idx => $data) {
-                $placeholder = 'IMGSRC' . $idx . 'PLACEHOLDER';
-                $inlined = str_replace(
-                    ['src="' . $placeholder . '"', "src='" . $placeholder . "'"],
-                    'src="' . $data['url'] . '"',
-                    $inlined
-                );
+            // Restaura as tags <img> originais intactas
+            foreach ($imgMap as $key => $originalTag) {
+                $inlined = str_replace($key, $originalTag, $inlined);
             }
 
             return $inlined;
