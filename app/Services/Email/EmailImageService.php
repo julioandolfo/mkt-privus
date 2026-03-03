@@ -163,6 +163,62 @@ class EmailImageService
             if (str_starts_with($url, $appUrl)) {
                 $relativePath = str_replace($appUrl . '/storage/', '', $url);
                 if (Storage::disk('public')->exists($relativePath)) {
+                    // Verifica se é SVG e precisa de conversão
+                    if (str_ends_with(strtolower($relativePath), '.svg')) {
+                        SystemLog::info('email', 'image.local_svg_detected', "SVG local detectado, verificando conversão", [
+                            'url' => $url,
+                            'path' => $relativePath,
+                        ]);
+
+                        // Verifica se existe PNG equivalente
+                        $pngPath = str_replace('.svg', '.png', $relativePath);
+                        if (Storage::disk('public')->exists($pngPath)) {
+                            SystemLog::info('email', 'image.local_svg_png_exists', "PNG já existe para SVG local", [
+                                'svg_path' => $relativePath,
+                                'png_path' => $pngPath,
+                            ]);
+                            return Storage::disk('public')->url($pngPath);
+                        }
+
+                        // Tenta converter o SVG local
+                        $convertedPngPath = $this->svgConverter->convertToPng($relativePath);
+
+                        if ($convertedPngPath) {
+                            SystemLog::info('email', 'image.local_svg_converted', "SVG local convertido com sucesso", [
+                                'svg_path' => $relativePath,
+                                'png_path' => $convertedPngPath,
+                            ]);
+
+                            // Atualiza o asset no banco se existir
+                            try {
+                                $asset = EmailAsset::where('file_path', $relativePath)->first();
+                                if ($asset) {
+                                    $fullPngPath = Storage::disk('public')->path($convertedPngPath);
+                                    $imageContent = file_get_contents($fullPngPath);
+                                    $img = getimagesizefromstring($imageContent);
+
+                                    $asset->update([
+                                        'file_path' => $convertedPngPath,
+                                        'mime_type' => 'image/png',
+                                        'file_size' => strlen($imageContent),
+                                        'dimensions' => $img ? ['width' => $img[0], 'height' => $img[1]] : null,
+                                    ]);
+                                }
+                            } catch (\Throwable $e) {
+                                // Ignora erro na atualização do banco
+                            }
+
+                            return Storage::disk('public')->url($convertedPngPath);
+                        }
+
+                        // Falhou na conversão - não deve usar SVG
+                        SystemLog::warning('email', 'image.local_svg_conversion_failed', "Falha ao converter SVG local", [
+                            'url' => $url,
+                            'path' => $relativePath,
+                        ]);
+                        return null;
+                    }
+
                     SystemLog::info('email', 'image.already_local', "Imagem já está local", ['url' => $url]);
                     return $url;
                 }
@@ -175,6 +231,60 @@ class EmailImageService
                     ->first();
 
                 if ($existingAsset) {
+                    // Se for SVG, verifica se já foi convertido para PNG
+                    if ($existingAsset->mime_type === 'image/svg+xml' || str_ends_with($existingAsset->file_path, '.svg')) {
+                        SystemLog::info('email', 'image.svg_already_exists', "SVG já existe, verificando conversão", [
+                            'url' => $url,
+                            'existing_path' => $existingAsset->file_path,
+                        ]);
+
+                        // Verifica se existe um PNG com mesmo nome base
+                        $pngPath = str_replace('.svg', '.png', $existingAsset->file_path);
+                        if (Storage::disk('public')->exists($pngPath)) {
+                            SystemLog::info('email', 'image.svg_png_exists', "PNG já existe para este SVG", [
+                                'svg_path' => $existingAsset->file_path,
+                                'png_path' => $pngPath,
+                            ]);
+                            return Storage::disk('public')->url($pngPath);
+                        }
+
+                        // Tenta converter o SVG existente
+                        SystemLog::info('email', 'image.svg_converting_existing', "Tentando converter SVG existente", [
+                            'path' => $existingAsset->file_path,
+                        ]);
+
+                        $convertedPngPath = $this->svgConverter->convertToPng($existingAsset->file_path);
+
+                        if ($convertedPngPath) {
+                            // Atualiza o asset para apontar para o PNG
+                            $fullPngPath = Storage::disk('public')->path($convertedPngPath);
+                            $imageContent = file_get_contents($fullPngPath);
+                            $img = getimagesizefromstring($imageContent);
+                            $dimensions = $img ? ['width' => $img[0], 'height' => $img[1]] : null;
+
+                            $existingAsset->update([
+                                'file_path' => $convertedPngPath,
+                                'mime_type' => 'image/png',
+                                'file_size' => strlen($imageContent),
+                                'dimensions' => $dimensions,
+                            ]);
+
+                            SystemLog::info('email', 'image.svg_converted_existing', "SVG existente convertido com sucesso", [
+                                'svg_path' => $existingAsset->file_path,
+                                'png_path' => $convertedPngPath,
+                            ]);
+
+                            return Storage::disk('public')->url($convertedPngPath);
+                        }
+
+                        // Se falhou na conversão, retorna null (não deve usar SVG)
+                        SystemLog::warning('email', 'image.svg_conversion_failed_existing', "Falha ao converter SVG existente", [
+                            'url' => $url,
+                            'path' => $existingAsset->file_path,
+                        ]);
+                        return null;
+                    }
+
                     SystemLog::info('email', 'image.already_downloaded', "Imagem já baixada anteriormente", [
                         'url' => $url,
                         'local_url' => $existingAsset->url,
