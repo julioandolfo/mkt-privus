@@ -393,14 +393,12 @@ class EmailCampaignService
         // Inline CSS (<style> no <head> → atributos style="" em cada elemento)
         // Necessário porque clientes de email (Gmail, Outlook) removem <head>/<style>
         $html = $this->inlineCss($html);
-        SystemLog::info('email', 'render.css_inlined', "CSS inline aplicado", [
-            'campaign_id' => $campaign->id,
-            'contact_id' => $contact->id,
-        ]);
 
-        // Converter imagens para base64 inline (garante que funcionem no email)
-        $html = $this->embedImagesAsBase64($html);
-        SystemLog::info('email', 'render.images_embedded', "Imagens convertidas para base64", [
+        // Converter caminhos relativos (/storage/...) para URLs absolutas
+        // NÃO usar base64 — provedores como SendPulse removem imagens base64 do email
+        $html = $this->ensureAbsoluteImageUrls($html);
+
+        SystemLog::info('email', 'render.images_resolved', "URLs de imagens resolvidas para absolutas", [
             'campaign_id' => $campaign->id,
             'contact_id' => $contact->id,
         ]);
@@ -498,6 +496,30 @@ class EmailCampaignService
     /**
      * Substitui merge tags no conteudo
      */
+    /**
+     * Garante que todas as imagens tenham URLs absolutas (não base64)
+     * Provedores como SendPulse removem imagens base64 do HTML
+     */
+    private function ensureAbsoluteImageUrls(string $html): string
+    {
+        if (empty($html)) {
+            return $html;
+        }
+
+        $appUrl = rtrim(config('app.url'), '/');
+
+        // Converte caminhos relativos /storage/... para URLs absolutas
+        $html = preg_replace_callback(
+            '/(<img[^>]+src=["\'])\/storage\/([^"\']+)(["\'][^>]*>)/i',
+            function ($matches) use ($appUrl) {
+                return $matches[1] . $appUrl . '/storage/' . $matches[2] . $matches[3];
+            },
+            $html
+        );
+
+        return $html;
+    }
+
     public function renderMergeTags(string $content, EmailContact $contact): string
     {
         $replacements = [

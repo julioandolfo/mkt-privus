@@ -888,35 +888,12 @@ class EmailCampaignController extends Controller
             return response()->json(['success' => false, 'error' => 'Nenhum provedor configurado.']);
         }
 
-        $rawHtml = $campaign->html_content ?? '<p>Sem conteúdo</p>';
+        $html = $this->inlineCssForEmail($campaign->html_content ?? '<p>Sem conteúdo</p>');
 
-        // DIAGNÓSTICO: logar img tags em cada etapa
-        preg_match_all('/<img[^>]*>/i', $rawHtml, $step0);
-        SystemLog::info('email', 'test.debug.step0_raw', "STEP 0 - HTML bruto do banco", [
-            'campaign_id' => $campaign->id,
-            'img_count' => count($step0[0]),
-            'img_tags' => array_map(fn($t) => substr($t, 0, 300), $step0[0]),
-        ]);
-
-        $html = $this->inlineCssForEmail($rawHtml);
-
-        preg_match_all('/<img[^>]*>/i', $html, $step1);
-        SystemLog::info('email', 'test.debug.step1_after_inline', "STEP 1 - Após CSS inline", [
-            'campaign_id' => $campaign->id,
-            'img_count' => count($step1[0]),
-            'img_tags' => array_map(fn($t) => substr($t, 0, 300), $step1[0]),
-        ]);
+        // Garantir que imagens tenham URLs absolutas (não base64 — ESPs como SendPulse removem base64)
+        $html = $this->ensureAbsoluteImageUrls($html);
 
         $campaignService = app(\App\Services\Email\EmailCampaignService::class);
-        $html = $campaignService->embedImagesAsBase64($html);
-
-        preg_match_all('/<img[^>]*>/i', $html, $step2);
-        SystemLog::info('email', 'test.debug.step2_after_embed', "STEP 2 - Após embed base64", [
-            'campaign_id' => $campaign->id,
-            'img_count' => count($step2[0]),
-            'img_tags' => array_map(fn($t) => substr($t, 0, 300), $step2[0]),
-        ]);
-
         $fromEmail = $campaignService->resolveFromEmail($campaign);
         $fromName = $campaign->from_name ?: $provider->getFromName() ?: config('app.name');
 
@@ -983,9 +960,8 @@ class EmailCampaignController extends Controller
 
             $html = $this->inlineCssForEmail($request->input('html_content'));
 
-            // Converter imagens para base64 inline (ESSENCIAL para funcionar no email)
-            $campaignService = app(\App\Services\Email\EmailCampaignService::class);
-            $html = $campaignService->embedImagesAsBase64($html);
+            // Garantir URLs absolutas (não base64 — ESPs como SendPulse removem base64)
+            $html = $this->ensureAbsoluteImageUrls($html);
 
             // Para SendPulse, sempre usar o email configurado no provedor
             $configFromEmail = $provider->config['from_email'] ?? $provider->config['from_address'] ?? null;
@@ -1054,6 +1030,27 @@ class EmailCampaignController extends Controller
     /**
      * Converte CSS de <style> tags para inline styles.
      */
+    /**
+     * Garante que todas as imagens tenham URLs absolutas
+     * Provedores como SendPulse removem imagens base64 do HTML
+     */
+    private function ensureAbsoluteImageUrls(string $html): string
+    {
+        if (empty($html)) {
+            return $html;
+        }
+
+        $appUrl = rtrim(config('app.url'), '/');
+
+        return preg_replace_callback(
+            '/(<img[^>]+src=["\'])\/storage\/([^"\']+)(["\'][^>]*>)/i',
+            function ($matches) use ($appUrl) {
+                return $matches[1] . $appUrl . '/storage/' . $matches[2] . $matches[3];
+            },
+            $html
+        );
+    }
+
     private function inlineCssForEmail(string $html): string
     {
         if (empty($html)) {
