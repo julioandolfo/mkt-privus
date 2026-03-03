@@ -225,6 +225,21 @@ class EmailCampaignService
             }
 
             $html = $this->renderForContact($campaign, $contact);
+            $htmlSize = strlen($html);
+
+            // Verificar se há imagens base64 no HTML gerado
+            $hasBase64Images = str_contains($html, 'data:image');
+            $base64Count = substr_count($html, 'data:image');
+
+            SystemLog::info('email', 'batch.rendered', "HTML renderizado para envio", [
+                'campaign_id' => $campaign->id,
+                'contact_id' => $contact->id,
+                'contact_email' => $contact->email,
+                'html_size' => $htmlSize,
+                'has_base64_images' => $hasBase64Images,
+                'base64_image_count' => $base64Count,
+                'html_sample' => substr($html, 0, 500), // Primeiros 500 caracteres
+            ]);
 
             SystemLog::info('email', 'batch.sending_contact', "Enviando email para {$contact->email}", [
                 'campaign_id' => $campaign->id,
@@ -368,7 +383,7 @@ class EmailCampaignService
         $html = $campaign->html_content ?? '';
         $originalLength = strlen($html);
 
-        SystemLog::debug('email', 'render.start', "Iniciando renderização para contato", [
+        SystemLog::info('email', 'render.start', "Iniciando renderização para contato", [
             'campaign_id' => $campaign->id,
             'contact_id' => $contact->id,
             'contact_email' => $contact->email,
@@ -378,14 +393,14 @@ class EmailCampaignService
         // Inline CSS (<style> no <head> → atributos style="" em cada elemento)
         // Necessário porque clientes de email (Gmail, Outlook) removem <head>/<style>
         $html = $this->inlineCss($html);
-        SystemLog::debug('email', 'render.css_inlined', "CSS inline aplicado", [
+        SystemLog::info('email', 'render.css_inlined', "CSS inline aplicado", [
             'campaign_id' => $campaign->id,
             'contact_id' => $contact->id,
         ]);
 
         // Converter imagens para base64 inline (garante que funcionem no email)
         $html = $this->embedImagesAsBase64($html);
-        SystemLog::debug('email', 'render.images_embedded', "Imagens convertidas para base64", [
+        SystemLog::info('email', 'render.images_embedded', "Imagens convertidas para base64", [
             'campaign_id' => $campaign->id,
             'contact_id' => $contact->id,
         ]);
@@ -513,9 +528,12 @@ class EmailCampaignService
             $originalTag = $matches[0];
             $src = $matches[1];
 
+            SystemLog::info('email', 'render.found_image', "Tag img encontrada", ['src' => substr($src, 0, 100)]);
+
             // Se já é base64, não processa
             if (str_starts_with($src, 'data:')) {
                 $skippedCount++;
+                SystemLog::info('email', 'render.skip_base64', "Pulando imagem base64");
                 return $originalTag;
             }
 
@@ -590,7 +608,7 @@ class EmailCampaignService
     private function convertStoragePathToBase64(string $path): ?string
     {
         try {
-            SystemLog::debug('email', 'render.convert_storage', "Convertendo path para base64", ['path' => $path]);
+            SystemLog::info('email', 'render.convert_storage', "Convertendo path para base64", ['path' => $path]);
 
             if (!Storage::disk('public')->exists($path)) {
                 SystemLog::warning('email', 'render.storage_not_found', "Arquivo não encontrado no storage", ['path' => $path]);
