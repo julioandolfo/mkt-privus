@@ -1,6 +1,6 @@
 FROM php:8.3-fpm-alpine
 
-# Instalar dependencias do sistema (inclui su-exec para drop de privilegios)
+# Instalar dependencias do sistema (inclui su-exec para drop de privilegios + ImageMagick para conversao SVG)
 RUN apk add --no-cache \
     git \
     curl \
@@ -15,6 +15,9 @@ RUN apk add --no-cache \
     icu-dev \
     linux-headers \
     su-exec \
+    imagemagick \
+    imagemagick-dev \
+    libgomp \
     $PHPIZE_DEPS
 
 # Instalar extensoes PHP
@@ -33,6 +36,9 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
 
 # Instalar Redis extension
 RUN pecl install redis && docker-php-ext-enable redis
+
+# Instalar Imagick extension (para conversao SVG -> PNG)
+RUN pecl install imagick && docker-php-ext-enable imagick
 
 # Instalar Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
