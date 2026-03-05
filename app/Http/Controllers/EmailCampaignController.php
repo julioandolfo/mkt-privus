@@ -334,6 +334,22 @@ class EmailCampaignController extends Controller
             ];
         }
 
+        // Calcular stats em tempo real a partir dos eventos (não do cache do model)
+        $liveSent      = $campaign->events()->where('event_type', 'sent')->distinct('email_contact_id')->count('email_contact_id');
+        $liveDelivered = $campaign->events()->where('event_type', 'delivered')->distinct('email_contact_id')->count('email_contact_id');
+        $liveBounced   = $campaign->events()->where('event_type', 'bounced')->distinct('email_contact_id')->count('email_contact_id');
+        $liveOpened    = $campaign->events()->where('event_type', 'opened')->distinct('email_contact_id')->count('email_contact_id');
+        $liveClicked   = $campaign->events()->where('event_type', 'clicked')->distinct('email_contact_id')->count('email_contact_id');
+        $liveUnsub     = $campaign->events()->where('event_type', 'unsubscribed')->distinct('email_contact_id')->count('email_contact_id');
+        $liveComplained = $campaign->events()->where('event_type', 'complained')->distinct('email_contact_id')->count('email_contact_id');
+        $liveFailed    = $campaign->events()->where('event_type', 'failed')->distinct('email_contact_id')->count('email_contact_id');
+
+        $openRate      = $liveDelivered > 0 ? round(($liveOpened / $liveDelivered) * 100, 2) : 0;
+        $clickRate     = $liveDelivered > 0 ? round(($liveClicked / $liveDelivered) * 100, 2) : 0;
+        $bounceRate    = $liveSent > 0 ? round(($liveBounced / $liveSent) * 100, 2) : 0;
+        $deliveryRate  = $liveSent > 0 ? round(($liveDelivered / $liveSent) * 100, 2) : 0;
+        $unsubRate     = $liveDelivered > 0 ? round(($liveUnsub / $liveDelivered) * 100, 2) : 0;
+
         return Inertia::render('Email/Campaigns/Show', [
             'campaign' => [
                 'id' => $campaign->id,
@@ -350,20 +366,21 @@ class EmailCampaignController extends Controller
                 'template' => $campaign->template ? ['name' => $campaign->template->name] : null,
                 'lists' => $campaign->lists->map(fn($l) => ['id' => $l->id, 'name' => $l->name, 'type' => $l->pivot->type]),
                 'total_recipients' => $campaign->total_recipients,
-                'total_sent' => $campaign->total_sent,
-                'total_delivered' => $campaign->total_delivered,
-                'total_bounced' => $campaign->total_bounced,
-                'total_opened' => $campaign->total_opened,
-                'total_clicked' => $campaign->total_clicked,
-                'total_unsubscribed' => $campaign->total_unsubscribed,
-                'total_complained' => $campaign->total_complained,
+                'total_sent' => $liveSent,
+                'total_delivered' => $liveDelivered,
+                'total_bounced' => $liveBounced,
+                'total_opened' => $liveOpened,
+                'total_clicked' => $liveClicked,
+                'total_unsubscribed' => $liveUnsub,
+                'total_complained' => $liveComplained,
+                'total_failed' => $liveFailed,
                 'unique_opens' => $campaign->unique_opens,
                 'unique_clicks' => $campaign->unique_clicks,
-                'open_rate' => $campaign->open_rate,
-                'click_rate' => $campaign->click_rate,
-                'bounce_rate' => $campaign->bounce_rate,
-                'delivery_rate' => $campaign->delivery_rate,
-                'unsubscribe_rate' => $campaign->unsubscribe_rate,
+                'open_rate' => $openRate,
+                'click_rate' => $clickRate,
+                'bounce_rate' => $bounceRate,
+                'delivery_rate' => $deliveryRate,
+                'unsubscribe_rate' => $unsubRate,
                 'scheduled_at' => $campaign->scheduled_at?->format('d/m/Y H:i'),
                 'started_at' => $campaign->started_at?->format('d/m/Y H:i'),
                 'completed_at' => $campaign->completed_at?->format('d/m/Y H:i'),

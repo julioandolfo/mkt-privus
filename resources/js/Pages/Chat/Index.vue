@@ -4,16 +4,16 @@ import GuideBox from '@/Components/GuideBox.vue';
 import { Head, Link, useForm, router } from '@inertiajs/vue3';
 
 const chatGuideSteps = [
-    { title: 'Inicie uma conversa', description: 'Clique em "Nova Conversa" e escolha o modelo de IA desejado: GPT-4o (OpenAI), Claude (Anthropic) ou Gemini (Google).' },
-    { title: 'Contexto automático', description: 'A marca ativa é enviada automaticamente como contexto para a IA, gerando respostas personalizadas ao seu negócio.' },
-    { title: 'Troque de modelo a qualquer momento', description: 'Dentro de uma conversa, use o seletor no topo para mudar entre modelos e comparar respostas.' },
+    { title: 'Modo Automático (padrão)', description: 'O sistema detecta o tipo de tarefa e escolhe o modelo ideal automaticamente: GPT-4o para código, Claude para copy, Gemini para pesquisa longa.' },
+    { title: 'Contexto da marca incluído', description: 'A marca ativa é enviada automaticamente como contexto para a IA, gerando respostas personalizadas ao seu negócio.' },
+    { title: 'Escolha manual quando quiser', description: 'Dentro de uma conversa, troque para um modelo específico a qualquer momento usando o seletor no topo.' },
     { title: 'Organize suas conversas', description: 'Fixe conversas importantes com a estrela, edite títulos e exclua as que não precisa mais.' },
 ];
 
 const chatGuideTips = [
-    'Use o chat para brainstorming de ideias, criação de copy, estratégias de marketing e análise de concorrentes.',
-    'Cada conversa mantém histórico completo e mostra o consumo de tokens por mensagem.',
-    'Para respostas mais criativas, experimente o Claude. Para análises técnicas, o GPT-4o é recomendado.',
+    'No modo Automático, o sistema usa IA para classificar sua solicitação e rotear para o modelo mais eficiente.',
+    'Cada mensagem mostra qual modelo foi usado e o consumo de tokens — útil para controle de custos.',
+    'Você pode mudar para modo manual a qualquer momento se preferir um modelo específico para a tarefa.',
 ];
 import { ref } from 'vue';
 
@@ -31,6 +31,7 @@ interface ModelOption {
     value: string;
     label: string;
     provider: string;
+    is_auto?: boolean;
 }
 
 const props = defineProps<{
@@ -41,7 +42,7 @@ const props = defineProps<{
 const showNewChat = ref(false);
 const form = useForm({
     title: '',
-    model: 'gpt-4o',
+    model: 'auto',
 });
 
 function createConversation() {
@@ -60,6 +61,7 @@ function deleteConversation(conv: Conversation) {
 }
 
 function getProviderColor(model: string): string {
+    if (model === 'auto') return 'bg-violet-500/20 text-violet-400';
     if (model.includes('gpt')) return 'bg-emerald-500/20 text-emerald-400';
     if (model.includes('claude')) return 'bg-orange-500/20 text-orange-400';
     if (model.includes('gemini')) return 'bg-blue-500/20 text-blue-400';
@@ -67,6 +69,7 @@ function getProviderColor(model: string): string {
 }
 
 function getProviderLabel(model: string): string {
+    if (model === 'auto') return 'Automático';
     const found = props.models.find(m => m.value === model);
     return found?.label || model;
 }
@@ -112,9 +115,12 @@ function getProviderLabel(model: string): string {
                             class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500"
                         >
                             <option v-for="m in models" :key="m.value" :value="m.value">
-                                {{ m.label }} ({{ m.provider }})
+                                {{ m.is_auto ? '✦ Automático — escolhe o melhor modelo' : `${m.label} (${m.provider})` }}
                             </option>
                         </select>
+                        <p v-if="form.model === 'auto'" class="mt-1.5 text-xs text-violet-400">
+                            O sistema detecta o tipo de tarefa e roteia para o modelo mais eficiente automaticamente.
+                        </p>
                     </div>
                     <div class="flex justify-end gap-3 pt-2">
                         <button type="button" @click="showNewChat = false" class="px-4 py-2 text-sm text-gray-400 hover:text-white transition">
@@ -146,7 +152,7 @@ function getProviderLabel(model: string): string {
                 </svg>
             </div>
             <h3 class="text-xl font-semibold text-white mb-2">Nenhuma conversa</h3>
-            <p class="text-gray-400 mb-6 max-w-sm">Inicie uma conversa com IA usando GPT-4o, Claude, Gemini e outros modelos.</p>
+            <p class="text-gray-400 mb-6 max-w-sm">Inicie uma conversa — o modo Automático seleciona o melhor modelo para cada solicitação.</p>
             <button @click="showNewChat = true" class="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white hover:bg-indigo-700 transition">
                 Iniciar primeira conversa
             </button>

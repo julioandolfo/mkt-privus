@@ -241,6 +241,12 @@ class EmailCampaignService
                 'html_sample' => substr($html, 0, 500), // Primeiros 500 caracteres
             ]);
 
+            // Delay entre envios para respeitar o rate limit da API do SendPulse (max 30 req/min)
+            // 2.5s entre cada = ~24 req/min (margem de segurança)
+            if ($sent > 0 || $failed > 0) {
+                usleep(2500000); // 2.5 segundos
+            }
+
             SystemLog::info('email', 'batch.sending_contact', "Enviando email para {$contact->email}", [
                 'campaign_id' => $campaign->id,
                 'contact_id' => $contact->id,
@@ -735,8 +741,14 @@ class EmailCampaignService
             'rate limit',
             'limite de envio',
             'maximum limit',
+            'internal server error',
+            'interval server error',
+            'server error',
             '429',
             '403',
+            '500',
+            '502',
+            '503',
         ];
 
         $errorLower = strtolower($errorMessage);

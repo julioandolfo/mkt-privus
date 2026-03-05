@@ -8,6 +8,8 @@ interface Message {
     role: 'user' | 'assistant' | 'system';
     content: string;
     model?: string;
+    task_type?: string;
+    auto_routed?: boolean;
     input_tokens?: number;
     output_tokens?: number;
     created_at: string;
@@ -33,6 +35,7 @@ interface ModelOption {
     value: string;
     label: string;
     provider: string;
+    is_auto?: boolean;
 }
 
 const props = defineProps<{
@@ -134,11 +137,29 @@ function togglePin() {
 }
 
 function getProviderColor(model: string): string {
+    if (!model || model === 'auto') return 'text-violet-400';
     if (model.includes('gpt')) return 'text-emerald-400';
     if (model.includes('claude')) return 'text-orange-400';
     if (model.includes('gemini')) return 'text-blue-400';
     return 'text-gray-400';
 }
+
+function getModelLabel(model: string): string {
+    if (!model || model === 'auto') return 'Automático';
+    const found = props.models.find(m => m.value === model);
+    return found?.label || model;
+}
+
+const TASK_TYPE_LABELS: Record<string, string> = {
+    technical:         'técnico',
+    creative:          'criativo',
+    content_marketing: 'marketing',
+    analysis:          'análise',
+    simple:            'resposta rápida',
+    translation:       'tradução',
+    research:          'pesquisa',
+    strategic:         'estratégia',
+};
 
 function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -154,8 +175,11 @@ function createNewChat() {
 }
 
 const currentModelLabel = computed(() => {
+    if (selectedModel.value === 'auto') return 'Automático';
     return props.models.find(m => m.value === selectedModel.value)?.label || selectedModel.value;
 });
+
+const isAutoMode = computed(() => selectedModel.value === 'auto');
 </script>
 
 <template>
@@ -248,7 +272,7 @@ const currentModelLabel = computed(() => {
                     class="rounded-xl bg-gray-800 border-gray-700 text-sm text-gray-300 focus:border-indigo-500 focus:ring-indigo-500 py-1.5"
                 >
                     <option v-for="m in models" :key="m.value" :value="m.value">
-                        {{ m.label }}
+                        {{ m.is_auto ? '✦ Automático' : m.label }}
                     </option>
                 </select>
 
@@ -274,12 +298,22 @@ const currentModelLabel = computed(() => {
                         </svg>
                     </div>
                     <h3 class="text-xl font-semibold text-white mb-2">Comece a conversar</h3>
-                    <p class="text-gray-400 max-w-md mb-2">
-                        Usando <span :class="getProviderColor(selectedModel)" class="font-medium">{{ currentModelLabel }}</span>
-                    </p>
-                    <p class="text-gray-500 text-sm max-w-md mb-6">
-                        O contexto da sua marca ativa será incluído automaticamente nas respostas.
-                    </p>
+                    <div v-if="isAutoMode" class="mb-4">
+                        <p class="text-gray-400 max-w-md mb-1">
+                            Usando <span class="text-violet-400 font-medium">modo Automático</span>
+                        </p>
+                        <p class="text-gray-500 text-sm max-w-md">
+                            O sistema analisa cada mensagem e escolhe o modelo ideal: GPT-4o para código, Claude para copy e estratégia, Gemini para pesquisa longa.
+                        </p>
+                    </div>
+                    <div v-else class="mb-4">
+                        <p class="text-gray-400 max-w-md mb-1">
+                            Usando <span :class="getProviderColor(selectedModel)" class="font-medium">{{ currentModelLabel }}</span>
+                        </p>
+                        <p class="text-gray-500 text-sm max-w-md">
+                            O contexto da sua marca ativa será incluído automaticamente nas respostas.
+                        </p>
+                    </div>
 
                     <!-- Sugestoes de uso -->
                     <div class="max-w-lg w-full">
@@ -336,9 +370,29 @@ const currentModelLabel = computed(() => {
                             <div v-else class="whitespace-pre-wrap text-sm leading-relaxed break-words">{{ msg.content }}</div>
 
                             <!-- Meta -->
-                            <div v-if="msg.role === 'assistant' && msg.content && msg.output_tokens" class="flex items-center gap-3 mt-2 pt-2 border-t border-gray-700/50">
+                            <div v-if="msg.role === 'assistant' && msg.content && msg.output_tokens" class="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-gray-700/50">
                                 <span class="text-xs text-gray-500">{{ msg.created_at }}</span>
-                                <span :class="['text-xs', getProviderColor(msg.model || '')]">{{ msg.model }}</span>
+
+                                <!-- Badge: modo automático com roteamento -->
+                                <template v-if="msg.auto_routed && msg.task_type">
+                                    <span class="inline-flex items-center gap-1 rounded-md bg-violet-500/15 px-1.5 py-0.5 text-xs text-violet-400 border border-violet-500/20">
+                                        <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
+                                        </svg>
+                                        {{ TASK_TYPE_LABELS[msg.task_type] || msg.task_type }}
+                                    </span>
+                                    <span :class="['text-xs font-medium', getProviderColor(msg.model || '')]">
+                                        {{ getModelLabel(msg.model || '') }}
+                                    </span>
+                                </template>
+
+                                <!-- Badge: modelo selecionado manualmente -->
+                                <template v-else>
+                                    <span :class="['text-xs', getProviderColor(msg.model || '')]">
+                                        {{ getModelLabel(msg.model || '') }}
+                                    </span>
+                                </template>
+
                                 <span class="text-xs text-gray-600">{{ (msg.input_tokens || 0) + (msg.output_tokens || 0) }} tokens</span>
                             </div>
                             <div v-else-if="msg.role === 'user' && msg.created_at" class="text-right mt-1">
@@ -390,7 +444,8 @@ const currentModelLabel = computed(() => {
                         </button>
                     </div>
                     <p class="text-xs text-gray-600 mt-2 text-center">
-                        <span :class="getProviderColor(selectedModel)">{{ currentModelLabel }}</span>
+                        <span v-if="isAutoMode" class="text-violet-400">✦ Automático</span>
+                        <span v-else :class="getProviderColor(selectedModel)">{{ currentModelLabel }}</span>
                         &middot; As respostas podem conter erros. Verifique informações importantes.
                     </p>
                 </div>

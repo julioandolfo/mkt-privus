@@ -6,6 +6,7 @@ use App\Enums\AIModel;
 use App\Models\ChatConversation;
 use App\Models\ChatMessage;
 use App\Services\AI\AIGateway;
+use App\Services\AI\SmartRouter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -17,6 +18,7 @@ class ChatController extends Controller
 {
     public function __construct(
         private readonly AIGateway $aiGateway,
+        private readonly SmartRouter $smartRouter,
     ) {}
 
     /**
@@ -42,15 +44,9 @@ class ChatController extends Controller
                 'brand_id' => $conv->brand_id,
             ]);
 
-        $models = collect(AIModel::cases())->map(fn($m) => [
-            'value' => $m->value,
-            'label' => $m->label(),
-            'provider' => $m->provider()->label(),
-        ]);
-
         return Inertia::render('Chat/Index', [
             'conversations' => $conversations,
-            'models' => $models,
+            'models' => $this->buildModelOptions(),
         ]);
     }
 
@@ -80,12 +76,6 @@ class ChatController extends Controller
             ->orderByDesc('updated_at')
             ->get(['id', 'title', 'model', 'is_pinned', 'updated_at']);
 
-        $models = collect(AIModel::cases())->map(fn($m) => [
-            'value' => $m->value,
-            'label' => $m->label(),
-            'provider' => $m->provider()->label(),
-        ]);
-
         return Inertia::render('Chat/Show', [
             'conversation' => [
                 'id' => $conversation->id,
@@ -96,7 +86,7 @@ class ChatController extends Controller
             ],
             'messages' => $messages,
             'conversations' => $conversations,
-            'models' => $models,
+            'models' => $this->buildModelOptions(),
         ]);
     }
 
@@ -107,14 +97,14 @@ class ChatController extends Controller
     {
         $validated = $request->validate([
             'title' => 'nullable|string|max:255',
-            'model' => 'required|string',
+            'model' => 'nullable|string',
         ]);
 
         $conversation = ChatConversation::create([
             'user_id' => $request->user()->id,
             'brand_id' => $request->user()->current_brand_id,
             'title' => $validated['title'] ?: 'Nova conversa',
-            'model' => $validated['model'],
+            'model' => $validated['model'] ?? 'auto',
         ]);
 
         return redirect()->route('chat.show', $conversation);
@@ -133,9 +123,9 @@ class ChatController extends Controller
         ]);
 
         // Atualizar modelo se mudou
-        $model = $validated['model'] ?? $conversation->model;
-        if ($model !== $conversation->model) {
-            $conversation->update(['model' => $model]);
+        $modelSetting = $validated['model'] ?? $conversation->model;
+        if ($modelSetting !== $conversation->model) {
+            $conversation->update(['model' => $modelSetting]);
         }
 
         // Salvar mensagem do usuario
@@ -154,9 +144,23 @@ class ChatController extends Controller
             ])
             ->toArray();
 
-        // Chamar IA
-        $aiModel = AIModel::from($model);
         $brand = $request->user()->currentBrand;
+
+        // Resolver modelo: automático via SmartRouter ou seleção manual
+        $isAutoMode = ($modelSetting === 'auto');
+        $taskType   = null;
+
+        if ($isAutoMode) {
+            $routing  = $this->smartRouter->route(
+                userMessage: $validated['content'],
+                conversationHistory: $history,
+                brand: $brand,
+            );
+            $aiModel  = $routing['model'];
+            $taskType = $routing['task_type'];
+        } else {
+            $aiModel = AIModel::from($modelSetting);
+        }
 
         try {
             $response = $this->aiGateway->chat(
@@ -167,13 +171,14 @@ class ChatController extends Controller
                 feature: 'chat',
             );
 
-            // Salvar resposta da IA
+            // Salvar resposta da IA com o modelo real utilizado
             $assistantMessage = $conversation->messages()->create([
-                'role' => 'assistant',
-                'content' => $response['content'],
-                'model' => $response['model'],
+                'role'         => 'assistant',
+                'content'      => $response['content'],
+                'model'        => $response['model'],
                 'input_tokens' => $response['input_tokens'],
-                'output_tokens' => $response['output_tokens'],
+                'output_tokens'=> $response['output_tokens'],
+                'metadata'     => $taskType ? ['task_type' => $taskType, 'auto_routed' => true] : null,
             ]);
 
             // Atualizar titulo da conversa se for a primeira mensagem
@@ -185,18 +190,20 @@ class ChatController extends Controller
 
             return response()->json([
                 'message' => [
-                    'id' => $assistantMessage->id,
-                    'role' => 'assistant',
-                    'content' => $assistantMessage->content,
-                    'model' => $assistantMessage->model,
+                    'id'           => $assistantMessage->id,
+                    'role'         => 'assistant',
+                    'content'      => $assistantMessage->content,
+                    'model'        => $assistantMessage->model,
+                    'task_type'    => $taskType,
+                    'auto_routed'  => $isAutoMode,
                     'input_tokens' => $assistantMessage->input_tokens,
-                    'output_tokens' => $assistantMessage->output_tokens,
-                    'created_at' => $assistantMessage->created_at->format('H:i'),
+                    'output_tokens'=> $assistantMessage->output_tokens,
+                    'created_at'   => $assistantMessage->created_at->format('H:i'),
                 ],
                 'user_message' => [
-                    'id' => $userMessage->id,
-                    'role' => 'user',
-                    'content' => $userMessage->content,
+                    'id'         => $userMessage->id,
+                    'role'       => 'user',
+                    'content'    => $userMessage->content,
                     'created_at' => $userMessage->created_at->format('H:i'),
                 ],
             ]);
@@ -214,12 +221,12 @@ class ChatController extends Controller
     {
         $this->authorizeConversation($request, $conversation);
 
-        $content = $request->input('content');
-        $model = $request->input('model', $conversation->model);
+        $content      = $request->input('content');
+        $modelSetting = $request->input('model', $conversation->model);
 
         // Salvar mensagem do usuario
         $conversation->messages()->create([
-            'role' => 'user',
+            'role'    => 'user',
             'content' => $content,
         ]);
 
@@ -229,15 +236,24 @@ class ChatController extends Controller
             ->map(fn($msg) => ['role' => $msg->role, 'content' => $msg->content])
             ->toArray();
 
-        $aiModel = AIModel::from($model);
-        $brand = $request->user()->currentBrand;
+        $brand      = $request->user()->currentBrand;
+        $isAutoMode = ($modelSetting === 'auto');
+        $taskType   = null;
 
-        return response()->stream(function () use ($aiModel, $history, $brand, $request, $conversation) {
-            $provider = $aiModel->provider();
+        if ($isAutoMode) {
+            $routing  = $this->smartRouter->route(
+                userMessage: $content,
+                conversationHistory: $history,
+                brand: $brand,
+            );
+            $aiModel  = $routing['model'];
+            $taskType = $routing['task_type'];
+        } else {
+            $aiModel = AIModel::from($modelSetting);
+        }
 
+        return response()->stream(function () use ($aiModel, $taskType, $isAutoMode, $history, $brand, $request, $conversation) {
             try {
-                // Para streaming, chamamos a API com stream=true
-                // Por ora, usamos resposta sincrona e simulamos streaming
                 $response = $this->aiGateway->chat(
                     model: $aiModel,
                     messages: $history,
@@ -246,30 +262,36 @@ class ChatController extends Controller
                     feature: 'chat',
                 );
 
-                // Salvar resposta
+                // Salvar resposta com modelo real utilizado
                 $conversation->messages()->create([
-                    'role' => 'assistant',
-                    'content' => $response['content'],
-                    'model' => $response['model'],
-                    'input_tokens' => $response['input_tokens'],
+                    'role'          => 'assistant',
+                    'content'       => $response['content'],
+                    'model'         => $response['model'],
+                    'input_tokens'  => $response['input_tokens'],
                     'output_tokens' => $response['output_tokens'],
+                    'metadata'      => $taskType ? ['task_type' => $taskType, 'auto_routed' => true] : null,
                 ]);
 
-                // Enviar conteudo em chunks para simular streaming
-                $words = explode(' ', $response['content']);
+                // Enviar conteudo em chunks (simulação de streaming)
+                $words  = explode(' ', $response['content']);
                 $chunks = array_chunk($words, 3);
 
                 foreach ($chunks as $chunk) {
                     echo "data: " . json_encode(['content' => implode(' ', $chunk) . ' ']) . "\n\n";
                     ob_flush();
                     flush();
-                    usleep(30000); // 30ms entre chunks
+                    usleep(30000);
                 }
 
-                echo "data: " . json_encode(['done' => true, 'tokens' => [
-                    'input' => $response['input_tokens'],
-                    'output' => $response['output_tokens'],
-                ]]) . "\n\n";
+                echo "data: " . json_encode([
+                    'done'      => true,
+                    'task_type' => $taskType,
+                    'model'     => $response['model'],
+                    'tokens'    => [
+                        'input'  => $response['input_tokens'],
+                        'output' => $response['output_tokens'],
+                    ],
+                ]) . "\n\n";
                 ob_flush();
                 flush();
 
@@ -279,9 +301,9 @@ class ChatController extends Controller
                 flush();
             }
         }, 200, [
-            'Content-Type' => 'text/event-stream',
-            'Cache-Control' => 'no-cache',
-            'Connection' => 'keep-alive',
+            'Content-Type'    => 'text/event-stream',
+            'Cache-Control'   => 'no-cache',
+            'Connection'      => 'keep-alive',
             'X-Accel-Buffering' => 'no',
         ]);
     }
@@ -316,6 +338,33 @@ class ChatController extends Controller
     }
 
     // ===== PRIVATE METHODS =====
+
+    /**
+     * Monta a lista de opções de modelos para o frontend.
+     * Inclui a opção "Automático" como primeiro item.
+     */
+    private function buildModelOptions(): array
+    {
+        $options = [
+            [
+                'value'    => 'auto',
+                'label'    => 'Automático',
+                'provider' => 'IA Router',
+                'is_auto'  => true,
+            ],
+        ];
+
+        foreach (AIModel::cases() as $model) {
+            $options[] = [
+                'value'    => $model->value,
+                'label'    => $model->label(),
+                'provider' => $model->provider()->label(),
+                'is_auto'  => false,
+            ];
+        }
+
+        return $options;
+    }
 
     private function authorizeConversation(Request $request, ChatConversation $conversation): void
     {
