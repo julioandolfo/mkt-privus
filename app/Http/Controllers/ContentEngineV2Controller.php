@@ -47,7 +47,20 @@ class ContentEngineV2Controller extends Controller
                 'campaigns' => [],
                 'presetCommands' => [],
                 'campaignHistory' => [],
-                'brandConfig' => [],
+                'brandConfig' => [
+                    'posts_per_campaign' => 3,
+                    'campaigns_per_generation' => 5,
+                    'generate_images' => true,
+                    'auto_hashtags' => true,
+                    'caption_style' => 'medium',
+                    'preferred_platforms' => [],
+                    'content_tone_override' => null,
+                    'include_cta' => true,
+                    'include_emojis' => true,
+                    'hashtag_count' => 8,
+                    'post_types' => ['feed', 'carousel'],
+                    'best_times_source' => 'auto',
+                ],
             ]);
         }
 

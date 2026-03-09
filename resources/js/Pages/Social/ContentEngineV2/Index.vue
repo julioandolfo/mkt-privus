@@ -94,8 +94,8 @@ interface Props {
     brandDna: BrandDna | null;
     hasAnalysis: boolean;
     campaignHistory: Campaign[];
-    brandConfig: BrandConfig;
-    presetCommands: Record<string, { command: string; description: string }>;
+    brandConfig?: BrandConfig;
+    presetCommands?: Record<string, { command: string; description: string }>;
 }
 
 const props = defineProps<Props>();
@@ -131,8 +131,26 @@ const editingResult = ref<{
 const applyingEdit = ref(false);
 const selectedPlatform = ref('instagram');
 
-// Configurações
-const configForm = ref<BrandConfig>({ ...props.brandConfig });
+// Configurações - garante valores padrão se props não vier completa
+const configForm = ref<BrandConfig>({
+    posts_per_campaign: 3,
+    campaigns_per_generation: 5,
+    generate_images: true,
+    auto_hashtags: true,
+    caption_style: 'medium',
+    preferred_platforms: [],
+    content_tone_override: null,
+    include_cta: true,
+    include_emojis: true,
+    hashtag_count: 8,
+    post_types: ['feed', 'carousel'],
+    best_times_source: 'auto',
+    ...props.brandConfig,
+});
+
+// Valor seguro para presetCommands
+const presetCommandsSafe = computed(() => props.presetCommands || {});
+
 const savingConfig = ref(false);
 
 // Plataformas
@@ -699,14 +717,14 @@ async function saveBrandConfig() {
                         <p class="text-sm text-gray-400 mt-2">Carregando...</p>
                     </div>
 
-                    <div v-else-if="campaignHistory.length === 0" class="text-center py-8 text-gray-500">
+                    <div v-else-if="!campaignHistory || campaignHistory.length === 0" class="text-center py-8 text-gray-500">
                         <p>Nenhuma campanha no histórico</p>
                         <p class="text-sm mt-1">Gere campanhas na aba "Gerador"</p>
                     </div>
 
                     <div v-else class="space-y-4">
                         <div
-                            v-for="campaign in campaignHistory"
+                            v-for="campaign in (campaignHistory || [])"
                             :key="campaign.db_id"
                             class="p-4 bg-gray-800/50 rounded-xl border border-gray-700/50 hover:border-gray-600 transition"
                         >
@@ -775,7 +793,7 @@ async function saveBrandConfig() {
                         <label class="block text-xs font-medium text-gray-500 uppercase mb-2">Comandos rápidos</label>
                         <div class="flex flex-wrap gap-2">
                             <button
-                                v-for="(preset, key) in presetCommands"
+                                v-for="(preset, key) in presetCommandsSafe"
                                 :key="key"
                                 @click="applyPreset(key)"
                                 class="rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-1.5 text-xs text-gray-300 transition"
