@@ -42,17 +42,18 @@ class ContentEngineV2Controller extends Controller
         $user = $request->user();
         $brand = $user->getActiveBrand();
 
-        SystemLog::info('content_engine.page.index.started', [
-            'user_id' => $user->id,
-            'brand_id' => $brand?->id,
-            'has_brand' => $brand !== null,
-        ], $user->id);
+        // Se não conseguir logar, continua mesmo assim
+        try {
+            SystemLog::info('content_engine.page.index.started', [
+                'user_id' => $user?->id,
+                'brand_id' => $brand?->id,
+                'has_brand' => $brand !== null,
+            ], $user?->id);
+        } catch (\Exception $logEx) {
+            // Ignora erro de log
+        }
 
         if (!$brand) {
-            SystemLog::info('content_engine.page.index.no_brand', [
-                'user_id' => $user->id,
-            ], $user->id);
-
             return Inertia::render('Social/ContentEngineV2/Index', [
                 'brandDna' => null,
                 'hasAnalysis' => false,
@@ -78,53 +79,57 @@ class ContentEngineV2Controller extends Controller
 
         try {
             // Verifica se tem análise completa
-            SystemLog::info('content_engine.page.index.checking_analysis', [
-                'brand_id' => $brand->id,
-            ], $user->id);
-
-            $hasAnalysis = $this->brandAnalyzer->hasCompleteAnalysis($brand);
-            $brandDna = $this->brandAnalyzer->getCachedAnalysis($brand);
-
-            SystemLog::info('content_engine.page.index.analysis_checked', [
-                'brand_id' => $brand->id,
-                'has_analysis' => $hasAnalysis,
-                'has_dna' => $brandDna !== null,
-            ], $user->id);
+            $hasAnalysis = false;
+            $brandDna = null;
+            try {
+                $hasAnalysis = $this->brandAnalyzer->hasCompleteAnalysis($brand);
+                $brandDna = $this->brandAnalyzer->getCachedAnalysis($brand);
+            } catch (\Exception $analysisEx) {
+                // Continua sem análise
+            }
 
             // Obtém campanhas recentes do banco (histórico)
-            SystemLog::info('content_engine.page.index.loading_history', [
-                'brand_id' => $brand->id,
-            ], $user->id);
-
-            $campaignHistory = $brand->campaignsGenerated()
-                ->notDeleted()
-                ->limit(20)
-                ->get()
-                ->map(fn($c) => $this->formatCampaignForDisplay($c));
-
-            SystemLog::info('content_engine.page.index.history_loaded', [
-                'brand_id' => $brand->id,
-                'history_count' => $campaignHistory->count(),
-            ], $user->id);
+            $campaignHistory = [];
+            try {
+                $campaignHistory = $brand->campaignsGenerated()
+                    ->notDeleted()
+                    ->limit(20)
+                    ->get()
+                    ->map(fn($c) => $this->formatCampaignForDisplay($c))
+                    ->toArray();
+            } catch (\Exception $historyEx) {
+                // Continua sem histórico
+                $campaignHistory = [];
+            }
 
             // Configurações da marca
-            $brandConfig = $brand->getContentEngineConfig();
-
-            SystemLog::info('content_engine.page.index.config_loaded', [
-                'brand_id' => $brand->id,
-                'config_keys' => array_keys($brandConfig),
-            ], $user->id);
+            $brandConfig = [];
+            try {
+                $brandConfig = $brand->getContentEngineConfig();
+            } catch (\Exception $configEx) {
+                $brandConfig = [
+                    'posts_per_campaign' => 3,
+                    'campaigns_per_generation' => 5,
+                    'generate_images' => true,
+                    'auto_hashtags' => true,
+                    'caption_style' => 'medium',
+                    'preferred_platforms' => [],
+                    'content_tone_override' => null,
+                    'include_cta' => true,
+                    'include_emojis' => true,
+                    'hashtag_count' => 8,
+                    'post_types' => ['feed', 'carousel'],
+                    'best_times_source' => 'auto',
+                ];
+            }
 
             // Obtém preset commands
-            $presetCommands = $this->editor->getPresetCommands();
-
-            SystemLog::info('content_engine.page.index.rendering', [
-                'brand_id' => $brand->id,
-                'has_analysis' => $hasAnalysis,
-                'has_dna' => $brandDna !== null,
-                'history_count' => $campaignHistory->count(),
-                'preset_count' => count($presetCommands),
-            ], $user->id);
+            $presetCommands = [];
+            try {
+                $presetCommands = $this->editor->getPresetCommands();
+            } catch (\Exception $presetEx) {
+                $presetCommands = [];
+            }
 
             return Inertia::render('Social/ContentEngineV2/Index', [
                 'brand' => [
@@ -140,11 +145,15 @@ class ContentEngineV2Controller extends Controller
                 'presetCommands' => $presetCommands,
             ]);
         } catch (\Exception $e) {
-            SystemLog::error('content_engine.page.index.exception', [
-                'brand_id' => $brand->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ], $user->id);
+            // Log do erro
+            try {
+                SystemLog::error('content_engine.page.index.exception', [
+                    'brand_id' => $brand->id,
+                    'error' => $e->getMessage(),
+                ], $user?->id);
+            } catch (\Exception $logEx) {
+                // Ignora erro de log
+            }
 
             // Renderiza com dados mínimos em caso de erro
             return Inertia::render('Social/ContentEngineV2/Index', [
@@ -157,9 +166,21 @@ class ContentEngineV2Controller extends Controller
                 'brandDna' => null,
                 'hasAnalysis' => false,
                 'campaignHistory' => [],
-                'brandConfig' => $brand->getContentEngineConfig(),
+                'brandConfig' => [
+                    'posts_per_campaign' => 3,
+                    'campaigns_per_generation' => 5,
+                    'generate_images' => true,
+                    'auto_hashtags' => true,
+                    'caption_style' => 'medium',
+                    'preferred_platforms' => [],
+                    'content_tone_override' => null,
+                    'include_cta' => true,
+                    'include_emojis' => true,
+                    'hashtag_count' => 8,
+                    'post_types' => ['feed', 'carousel'],
+                    'best_times_source' => 'auto',
+                ],
                 'presetCommands' => [],
-                'error_message' => 'Erro ao carregar dados: ' . $e->getMessage(),
             ]);
         }
     }
