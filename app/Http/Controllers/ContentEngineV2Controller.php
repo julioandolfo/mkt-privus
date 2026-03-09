@@ -9,6 +9,7 @@ use App\Models\Brand;
 use App\Models\CampaignGenerated;
 use App\Models\Post;
 use App\Models\PostMedia;
+use App\Models\SystemLog;
 use App\Services\Social\BrandDNAAnalyzerService;
 use App\Services\Social\CampaignIdeasGeneratorService;
 use App\Services\Social\NaturalLanguageEditorService;
@@ -38,9 +39,20 @@ class ContentEngineV2Controller extends Controller
      */
     public function index(Request $request): Response
     {
-        $brand = $request->user()->getActiveBrand();
+        $user = $request->user();
+        $brand = $user->getActiveBrand();
+
+        SystemLog::info('content_engine.page.index.started', [
+            'user_id' => $user->id,
+            'brand_id' => $brand?->id,
+            'has_brand' => $brand !== null,
+        ], $user->id);
 
         if (!$brand) {
+            SystemLog::info('content_engine.page.index.no_brand', [
+                'user_id' => $user->id,
+            ], $user->id);
+
             return Inertia::render('Social/ContentEngineV2/Index', [
                 'brandDna' => null,
                 'hasAnalysis' => false,
@@ -64,33 +76,92 @@ class ContentEngineV2Controller extends Controller
             ]);
         }
 
-        // Verifica se tem análise completa
-        $hasAnalysis = $this->brandAnalyzer->hasCompleteAnalysis($brand);
-        $brandDna = $this->brandAnalyzer->getCachedAnalysis($brand);
+        try {
+            // Verifica se tem análise completa
+            SystemLog::info('content_engine.page.index.checking_analysis', [
+                'brand_id' => $brand->id,
+            ], $user->id);
 
-        // Obtém campanhas recentes do banco (histórico)
-        $campaignHistory = $brand->campaignsGenerated()
-            ->notDeleted()
-            ->limit(20)
-            ->get()
-            ->map(fn($c) => $this->formatCampaignForDisplay($c));
+            $hasAnalysis = $this->brandAnalyzer->hasCompleteAnalysis($brand);
+            $brandDna = $this->brandAnalyzer->getCachedAnalysis($brand);
 
-        // Configurações da marca
-        $brandConfig = $brand->getContentEngineConfig();
+            SystemLog::info('content_engine.page.index.analysis_checked', [
+                'brand_id' => $brand->id,
+                'has_analysis' => $hasAnalysis,
+                'has_dna' => $brandDna !== null,
+            ], $user->id);
 
-        return Inertia::render('Social/ContentEngineV2/Index', [
-            'brand' => [
-                'id' => $brand->id,
-                'name' => $brand->name,
-                'segment' => $brand->segment,
-                'website' => $brand->website,
-            ],
-            'brandDna' => $brandDna,
-            'hasAnalysis' => $hasAnalysis,
-            'campaignHistory' => $campaignHistory,
-            'brandConfig' => $brandConfig,
-            'presetCommands' => $this->editor->getPresetCommands(),
-        ]);
+            // Obtém campanhas recentes do banco (histórico)
+            SystemLog::info('content_engine.page.index.loading_history', [
+                'brand_id' => $brand->id,
+            ], $user->id);
+
+            $campaignHistory = $brand->campaignsGenerated()
+                ->notDeleted()
+                ->limit(20)
+                ->get()
+                ->map(fn($c) => $this->formatCampaignForDisplay($c));
+
+            SystemLog::info('content_engine.page.index.history_loaded', [
+                'brand_id' => $brand->id,
+                'history_count' => $campaignHistory->count(),
+            ], $user->id);
+
+            // Configurações da marca
+            $brandConfig = $brand->getContentEngineConfig();
+
+            SystemLog::info('content_engine.page.index.config_loaded', [
+                'brand_id' => $brand->id,
+                'config_keys' => array_keys($brandConfig),
+            ], $user->id);
+
+            // Obtém preset commands
+            $presetCommands = $this->editor->getPresetCommands();
+
+            SystemLog::info('content_engine.page.index.rendering', [
+                'brand_id' => $brand->id,
+                'has_analysis' => $hasAnalysis,
+                'has_dna' => $brandDna !== null,
+                'history_count' => $campaignHistory->count(),
+                'preset_count' => count($presetCommands),
+            ], $user->id);
+
+            return Inertia::render('Social/ContentEngineV2/Index', [
+                'brand' => [
+                    'id' => $brand->id,
+                    'name' => $brand->name,
+                    'segment' => $brand->segment,
+                    'website' => $brand->website,
+                ],
+                'brandDna' => $brandDna,
+                'hasAnalysis' => $hasAnalysis,
+                'campaignHistory' => $campaignHistory,
+                'brandConfig' => $brandConfig,
+                'presetCommands' => $presetCommands,
+            ]);
+        } catch (\Exception $e) {
+            SystemLog::error('content_engine.page.index.exception', [
+                'brand_id' => $brand->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ], $user->id);
+
+            // Renderiza com dados mínimos em caso de erro
+            return Inertia::render('Social/ContentEngineV2/Index', [
+                'brand' => [
+                    'id' => $brand->id,
+                    'name' => $brand->name,
+                    'segment' => $brand->segment,
+                    'website' => $brand->website,
+                ],
+                'brandDna' => null,
+                'hasAnalysis' => false,
+                'campaignHistory' => [],
+                'brandConfig' => $brand->getContentEngineConfig(),
+                'presetCommands' => [],
+                'error_message' => 'Erro ao carregar dados: ' . $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -98,25 +169,54 @@ class ContentEngineV2Controller extends Controller
      */
     private function formatCampaignForDisplay(CampaignGenerated $campaign): array
     {
-        return [
-            'db_id' => $campaign->id,
-            'name' => $campaign->name,
-            'concept' => $campaign->concept,
-            'objective' => $campaign->objective,
-            'platforms' => $campaign->platforms,
-            'format' => $campaign->format,
-            'posts' => $campaign->posts_data,
-            'status' => $campaign->status,
-            'status_label' => $campaign->statusLabel(),
-            'status_color' => $campaign->statusColor(),
-            'created_at' => $campaign->created_at->format('d/m/Y H:i'),
-            'rejection_reason' => $campaign->rejection_reason,
-            'converted_posts' => $campaign->converted_posts,
-            'metadata' => $campaign->metadata,
-            'can_delete' => $campaign->canDelete(),
-            'can_reject' => $campaign->canReject(),
-            'can_convert' => $campaign->canConvert(),
-        ];
+        try {
+            return [
+                'db_id' => $campaign->id,
+                'name' => $campaign->name,
+                'concept' => $campaign->concept,
+                'objective' => $campaign->objective,
+                'platforms' => $campaign->platforms ?? [],
+                'format' => $campaign->format,
+                'posts' => $campaign->posts_data ?? [],
+                'status' => $campaign->status,
+                'status_label' => $campaign->statusLabel(),
+                'status_color' => $campaign->statusColor(),
+                'created_at' => $campaign->created_at?->format('d/m/Y H:i') ?? 'N/A',
+                'rejection_reason' => $campaign->rejection_reason,
+                'converted_posts' => $campaign->converted_posts ?? [],
+                'metadata' => $campaign->metadata ?? [],
+                'can_delete' => $campaign->canDelete(),
+                'can_reject' => $campaign->canReject(),
+                'can_convert' => $campaign->canConvert(),
+            ];
+        } catch (\Exception $e) {
+            SystemLog::error('content_engine.format_campaign.error', [
+                'campaign_id' => $campaign->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            // Retorna dados mínimos em caso de erro
+            return [
+                'db_id' => $campaign->id,
+                'name' => $campaign->name ?? 'Erro',
+                'concept' => $campaign->concept ?? '',
+                'objective' => $campaign->objective ?? 'awareness',
+                'platforms' => [],
+                'format' => $campaign->format ?? 'feed',
+                'posts' => [],
+                'status' => $campaign->status ?? 'active',
+                'status_label' => 'Erro',
+                'status_color' => 'gray',
+                'created_at' => 'N/A',
+                'rejection_reason' => null,
+                'converted_posts' => [],
+                'metadata' => [],
+                'can_delete' => true,
+                'can_reject' => false,
+                'can_convert' => false,
+            ];
+        }
     }
 
     /**
