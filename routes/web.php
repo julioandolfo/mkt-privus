@@ -174,30 +174,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{item}/approve', [ContentCalendarController::class, 'approveItem'])->name('approve-item');
         });
 
-        // Content Engine
+        // Content Engine V2 (Principal - Pomeli-style)
         Route::prefix('content-engine')->name('content-engine.')->group(function () {
-            // Dashboard de sugestoes
-            Route::get('/', [ContentSuggestionController::class, 'index'])->name('index');
-
-            // Pautas
-            Route::get('/rules', [ContentRuleController::class, 'index'])->name('rules');
-            Route::post('/rules', [ContentRuleController::class, 'store'])->name('rules.store');
-            Route::put('/rules/{rule}', [ContentRuleController::class, 'update'])->name('rules.update');
-            Route::delete('/rules/{rule}', [ContentRuleController::class, 'destroy'])->name('rules.destroy');
-            Route::post('/rules/{rule}/toggle', [ContentRuleController::class, 'toggle'])->name('rules.toggle');
-            Route::post('/rules/{rule}/generate', [ContentRuleController::class, 'generate'])->name('rules.generate');
-
-            // Sugestoes
-            Route::post('/suggestions/{suggestion}/approve', [ContentSuggestionController::class, 'approve'])->name('suggestions.approve');
-            Route::post('/suggestions/{suggestion}/reject', [ContentSuggestionController::class, 'reject'])->name('suggestions.reject');
-            Route::put('/suggestions/{suggestion}', [ContentSuggestionController::class, 'update'])->name('suggestions.update');
-            Route::post('/suggestions/bulk-approve', [ContentSuggestionController::class, 'bulkApprove'])->name('suggestions.bulk-approve');
-            Route::post('/suggestions/generate-smart', [ContentSuggestionController::class, 'generateSmart'])->name('suggestions.generate-smart');
-        });
-
-        // Content Engine V2 (Pomeli-style)
-        Route::prefix('content-engine-v2')->name('content-engine-v2.')->group(function () {
-            // Dashboard principal
+            // Dashboard principal V2
             Route::get('/', [ContentEngineV2Controller::class, 'index'])->name('index');
 
             // Brand DNA
@@ -218,7 +197,27 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/suggest-improvements', [ContentEngineV2Controller::class, 'suggestImprovements'])->name('suggest-improvements');
             Route::post('/generate-variations', [ContentEngineV2Controller::class, 'generateVariations'])->name('generate-variations');
             Route::get('/preset-commands', [ContentEngineV2Controller::class, 'getPresetCommands'])->name('preset-commands');
+
+            // Pautas (Legacy - mantidas para compatibilidade)
+            Route::get('/rules', [ContentRuleController::class, 'index'])->name('rules');
+            Route::post('/rules', [ContentRuleController::class, 'store'])->name('rules.store');
+            Route::put('/rules/{rule}', [ContentRuleController::class, 'update'])->name('rules.update');
+            Route::delete('/rules/{rule}', [ContentRuleController::class, 'destroy'])->name('rules.destroy');
+            Route::post('/rules/{rule}/toggle', [ContentRuleController::class, 'toggle'])->name('rules.toggle');
+            Route::post('/rules/{rule}/generate', [ContentRuleController::class, 'generate'])->name('rules.generate');
+
+            // Sugestões antigas (Legacy - API apenas)
+            Route::post('/suggestions/{suggestion}/approve', [ContentSuggestionController::class, 'approve'])->name('suggestions.approve');
+            Route::post('/suggestions/{suggestion}/reject', [ContentSuggestionController::class, 'reject'])->name('suggestions.reject');
+            Route::put('/suggestions/{suggestion}', [ContentSuggestionController::class, 'update'])->name('suggestions.update');
+            Route::post('/suggestions/bulk-approve', [ContentSuggestionController::class, 'bulkApprove'])->name('suggestions.bulk-approve');
+            Route::post('/suggestions/generate-smart', [ContentSuggestionController::class, 'generateSmart'])->name('suggestions.generate-smart');
         });
+
+        // Redirecionamento da URL antiga V2 para a nova principal
+        Route::get('/content-engine-v2', function () {
+            return redirect()->route('social.content-engine.index');
+        })->name('content-engine-v2.redirect');
 
         // Autopilot
         Route::get('/autopilot', [AutopilotController::class, 'index'])->name('autopilot.index');

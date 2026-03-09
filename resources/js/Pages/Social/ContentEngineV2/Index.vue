@@ -112,14 +112,14 @@ const platformLabels: Record<string, string> = {
 };
 
 // Guia
-const v2GuideSteps = [
+const guideSteps = [
     { title: 'Análise automática do Brand DNA', description: 'O sistema analisa o site da marca para extrair tom de voz, personalidade, mensagens-chave e estratégia de conteúdo automaticamente.' },
     { title: 'Geração de campanhas com IA', description: 'Gere 5-10 ideias de campanha completas com conceito, objetivo, plataformas e variações de posts. Personalize por tema ou deixe a IA criar.' },
     { title: 'Editor por linguagem natural', description: 'Refine conteúdo com comandos simples em português como "deixe mais descontraído" ou "adicione urgência".' },
     { title: 'Crie posts diretamente', description: 'Converta campanhas aprovadas em posts reais com legendas, hashtags e imagens geradas automaticamente.' },
 ];
 
-const v2GuideTips = [
+const guideTips = [
     'O Brand DNA é atualizado automaticamente a cada análise e fica salvo no cache por 24 horas.',
     'Campanhas geradas são únicas e baseadas no DNA específico da sua marca.',
     'Use o editor natural para ajustar tom, comprimento, emojis e outros elementos do conteúdo.',
@@ -130,7 +130,7 @@ const v2GuideTips = [
 async function analyzeBrand() {
     analyzing.value = true;
     try {
-        await axios.post(route('social.content-engine-v2.analyze-brand'));
+        await axios.post(route('social.content-engine.analyze-brand'));
         router.reload();
     } catch (error) {
         console.error('Erro na análise:', error);
@@ -142,7 +142,7 @@ async function analyzeBrand() {
 async function generateCampaigns() {
     generatingCampaigns.value = true;
     try {
-        const response = await axios.post(route('social.content-engine-v2.generate-campaigns'), {
+            const response = await axios.post(route('social.content-engine.generate-campaigns'), {
             theme: campaignTheme.value,
             count: 5,
         });
@@ -158,7 +158,7 @@ async function generateFromUserIdea() {
     if (!userIdea.value.trim()) return;
     generatingFromIdea.value = true;
     try {
-        const response = await axios.post(route('social.content-engine-v2.generate-from-idea'), {
+            const response = await axios.post(route('social.content-engine.generate-from-idea'), {
             idea: userIdea.value,
             post_count: 3,
         });
@@ -180,7 +180,7 @@ function closeCampaignDetail() {
 
 async function createPostsFromCampaign(campaign: Campaign, selectedPosts?: number[]) {
     try {
-        const response = await axios.post(route('social.content-engine-v2.create-posts'), {
+            const response = await axios.post(route('social.content-engine.create-posts'), {
             campaign: campaign,
             selected_posts: selectedPosts,
             generate_images: true,
@@ -198,7 +198,7 @@ async function applyNaturalEdit() {
     if (!contentToEdit.value || !editCommand.value) return;
     applyingEdit.value = true;
     try {
-        const response = await axios.post(route('social.content-engine-v2.natural-edit'), {
+            const response = await axios.post(route('social.content-engine.natural-edit'), {
             content: contentToEdit.value,
             command: editCommand.value,
             platform: selectedPlatform.value,
@@ -215,7 +215,7 @@ async function applyPreset(presetKey: string) {
     if (!contentToEdit.value) return;
     applyingEdit.value = true;
     try {
-        const response = await axios.post(route('social.content-engine-v2.apply-preset'), {
+            const response = await axios.post(route('social.content-engine.apply-preset'), {
             content: contentToEdit.value,
             preset_key: presetKey,
         });
@@ -278,21 +278,18 @@ function getEffortLabel(level?: string): string {
 </script>
 
 <template>
-    <Head title="Social - Content Engine V2" />
+    <Head title="Social - Content Engine" />
 
     <AuthenticatedLayout>
         <template #header>
             <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3">
                     <h1 class="text-xl font-semibold text-white">Content Engine</h1>
-                    <span class="rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 px-2 py-0.5 text-xs font-medium text-white">
-                        V2
-                    </span>
                     <span class="text-xs text-gray-500">Powered by AI</span>
                 </div>
                 <div class="flex items-center gap-3">
-                    <Link :href="route('social.content-engine.index')" class="rounded-xl px-4 py-2 text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 border border-gray-700 transition">
-                        Versão Clássica
+                    <Link :href="route('social.content-engine.rules')" class="rounded-xl px-4 py-2 text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 border border-gray-700 transition">
+                        Pautas
                     </Link>
                     <Link :href="route('social.posts.index')" class="rounded-xl px-4 py-2 text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 border border-gray-700 transition">
                         Posts
@@ -303,7 +300,7 @@ function getEffortLabel(level?: string): string {
 
         <div v-if="!currentBrand" class="rounded-2xl bg-gray-900 border border-gray-800 p-12 text-center">
             <h3 class="text-lg font-medium text-gray-300">Nenhuma marca selecionada</h3>
-            <p class="mt-2 text-sm text-gray-500">Selecione uma marca para usar o Content Engine V2.</p>
+            <p class="mt-2 text-sm text-gray-500">Selecione uma marca para usar o Content Engine.</p>
         </div>
 
         <template v-else>
@@ -771,12 +768,12 @@ function getEffortLabel(level?: string): string {
 
             <!-- Guia -->
             <GuideBox
-                title="Content Engine V2 - Como funciona"
-                description="O Content Engine V2 é uma evolução inspirada no Pomeli do Google. Ele combina análise automática de marca, geração inteligente de campanhas e edição por linguagem natural."
-                :steps="v2GuideSteps"
-                :tips="v2GuideTips"
+                title="Content Engine - Como funciona"
+                description="O Content Engine é um sistema avançado de geração de conteúdo inspirado no Pomeli do Google. Ele combina análise automática de marca, geração inteligente de campanhas e edição por linguagem natural."
+                :steps="guideSteps"
+                :tips="guideTips"
                 color="purple"
-                storage-key="content-engine-v2-guide"
+                storage-key="content-engine-guide"
                 class="mt-6"
             />
         </template>

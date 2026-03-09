@@ -897,7 +897,7 @@ onMounted(fetchCalendarData);
                                 Remover
                             </button>
                             <Link v-if="selectedItem.suggestion_id" :href="route('social.content-engine.index')" class="rounded-xl px-3 py-2 text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-800/50 transition">
-                                Ver Sugestao
+                                Ver no Content Engine
                             </Link>
                         </div>
                         <div class="flex items-center gap-2">
