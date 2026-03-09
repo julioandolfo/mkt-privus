@@ -47,8 +47,9 @@ class CampaignIdeasGeneratorService
             // 2. Gera campanhas via IA
             $campaigns = $this->generateWithAI($brand, $brandDNA, $theme, $count);
 
-            // 3. Enriquece com metadados
-            $enriched = $this->enrichCampaigns($campaigns, $brand);
+            // 3. Enriquece com metadados (incluindo dados sociais)
+            $socialData = $brandDNA['social_data'] ?? [];
+            $enriched = $this->enrichCampaigns($campaigns, $brand, $socialData);
 
             // 4. Salva no cache
             Cache::put($cacheKey, $enriched, self::CACHE_TTL);
@@ -221,6 +222,38 @@ PROMPT;
         $messaging = $dna['messaging'] ?? [];
         $target = $dna['target_audience_analysis'] ?? [];
         $strategy = $dna['content_strategy_hints'] ?? [];
+        $socialData = $dna['social_data'] ?? [];
+
+        // Prepara contexto de dados sociais
+        $socialContext = '';
+        if ($socialData['has_social_data'] ?? false) {
+            $platformsPerf = [];
+            foreach ($socialData['platform_performance'] ?? [] as $platform => $perf) {
+                $engagement = $perf['engagement_rate_avg'] ?? 0;
+                $trend = $perf['trend_7d'] ?? 0;
+                $followers = $perf['followers'] ?? 'N/A';
+                $platformsPerf[] = "{$platform}: {$engagement}% engajamento (trend: {$trend}%), {$followers} seguidores";
+            }
+
+            $bestTimes = $socialData['optimal_schedule']['best_hours'] ?? ['09:00', '12:00', '18:00'];
+            $contentRecs = $socialData['content_recommendations'] ?? [];
+
+            $socialContext = "
+
+=== DADOS REAIS DAS REDES SOCIAIS ===
+Contas ativas: " . count($socialData['accounts_summary'] ?? []) . "
+Performance por plataforma:
+- " . implode("\n- ", $platformsPerf) . "
+
+Melhores horários baseados em dados: " . implode(', ', $bestTimes) . "
+
+Recomendações baseadas em performance:
+- " . implode("\n- ", array_slice($contentRecs, 0, 3)) . "
+
+Histórico de posts: " . ($socialData['post_insights']['total_posts'] ?? 0) . " posts nos últimos 90 dias
+Categoria de conteúdo dominante: " . ($socialData['post_insights']['content_categories']['dominant_category'] ?? 'variado') . "
+";
+        }
 
         return <<<PROMPT
 Você é um estrategista sênior de marketing digital com 10 anos de experiência criando campanhas de sucesso.
@@ -248,6 +281,7 @@ PÚBLICO-ALVO:
 ESTRATÉGIA RECOMENDADA:
 - Melhores plataformas: {$this->arrayToString($strategy['best_platforms'] ?? [])}
 - Pilares de conteúdo: {$this->arrayToString($strategy['content_pillars'] ?? [])}
+{$socialContext}
 
 {$themeHint}
 
@@ -344,15 +378,15 @@ PROMPT;
     /**
      * Enriquece campanhas com metadados
      */
-    private function enrichCampaigns(array $campaigns, Brand $brand): array
+    private function enrichCampaigns(array $campaigns, Brand $brand, array $socialData = []): array
     {
-        return array_map(fn($campaign) => $this->enrichSingleCampaign($campaign, $brand), $campaigns);
+        return array_map(fn($campaign) => $this->enrichSingleCampaign($campaign, $brand, $socialData), $campaigns);
     }
 
     /**
      * Enriquece uma campanha individual
      */
-    private function enrichSingleCampaign(array $campaign, Brand $brand): array
+    private function enrichSingleCampaign(array $campaign, Brand $brand, array $socialData = []): array
     {
         // Adiciona IDs únicos
         $campaign['id'] = 'campaign_' . uniqid();
@@ -360,14 +394,23 @@ PROMPT;
         // Normaliza plataformas
         $campaign['platforms'] = $this->normalizePlatforms($campaign['platforms'] ?? []);
 
-        // Sugere melhores horários
-        $campaign['suggested_times'] = $this->suggestBestTimes($campaign['platforms']);
+        // Sugere melhores horários (com dados sociais quando disponível)
+        $campaign['suggested_times'] = $this->suggestBestTimes($campaign['platforms'], $socialData);
 
         // Estima esforço
         $campaign['effort_level'] = $this->estimateEffort($campaign);
 
         // Sugere orçamento (se aplicável)
         $campaign['budget_hint'] = $this->suggestBudgetHint($campaign['objective'] ?? 'awareness');
+
+        // Adiciona dados sociais de contexto
+        if ($socialData['has_social_data'] ?? false) {
+            $campaign['social_context'] = [
+                'engagement_benchmark' => $this->getEngagementBenchmark($campaign['platforms'], $socialData),
+                'recommended_hashtags' => $this->getRecommendedHashtags($socialData),
+                'content_type_suggestion' => $socialData['post_insights']['content_categories']['dominant_category'] ?? null,
+            ];
+        }
 
         // Adiciona timestamps
         $campaign['_generated_at'] = now()->toIso8601String();
@@ -390,11 +433,12 @@ PROMPT;
     }
 
     /**
-     * Sugere melhores horários por plataforma
+     * Sugere melhores horários por plataforma (usa dados reais quando disponíveis)
      */
-    private function suggestBestTimes(array $platforms): array
+    private function suggestBestTimes(array $platforms, array $socialData = []): array
     {
-        $bestTimes = [
+        // Horários padrão
+        $defaultTimes = [
             'instagram' => ['09:00', '12:00', '18:00', '21:00'],
             'facebook' => ['09:00', '13:00', '15:00', '19:00'],
             'linkedin' => ['08:00', '12:00', '17:00'],
@@ -404,14 +448,69 @@ PROMPT;
             'twitter' => ['08:00', '12:00', '17:00', '19:00'],
         ];
 
+        // Se temos dados sociais com horários otimizados, usamos eles
+        if ($socialData['has_social_data'] ?? false) {
+            $optimalSchedule = $socialData['optimal_schedule'] ?? [];
+
+            if ($optimalSchedule['based_on_data'] ?? false) {
+                $bestHours = $optimalSchedule['best_hours'] ?? [];
+
+                $suggestions = [];
+                foreach ($platforms as $platform) {
+                    // Usa horários baseados em dados, complementa com padrão se necessário
+                    $platformTimes = !empty($bestHours) ? array_slice($bestHours, 0, 3) : ($defaultTimes[$platform] ?? ['12:00']);
+                    $suggestions[$platform] = $platformTimes;
+                }
+
+                return $suggestions;
+            }
+        }
+
+        // Fallback para horários padrão
         $suggestions = [];
         foreach ($platforms as $platform) {
-            if (isset($bestTimes[$platform])) {
-                $suggestions[$platform] = $bestTimes[$platform];
+            if (isset($defaultTimes[$platform])) {
+                $suggestions[$platform] = $defaultTimes[$platform];
             }
         }
 
         return $suggestions;
+    }
+
+    /**
+     * Extrai benchmark de engajamento das plataformas
+     */
+    private function getEngagementBenchmark(array $platforms, array $socialData): array
+    {
+        $benchmarks = [];
+        $performance = $socialData['platform_performance'] ?? [];
+
+        foreach ($platforms as $platform) {
+            if (isset($performance[$platform])) {
+                $benchmarks[$platform] = [
+                    'avg_engagement_rate' => $performance[$platform]['engagement_rate_avg'] ?? 0,
+                    'trend' => $performance[$platform]['trend_7d'] ?? 0,
+                ];
+            }
+        }
+
+        return $benchmarks;
+    }
+
+    /**
+     * Extrai hashtags recomendadas baseadas no histórico
+     */
+    private function getRecommendedHashtags(array $socialData): array
+    {
+        $hashtags = [];
+        $postInsights = $socialData['post_insights'] ?? [];
+
+        foreach ($postInsights['by_platform'] ?? [] as $platform => $stats) {
+            $platformHashtags = $stats['top_hashtags'] ?? [];
+            $hashtags = array_merge($hashtags, $platformHashtags);
+        }
+
+        return array_slice(array_unique($hashtags), 0, 10);
     }
 
     /**

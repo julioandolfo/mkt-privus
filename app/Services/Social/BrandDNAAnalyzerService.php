@@ -19,7 +19,8 @@ class BrandDNAAnalyzerService
     private const CACHE_TTL = 86400; // 24 horas
 
     public function __construct(
-        private AIGateway $aiGateway
+        private AIGateway $aiGateway,
+        private SocialDataAnalyzerService $socialAnalyzer
     ) {}
 
     /**
@@ -84,10 +85,24 @@ class BrandDNAAnalyzerService
                 'has_target_audience' => !empty($analysis['target_audience_analysis']),
             ]);
 
-            // 3. Enriquece com dados existentes da marca
-            $dna = $this->enrichWithExistingData($analysis, $brand);
+            // 3. Análise de dados sociais (contas conectadas, posts, insights)
+            SystemLog::info('content_engine', 'brand_dna.social.started', "Iniciando análise de dados sociais", [
+                'brand_id' => $brand->id,
+            ]);
 
-            // 4. Salva no cache e no banco
+            $socialData = $this->socialAnalyzer->analyzeSocialData($brand);
+
+            SystemLog::info('content_engine', 'brand_dna.social.completed', "Análise de dados sociais concluída", [
+                'brand_id' => $brand->id,
+                'has_social_data' => $socialData['has_social_data'] ?? false,
+                'accounts_count' => count($socialData['accounts_summary'] ?? []),
+            ]);
+
+            // 4. Enriquece com dados existentes da marca E dados sociais
+            $dna = $this->enrichWithExistingData($analysis, $brand);
+            $dna['social_data'] = $socialData;
+
+            // 5. Salva no cache e no banco
             Cache::put($cacheKey, $dna, self::CACHE_TTL);
             $this->saveToBrand($dna, $brand);
 
