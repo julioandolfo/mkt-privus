@@ -4,6 +4,7 @@ namespace App\Services\Social;
 
 use App\Enums\AIModel;
 use App\Models\Brand;
+use App\Models\SystemLog;
 use App\Services\AI\AIGateway;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -28,17 +29,60 @@ class BrandDNAAnalyzerService
     {
         $cacheKey = "brand_dna:{$brand->id}";
 
+        SystemLog::info('content_engine', 'brand_dna.analysis.started', "Iniciando análise Brand DNA para marca: {$brand->name}", [
+            'brand_id' => $brand->id,
+            'brand_name' => $brand->name,
+            'website' => $brand->website,
+        ]);
+
         // Verifica cache primeiro
         if ($cached = Cache::get($cacheKey)) {
+            SystemLog::info('content_engine', 'brand_dna.analysis.cached', "Retornando Brand DNA do cache", [
+                'brand_id' => $brand->id,
+                'analyzed_at' => $cached['_meta']['analyzed_at'] ?? null,
+            ]);
             return $cached;
         }
 
         try {
             // 1. Extrai conteúdo do site
-            $websiteContent = $this->scrapeWebsite($brand->website ?? $this->getFirstUrl($brand));
+            $url = $brand->website ?? $this->getFirstUrl($brand);
+            SystemLog::info('content_engine', 'brand_dna.scrape.started', "Iniciando scraping do site", [
+                'brand_id' => $brand->id,
+                'url' => $url,
+            ]);
+
+            $websiteContent = $this->scrapeWebsite($url);
+
+            $contentLength = mb_strlen($websiteContent);
+            SystemLog::info('content_engine', 'brand_dna.scrape.completed', "Scraping concluído", [
+                'brand_id' => $brand->id,
+                'content_length' => $contentLength,
+                'has_content' => $contentLength > 0,
+            ]);
+
+            if ($contentLength === 0) {
+                SystemLog::warning('content_engine', 'brand_dna.scrape.empty', "Nenhum conteúdo extraído do site", [
+                    'brand_id' => $brand->id,
+                    'url' => $url,
+                ]);
+            }
 
             // 2. Análise completa via IA
+            SystemLog::info('content_engine', 'brand_dna.ai.started', "Iniciando análise via IA (GeminiPro)", [
+                'brand_id' => $brand->id,
+                'content_length' => $contentLength,
+            ]);
+
             $analysis = $this->performAIAnalysis($websiteContent, $brand);
+
+            $hasVoiceTone = !empty($analysis['voice_tone']['tone']);
+            SystemLog::info('content_engine', 'brand_dna.ai.completed', "Análise IA concluída", [
+                'brand_id' => $brand->id,
+                'has_voice_tone' => $hasVoiceTone,
+                'has_messaging' => !empty($analysis['messaging']),
+                'has_target_audience' => !empty($analysis['target_audience_analysis']),
+            ]);
 
             // 3. Enriquece com dados existentes da marca
             $dna = $this->enrichWithExistingData($analysis, $brand);
@@ -47,8 +91,22 @@ class BrandDNAAnalyzerService
             Cache::put($cacheKey, $dna, self::CACHE_TTL);
             $this->saveToBrand($dna, $brand);
 
+            SystemLog::info('content_engine', 'brand_dna.analysis.completed', "Brand DNA salvo com sucesso", [
+                'brand_id' => $brand->id,
+                'analyzed_at' => $dna['_meta']['analyzed_at'] ?? null,
+                'source' => $dna['_meta']['source'] ?? 'unknown',
+            ]);
+
             return $dna;
         } catch (\Exception $e) {
+            SystemLog::error('content_engine', 'brand_dna.analysis.failed', "Falha na análise Brand DNA: {$e->getMessage()}", [
+                'brand_id' => $brand->id,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             Log::error("Brand DNA Analysis failed for brand {$brand->id}: {$e->getMessage()}", [
                 'brand_id' => $brand->id,
                 'error' => $e->getMessage(),
@@ -82,8 +140,25 @@ class BrandDNAAnalyzerService
      */
     public function reanalyzeBrand(Brand $brand): array
     {
+        SystemLog::info('content_engine', 'brand_dna.reanalyze.started', "Reanálise forçada do Brand DNA", [
+            'brand_id' => $brand->id,
+            'brand_name' => $brand->name,
+        ]);
+
         Cache::forget("brand_dna:{$brand->id}");
-        return $this->analyzeBrandFromWebsite($brand);
+
+        SystemLog::debug('content_engine', 'brand_dna.cache.cleared', "Cache limpo para reanálise", [
+            'brand_id' => $brand->id,
+        ]);
+
+        $result = $this->analyzeBrandFromWebsite($brand);
+
+        SystemLog::info('content_engine', 'brand_dna.reanalyze.completed', "Reanálise concluída", [
+            'brand_id' => $brand->id,
+            'has_voice_tone' => !empty($result['voice_tone']['tone']),
+        ]);
+
+        return $result;
     }
 
     /**
@@ -92,8 +167,14 @@ class BrandDNAAnalyzerService
     private function scrapeWebsite(?string $url): string
     {
         if (!$url) {
+            SystemLog::warning('content_engine', 'brand_dna.scrape.no_url', "URL não fornecida para scraping");
             return '';
         }
+
+        SystemLog::debug('content_engine', 'brand_dna.scrape.request', "Enviando requisição HTTP", [
+            'url' => $url,
+            'timeout' => 15,
+        ]);
 
         try {
             $response = Http::timeout(15)
@@ -103,14 +184,38 @@ class BrandDNAAnalyzerService
                 ->get($url);
 
             if (!$response->successful()) {
+                SystemLog::error('content_engine', 'brand_dna.scrape.http_error', "Erro HTTP ao acessar site", [
+                    'url' => $url,
+                    'status' => $response->status(),
+                    'body_preview' => mb_substr($response->body(), 0, 200),
+                ]);
                 return '';
             }
 
             $html = $response->body();
+            $htmlSize = mb_strlen($html);
+
+            SystemLog::debug('content_engine', 'brand_dna.scrape.html_received', "HTML recebido", [
+                'url' => $url,
+                'html_size' => $htmlSize,
+            ]);
 
             // Extrai textos importantes
-            return $this->extractImportantContent($html);
+            $content = $this->extractImportantContent($html);
+
+            SystemLog::debug('content_engine', 'brand_dna.scrape.content_extracted', "Conteúdo extraído do HTML", [
+                'url' => $url,
+                'html_size' => $htmlSize,
+                'content_size' => mb_strlen($content),
+            ]);
+
+            return $content;
         } catch (\Exception $e) {
+            SystemLog::error('content_engine', 'brand_dna.scrape.exception', "Exceção durante scraping", [
+                'url' => $url,
+                'error' => $e->getMessage(),
+                'error_class' => get_class($e),
+            ]);
             Log::warning("Failed to scrape website {$url}: {$e->getMessage()}");
             return '';
         }
@@ -185,28 +290,62 @@ class BrandDNAAnalyzerService
     private function performAIAnalysis(string $content, Brand $brand): array
     {
         $prompt = $this->buildAnalysisPrompt($content, $brand);
+        $promptSize = mb_strlen($prompt);
 
-        $response = $this->aiGateway->chat(
-            model: AIModel::GeminiPro,
-            messages: [
-                ['role' => 'user', 'content' => $prompt]
-            ],
-            brand: $brand,
-            feature: 'brand_dna_analysis',
-            options: [
-                'temperature' => 0.3,
-                'max_tokens' => 2048,
-            ]
-        );
+        SystemLog::debug('content_engine', 'brand_dna.ai.prompt_ready', "Prompt preparado", [
+            'brand_id' => $brand->id,
+            'prompt_size' => $promptSize,
+            'content_in_prompt' => mb_strlen($content),
+        ]);
 
-        $result = json_decode($response['content'], true);
+        try {
+            $response = $this->aiGateway->chat(
+                model: AIModel::GeminiPro,
+                messages: [
+                    ['role' => 'user', 'content' => $prompt]
+                ],
+                brand: $brand,
+                feature: 'brand_dna_analysis',
+                options: [
+                    'temperature' => 0.3,
+                    'max_tokens' => 2048,
+                ]
+            );
 
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            Log::warning("Failed to parse AI analysis JSON for brand {$brand->id}");
-            return [];
+            SystemLog::debug('content_engine', 'brand_dna.ai.response_received', "Resposta recebida da IA", [
+                'brand_id' => $brand->id,
+                'response_size' => mb_strlen($response['content'] ?? ''),
+                'input_tokens' => $response['input_tokens'] ?? 0,
+                'output_tokens' => $response['output_tokens'] ?? 0,
+                'model' => $response['model'] ?? 'unknown',
+            ]);
+
+            $result = json_decode($response['content'], true);
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                SystemLog::error('content_engine', 'brand_dna.ai.json_error', "Erro ao parsear JSON da resposta", [
+                    'brand_id' => $brand->id,
+                    'json_error' => json_last_error_msg(),
+                    'response_preview' => mb_substr($response['content'], 0, 500),
+                ]);
+                Log::warning("Failed to parse AI analysis JSON for brand {$brand->id}");
+                return [];
+            }
+
+            SystemLog::info('content_engine', 'brand_dna.ai.success', "Análise IA processada com sucesso", [
+                'brand_id' => $brand->id,
+                'result_keys' => array_keys($result),
+            ]);
+
+            return $result;
+        } catch (\Exception $e) {
+            SystemLog::error('content_engine', 'brand_dna.ai.exception', "Exceção durante chamada à IA", [
+                'brand_id' => $brand->id,
+                'error' => $e->getMessage(),
+                'error_class' => get_class($e),
+            ]);
+            throw $e;
         }
-
-        return $result;
     }
 
     /**

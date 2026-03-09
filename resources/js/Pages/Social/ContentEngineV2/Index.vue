@@ -80,6 +80,7 @@ const currentBrand = computed(() => page.props.currentBrand);
 // Estado
 const activeTab = ref<'campaigns' | 'editor' | 'dna'>('campaigns');
 const analyzing = ref(false);
+const analysisStatus = ref('');
 const generatingCampaigns = ref(false);
 const campaigns = ref<Campaign[]>([]);
 const selectedCampaign = ref<Campaign | null>(null);
@@ -129,13 +130,24 @@ const guideTips = [
 // Métodos
 async function analyzeBrand() {
     analyzing.value = true;
+    analysisStatus.value = 'Analisando site da marca...';
+
     try {
-        await axios.post(route('social.content-engine.analyze-brand'));
-        router.reload();
-    } catch (error) {
+        const response = await axios.post(route('social.content-engine.analyze-brand'));
+        analysisStatus.value = 'Análise concluída! Atualizando...';
+
+        // Aguarda um momento para mostrar a mensagem de sucesso
+        setTimeout(() => {
+            router.reload();
+        }, 500);
+    } catch (error: any) {
         console.error('Erro na análise:', error);
+        analysisStatus.value = `Erro: ${error.response?.data?.message || error.message || 'Falha na análise'}`;
     } finally {
-        analyzing.value = false;
+        setTimeout(() => {
+            analyzing.value = false;
+            analysisStatus.value = '';
+        }, 3000);
     }
 }
 
@@ -373,8 +385,19 @@ function getEffortLabel(level?: string): string {
                     Analise o site da marca para extrair automaticamente tom de voz, personalidade, mensagens-chave e estratégia de conteúdo.
                 </p>
                 <button @click="analyzeBrand" :disabled="analyzing" class="rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-50">
-                    {{ analyzing ? 'Analisando site...' : 'Analisar Minha Marca' }}
+                    {{ analyzing ? 'Analisando...' : 'Analisar Minha Marca' }}
                 </button>
+
+                <!-- Status da análise -->
+                <div v-if="analyzing || analysisStatus" class="mt-4">
+                    <div class="flex items-center justify-center gap-2 text-sm text-purple-400">
+                        <svg v-if="analyzing" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span>{{ analysisStatus || 'Processando...' }}</span>
+                    </div>
+                </div>
             </div>
 
             <!-- Tabs -->
