@@ -345,37 +345,62 @@ class EmailCampaignService
             }
         }
 
-        // Verificar se campanha terminou (usar distinct para evitar duplicados)
-        $totalQueued = $campaign->events()
+        // Contatos que ainda estão só como 'queued' (sem sent/failed) = pendentes reais
+        $pendingContactIds = EmailCampaignEvent::where('email_campaign_id', $campaign->id)
             ->where('event_type', 'queued')
-            ->distinct('email_contact_id')
-            ->count('email_contact_id');
-        $totalProcessed = $campaign->events()
-            ->whereIn('event_type', ['sent', 'failed'])
-            ->distinct('email_contact_id')
-            ->count('email_contact_id');
+            ->whereNotIn('email_contact_id', function ($q) use ($campaign) {
+                $q->select('email_contact_id')
+                  ->from('email_campaign_events')
+                  ->where('email_campaign_id', $campaign->id)
+                  ->whereIn('event_type', ['sent', 'failed']);
+            })
+            ->distinct()
+            ->pluck('email_contact_id')
+            ->toArray();
+
+        $totalQueued    = $campaign->events()->where('event_type', 'queued')->distinct('email_contact_id')->count('email_contact_id');
+        $totalProcessed = $campaign->events()->whereIn('event_type', ['sent', 'failed'])->distinct('email_contact_id')->count('email_contact_id');
+        $totalPending   = count($pendingContactIds);
 
         SystemLog::info('email', 'batch.completed', "Batch finalizado", [
-            'campaign_id' => $campaign->id,
-            'sent' => $sent,
-            'failed' => $failed,
-            'total_queued' => $totalQueued,
-            'total_processed' => $totalProcessed,
-            'campaign_finished' => $totalProcessed >= $totalQueued,
+            'campaign_id'      => $campaign->id,
+            'sent'             => $sent,
+            'failed'           => $failed,
+            'total_queued'     => $totalQueued,
+            'total_processed'  => $totalProcessed,
+            'total_pending'    => $totalPending,
+            'campaign_finished' => $totalPending === 0,
         ]);
 
-        if ($totalProcessed >= $totalQueued) {
-            $campaign->update([
-                'status' => 'sent',
-                'completed_at' => now(),
-            ]);
+        if ($totalPending === 0) {
+            // Todos processados — campanha concluída
+            $campaign->update(['status' => 'sent', 'completed_at' => now()]);
             $campaign->refreshStats();
 
-            SystemLog::info('email', 'campaign.finished', "Campanha \"{$campaign->name}\" finalizada! Todos os emails processados.", [
+            SystemLog::info('email', 'campaign.finished', "Campanha \"{$campaign->name}\" finalizada!", [
                 'campaign_id' => $campaign->id,
-                'total_sent' => $sent,
+                'total_sent'  => $sent,
                 'total_failed' => $failed,
             ]);
+        } elseif ($totalPending > 0 && $sent === 0 && $failed === 0) {
+            // Este batch não conseguiu enviar nenhum (erros temporários)
+            // Agendar retry para os pendentes após 1 hora (respeita rate limit)
+            $provider  = $campaign->provider;
+            $batchSize = $provider?->hourly_limit ? min(50, $provider->hourly_limit) : 50;
+            $chunks    = array_chunk($pendingContactIds, $batchSize);
+
+            SystemLog::warning('email', 'batch.retry_scheduled', "Batch sem envios — agendando retry para {$totalPending} contatos pendentes", [
+                'campaign_id'  => $campaign->id,
+                'pending'      => $totalPending,
+                'retry_batches' => count($chunks),
+                'retry_in'     => '60 minutes',
+            ]);
+
+            foreach ($chunks as $i => $chunk) {
+                \App\Jobs\SendCampaignBatchJob::dispatch($campaign->id, $chunk)
+                    ->onQueue('email')
+                    ->delay(now()->addMinutes(60 + ($i * 5)));
+            }
         }
 
         return ['sent' => $sent, 'failed' => $failed];

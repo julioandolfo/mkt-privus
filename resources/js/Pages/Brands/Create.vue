@@ -62,6 +62,7 @@ const brandCreateTips = [
     'Público-alvo: Ajuda a IA a adaptar a linguagem e abordagem para atingir as pessoas certas.',
     'URLs de sites: Adicione URLs do site, e-commerce ou catálogo para que a IA possa utilizar links de produtos nos posts.',
     'Logotipos e imagens: Após criar a marca, você será redirecionado para adicionar logotipos, ícones, mascotes, produtos e referências visuais.',
+    'Content Engine: Após criar a marca, você poderá personalizar as configurações de geração de conteúdo na seção Content Engine.',
 ];
 
 const toneOptions = [
@@ -353,6 +354,46 @@ const urlTypeOptions = [
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Content Engine Preview -->
+                <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-lg font-semibold text-white">Content Engine</h2>
+                            <p class="text-sm text-gray-500">Configurações padrão para geração de campanhas</p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                        <div class="p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                            <p class="text-xs text-gray-500 mb-1">Posts por Campanha</p>
+                            <p class="text-sm font-medium text-white">3</p>
+                        </div>
+                        <div class="p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                            <p class="text-xs text-gray-500 mb-1">Campanhas por Geração</p>
+                            <p class="text-sm font-medium text-white">5</p>
+                        </div>
+                        <div class="p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                            <p class="text-xs text-gray-500 mb-1">Estilo da Legenda</p>
+                            <p class="text-sm font-medium text-white">Média</p>
+                        </div>
+                        <div class="p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                            <p class="text-xs text-gray-500 mb-1">Hashtags</p>
+                            <p class="text-sm font-medium text-white">8</p>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2">
+                        <span class="rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 text-xs text-green-400">✓ Gerar Imagens</span>
+                        <span class="rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 text-xs text-green-400">✓ Auto Hashtags</span>
+                        <span class="rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 text-xs text-green-400">✓ Incluir CTA</span>
+                        <span class="rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 text-xs text-green-400">✓ Incluir Emojis</span>
+                    </div>
+
+                    <p class="text-xs text-gray-500 mt-4">
+                        Após criar a marca, você poderá personalizar essas configurações no Content Engine.
+                    </p>
                 </div>
 
                 <!-- Assets (disponivel apos criar) -->

@@ -198,6 +198,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/generate-variations', [ContentEngineV2Controller::class, 'generateVariations'])->name('generate-variations');
             Route::get('/preset-commands', [ContentEngineV2Controller::class, 'getPresetCommands'])->name('preset-commands');
 
+            // Gerenciamento de Campanhas Geradas
+            Route::get('/campaigns-history', [ContentEngineV2Controller::class, 'getCampaignHistory'])->name('campaigns-history');
+            Route::post('/campaigns/{campaign}/reject', [ContentEngineV2Controller::class, 'rejectCampaign'])->name('campaigns.reject');
+            Route::delete('/campaigns/{campaign}', [ContentEngineV2Controller::class, 'deleteCampaign'])->name('campaigns.destroy');
+            Route::post('/campaigns/{campaign}/restore', [ContentEngineV2Controller::class, 'restoreCampaign'])->name('campaigns.restore');
+
+            // Configurações da Marca para Content Engine
+            Route::get('/brand-config', [ContentEngineV2Controller::class, 'getBrandConfig'])->name('brand-config');
+            Route::put('/brand-config', [ContentEngineV2Controller::class, 'updateBrandConfig'])->name('brand-config.update');
+
             // Pautas (Legacy - mantidas para compatibilidade)
             Route::get('/rules', [ContentRuleController::class, 'index'])->name('rules');
             Route::post('/rules', [ContentRuleController::class, 'store'])->name('rules.store');

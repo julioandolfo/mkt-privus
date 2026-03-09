@@ -6,6 +6,7 @@ use App\Enums\PostStatus;
 use App\Enums\PostType;
 use App\Enums\PlatformType;
 use App\Models\Brand;
+use App\Models\CampaignGenerated;
 use App\Models\Post;
 use App\Models\PostMedia;
 use App\Services\Social\BrandDNAAnalyzerService;
@@ -45,6 +46,8 @@ class ContentEngineV2Controller extends Controller
                 'hasAnalysis' => false,
                 'campaigns' => [],
                 'presetCommands' => [],
+                'campaignHistory' => [],
+                'brandConfig' => [],
             ]);
         }
 
@@ -52,8 +55,15 @@ class ContentEngineV2Controller extends Controller
         $hasAnalysis = $this->brandAnalyzer->hasCompleteAnalysis($brand);
         $brandDna = $this->brandAnalyzer->getCachedAnalysis($brand);
 
-        // Obtém campanhas recentes
-        $recentCampaigns = $this->campaignGenerator->getRecentIdeas($brand);
+        // Obtém campanhas recentes do banco (histórico)
+        $campaignHistory = $brand->campaignsGenerated()
+            ->notDeleted()
+            ->limit(20)
+            ->get()
+            ->map(fn($c) => $this->formatCampaignForDisplay($c));
+
+        // Configurações da marca
+        $brandConfig = $brand->getContentEngineConfig();
 
         return Inertia::render('Social/ContentEngineV2/Index', [
             'brand' => [
@@ -64,9 +74,36 @@ class ContentEngineV2Controller extends Controller
             ],
             'brandDna' => $brandDna,
             'hasAnalysis' => $hasAnalysis,
-            'recentCampaigns' => $recentCampaigns,
+            'campaignHistory' => $campaignHistory,
+            'brandConfig' => $brandConfig,
             'presetCommands' => $this->editor->getPresetCommands(),
         ]);
+    }
+
+    /**
+     * Formata campanha do banco para exibição
+     */
+    private function formatCampaignForDisplay(CampaignGenerated $campaign): array
+    {
+        return [
+            'db_id' => $campaign->id,
+            'name' => $campaign->name,
+            'concept' => $campaign->concept,
+            'objective' => $campaign->objective,
+            'platforms' => $campaign->platforms,
+            'format' => $campaign->format,
+            'posts' => $campaign->posts_data,
+            'status' => $campaign->status,
+            'status_label' => $campaign->statusLabel(),
+            'status_color' => $campaign->statusColor(),
+            'created_at' => $campaign->created_at->format('d/m/Y H:i'),
+            'rejection_reason' => $campaign->rejection_reason,
+            'converted_posts' => $campaign->converted_posts,
+            'metadata' => $campaign->metadata,
+            'can_delete' => $campaign->canDelete(),
+            'can_reject' => $campaign->canReject(),
+            'can_convert' => $campaign->canConvert(),
+        ];
     }
 
     /**
@@ -302,6 +339,202 @@ class ContentEngineV2Controller extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Lista histórico de campanhas geradas
+     */
+    public function getCampaignHistory(Request $request): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+
+        if (!$brand) {
+            return response()->json(['error' => 'Selecione uma marca'], 400);
+        }
+
+        $validated = $request->validate([
+            'status' => 'nullable|string|in:active,rejected,converted,all',
+            'limit' => 'nullable|integer|min:1|max:50',
+        ]);
+
+        $query = $brand->campaignsGenerated();
+
+        // Filtra por status
+        if ($validated['status'] ?? null) {
+            if ($validated['status'] === 'all') {
+                $query->notDeleted();
+            } else {
+                $query->where('status', $validated['status']);
+            }
+        } else {
+            $query->notDeleted();
+        }
+
+        $campaigns = $query->limit($validated['limit'] ?? 20)
+            ->get()
+            ->map(fn($c) => $this->formatCampaignForDisplay($c));
+
+        return response()->json([
+            'success' => true,
+            'campaigns' => $campaigns,
+            'count' => $campaigns->count(),
+        ]);
+    }
+
+    /**
+     * Rejeita uma campanha gerada
+     */
+    public function rejectCampaign(Request $request, CampaignGenerated $campaign): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+
+        if (!$brand || $campaign->brand_id !== $brand->id) {
+            return response()->json(['error' => 'Acesso negado'], 403);
+        }
+
+        if (!$campaign->canReject()) {
+            return response()->json(['error' => 'Esta campanha não pode ser rejeitada'], 400);
+        }
+
+        $validated = $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        try {
+            $campaign->reject($validated['reason'] ?? null);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Campanha rejeitada',
+                'campaign' => $this->formatCampaignForDisplay($campaign->fresh()),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Deleta (soft delete) uma campanha gerada
+     */
+    public function deleteCampaign(Request $request, CampaignGenerated $campaign): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+
+        if (!$brand || $campaign->brand_id !== $brand->id) {
+            return response()->json(['error' => 'Acesso negado'], 403);
+        }
+
+        if (!$campaign->canDelete()) {
+            return response()->json(['error' => 'Esta campanha não pode ser excluída'], 400);
+        }
+
+        try {
+            $campaign->softDelete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Campanha excluída',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Restaura uma campanha deletada
+     */
+    public function restoreCampaign(Request $request, CampaignGenerated $campaign): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+
+        if (!$brand || $campaign->brand_id !== $brand->id) {
+            return response()->json(['error' => 'Acesso negado'], 403);
+        }
+
+        if ($campaign->status !== 'deleted') {
+            return response()->json(['error' => 'Apenas campanhas excluídas podem ser restauradas'], 400);
+        }
+
+        try {
+            $campaign->restore();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Campanha restaurada',
+                'campaign' => $this->formatCampaignForDisplay($campaign->fresh()),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Atualiza configurações de Content Engine da marca
+     */
+    public function updateBrandConfig(Request $request): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+
+        if (!$brand) {
+            return response()->json(['error' => 'Selecione uma marca'], 400);
+        }
+
+        $validated = $request->validate([
+            'posts_per_campaign' => 'nullable|integer|min:1|max:10',
+            'campaigns_per_generation' => 'nullable|integer|min:1|max:10',
+            'generate_images' => 'nullable|boolean',
+            'auto_hashtags' => 'nullable|boolean',
+            'caption_style' => 'nullable|string|in:short,medium,long',
+            'preferred_platforms' => 'nullable|array',
+            'preferred_platforms.*' => 'string|in:instagram,facebook,linkedin,tiktok,youtube,pinterest,twitter',
+            'content_tone_override' => 'nullable|string|max:50',
+            'include_cta' => 'nullable|boolean',
+            'include_emojis' => 'nullable|boolean',
+            'hashtag_count' => 'nullable|integer|min:3|max:20',
+            'post_types' => 'nullable|array',
+            'post_types.*' => 'string|in:feed,story,reel,carousel,video',
+        ]);
+
+        try {
+            $brand->updateContentEngineConfig($validated);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Configurações atualizadas',
+                'config' => $brand->getContentEngineConfig(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Retorna configurações de Content Engine da marca
+     */
+    public function getBrandConfig(Request $request): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+
+        if (!$brand) {
+            return response()->json(['error' => 'Selecione uma marca'], 400);
+        }
+
+        return response()->json([
+            'success' => true,
+            'config' => $brand->getContentEngineConfig(),
+        ]);
     }
 
     /**

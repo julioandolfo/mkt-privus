@@ -24,16 +24,21 @@ class CampaignIdeasGeneratorService
     ) {}
 
     /**
-     * Gera ideias de campanha para a marca
+     * Gera ideias de campanha para a marca baseado nas configurações
      *
      * @param Brand $brand Marca a gerar campanhas
      * @param string|null $theme Tema opcional (ex: "Black Friday", "Lançamento")
-     * @param int $count Quantidade de ideias (3-10)
+     * @param int|null $count Quantidade de ideias (usa config da marca se null)
      * @return array Ideias de campanha completas
      */
-    public function generateCampaignIdeas(Brand $brand, ?string $theme = null, int $count = 5): array
+    public function generateCampaignIdeas(Brand $brand, ?string $theme = null, ?int $count = null): array
     {
-        $cacheKey = "campaign_ideas:{$brand->id}:" . md5($theme ?? 'general') . ":{$count}";
+        // Obtém configurações da marca
+        $config = $brand->getContentEngineConfig();
+        $count = $count ?? $config['campaigns_per_generation'] ?? 5;
+        $postsPerCampaign = $config['posts_per_campaign'] ?? 3;
+
+        $cacheKey = "campaign_ideas:{$brand->id}:" . md5($theme ?? 'general') . ":{$count}:{$postsPerCampaign}";
 
         // Verifica cache
         if ($cached = Cache::get($cacheKey)) {
@@ -41,20 +46,23 @@ class CampaignIdeasGeneratorService
         }
 
         try {
-            // 1. Obtém Brand DNA
+            // 1. Obtém Brand DNA (inclui análise de dados sociais)
             $brandDNA = $this->brandAnalyzer->analyzeBrandFromWebsite($brand);
 
-            // 2. Gera campanhas via IA
-            $campaigns = $this->generateWithAI($brand, $brandDNA, $theme, $count);
+            // 2. Gera campanhas via IA com configurações da marca
+            $campaigns = $this->generateWithAI($brand, $brandDNA, $theme, $count, $postsPerCampaign, $config);
 
             // 3. Enriquece com metadados (incluindo dados sociais)
             $socialData = $brandDNA['social_data'] ?? [];
             $enriched = $this->enrichCampaigns($campaigns, $brand, $socialData);
 
-            // 4. Salva no cache
-            Cache::put($cacheKey, $enriched, self::CACHE_TTL);
+            // 4. Salva as campanhas geradas no histórico
+            $savedCampaigns = $this->saveCampaignsToHistory($enriched, $brand, $config);
 
-            return $enriched;
+            // 5. Salva no cache
+            Cache::put($cacheKey, $savedCampaigns, self::CACHE_TTL);
+
+            return $savedCampaigns;
         } catch (\Exception $e) {
             Log::error("Campaign generation failed for brand {$brand->id}: {$e->getMessage()}", [
                 'brand_id' => $brand->id,
@@ -64,6 +72,42 @@ class CampaignIdeasGeneratorService
 
             return $this->getFallbackCampaigns($brand, $theme, $count);
         }
+    }
+
+    /**
+     * Salva campanhas geradas no histórico
+     */
+    private function saveCampaignsToHistory(array $campaigns, Brand $brand, array $config): array
+    {
+        $saved = [];
+        $userId = auth()->id();
+
+        foreach ($campaigns as $campaign) {
+            $record = CampaignGenerated::create([
+                'brand_id' => $brand->id,
+                'user_id' => $userId,
+                'name' => $campaign['name'],
+                'concept' => $campaign['concept'],
+                'objective' => $campaign['objective'],
+                'platforms' => $campaign['platforms'],
+                'format' => $campaign['format'],
+                'posts_data' => $campaign['posts'] ?? [],
+                'metadata' => [
+                    'config_used' => $config,
+                    'suggested_times' => $campaign['suggested_times'] ?? [],
+                    'social_context' => $campaign['social_context'] ?? null,
+                    'effort_level' => $campaign['effort_level'] ?? 'medium',
+                ],
+                'status' => 'active',
+            ]);
+
+            // Adiciona ID do banco à campanha
+            $campaign['db_id'] = $record->id;
+            $campaign['created_at'] = $record->created_at->format('d/m/Y H:i');
+            $saved[] = $campaign;
+        }
+
+        return $saved;
     }
 
     /**
@@ -182,11 +226,11 @@ PROMPT;
     }
 
     /**
-     * Gera campanhas usando IA
+     * Gera campanhas usando IA com configurações da marca
      */
-    private function generateWithAI(Brand $brand, array $brandDNA, ?string $theme, int $count): array
+    private function generateWithAI(Brand $brand, array $brandDNA, ?string $theme, int $count, int $postsPerCampaign, array $config): array
     {
-        $prompt = $this->buildCampaignPrompt($brand, $brandDNA, $theme, $count);
+        $prompt = $this->buildCampaignPrompt($brand, $brandDNA, $theme, $count, $postsPerCampaign, $config);
 
         $response = $this->aiGateway->chat(
             model: AIModel::GeminiPro,
@@ -195,11 +239,12 @@ PROMPT;
             feature: 'campaign_ideas_generation',
             options: [
                 'temperature' => 0.8,
-                'max_tokens' => 3500,
+                'max_tokens' => 4000,
             ]
         );
 
-        $result = json_decode($response['content'], true);
+        $cleanContent = $this->cleanJsonResponse($response['content'] ?? '');
+        $result = json_decode($cleanContent, true);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             Log::warning("Failed to parse campaign JSON for brand {$brand->id}");
@@ -210,9 +255,21 @@ PROMPT;
     }
 
     /**
-     * Constrói prompt de geração de campanhas
+     * Limpa a resposta da IA removendo markdown code blocks
      */
-    private function buildCampaignPrompt(Brand $brand, array $dna, ?string $theme, int $count): string
+    private function cleanJsonResponse(string $content): string
+    {
+        $content = preg_replace('/^```json\s*/i', '', $content);
+        $content = preg_replace('/^```\s*/', '', $content);
+        $content = preg_replace('/\s*```$/', '', $content);
+        $content = preg_replace('/\s*```\s*$/', '', $content);
+        return trim($content);
+    }
+
+    /**
+     * Constrói prompt de geração de campanhas com configurações da marca
+     */
+    private function buildCampaignPrompt(Brand $brand, array $dna, ?string $theme, int $count, int $postsPerCampaign, array $config): string
     {
         $themeHint = $theme
             ? "FOQUE ESPECIFICAMENTE NO TEMA: {$theme}. Todas as campanhas devem relacionar-se com este tema."
@@ -223,6 +280,19 @@ PROMPT;
         $target = $dna['target_audience_analysis'] ?? [];
         $strategy = $dna['content_strategy_hints'] ?? [];
         $socialData = $dna['social_data'] ?? [];
+
+        // Configurações da marca
+        $captionStyle = $config['caption_style'] ?? 'medium';
+        $includeCta = $config['include_cta'] ?? true ? 'SIM' : 'NÃO';
+        $includeEmojis = $config['include_emojis'] ?? true ? 'SIM' : 'NÃO';
+        $generateImages = $config['generate_images'] ?? true ? 'SIM' : 'NÃO';
+        $hashtagCount = $config['hashtag_count'] ?? 8;
+        $preferredPlatforms = !empty($config['preferred_platforms']) ? implode(', ', $config['preferred_platforms']) : 'Todas as plataformas disponíveis';
+        $preferredTypes = !empty($config['post_types']) ? implode(', ', $config['post_types']) : 'feed, carousel, story, reel';
+        $toneOverride = $config['content_tone_override'] ?? null;
+
+        // Usa tom override se configurado
+        $toneDescription = $toneOverride ?? ($voiceTone['tone'] ?? 'profissional');
 
         // Prepara contexto de dados sociais
         $socialContext = '';
@@ -264,7 +334,7 @@ Nome: {$brand->name}
 Segmento: {$dna['segment']}
 
 VOZ E PERSONALIDADE:
-- Tom: {$voiceTone['tone']}
+- Tom: {$toneDescription}
 - Personalidade: {$voiceTone['personality']}
 - Estilo: {$voiceTone['communication_style']}
 - Formalidade: {$voiceTone['formality_level']}
@@ -283,6 +353,15 @@ ESTRATÉGIA RECOMENDADA:
 - Pilares de conteúdo: {$this->arrayToString($strategy['content_pillars'] ?? [])}
 {$socialContext}
 
+=== CONFIGURAÇÕES DA MARCA ===
+Plataformas preferidas: {$preferredPlatforms}
+Tipos de post preferidos: {$preferredTypes}
+Estilo da legenda: {$captionStyle} (short=até 100 chars, medium=100-300, long=300+)
+Incluir CTA: {$includeCta}
+Incluir Emojis: {$includeEmojis}
+Gerar descrições de imagens: {$generateImages}
+Quantidade de hashtags sugerida: {$hashtagCount}
+
 {$themeHint}
 
 === REQUISITOS DAS CAMPANHAS ===
@@ -291,16 +370,19 @@ Para CADA campanha, forneça:
 1. NOME memorável e criativo (máx 40 caracteres)
 2. CONCEITO em 2-3 frases persuasivas
 3. OBJETIVO claro: awareness | engajamento | conversão | fidelização
-4. PLATAFORMAS recomendadas (de Instagram, Facebook, LinkedIn, TikTok, YouTube, Pinterest)
-5. FORMATO principal: feed | story | reel | carousel | video
-6. 3 VARIAÇÕES de posts, cada uma com:
+4. PLATAFORMAS recomendadas (de Instagram, Facebook, LinkedIn, TikTok, YouTube, Pinterest) - respeitando as preferências da marca
+5. FORMATO principal: feed | story | reel | carousel | video - respeitando os tipos preferidos
+6. {$postsPerCampaign} VARIAÇÕES de posts, cada uma com:
    - ÂNGULO: Perspectiva única (ex: "por trás das câmeras", "depoimento de cliente", "dica prática")
    - HOOK: Primeira frase de impacto (atenção imediata)
-   - CTA: Call-to-action específico
-   - DESCRIÇÃO VISUAL: Sugestão do que mostrar na imagem/vídeo
+   - LEGENDA COMPLETA: Texto completo da legenda no estilo {$captionStyle}
+   - HASHTAGS: {$hashtagCount} hashtags relevantes
+   - CTA: Call-to-action específico (se configurado)
+   - DESCRIÇÃO VISUAL: Sugestão detalhada da imagem/vídeo (se configurado)
 
 === VARIEDADE E CRIATIVIDADE ===
 - Cada campanha deve ser DIFERENTE das outras
+- Respeite as configurações de estilo da marca
 - Misture formatos (educativo, emocional, promocional, entretenimento)
 - Considere sazonalidade e datas relevantes
 - Inclua pelo menos uma campanha "ousada" ou inovadora
@@ -317,21 +399,22 @@ Retorne APENAS este JSON:
       "platforms": ["instagram", "facebook"],
       "format": "carousel",
       "duration": "sugestão de duração (ex: 1 semana, mês de março)",
-      "kpis": [" métricas sugeridas"],
+      "kpis": ["métricas sugeridas"],
       "posts": [
         {
           "angle": "Ângulo único",
           "hook": "Primeira frase impactante",
-          "cta": "Ação que o usuário deve tomar",
-          "visual_description": "Descrição detalhada da imagem/vídeo sugerido",
-          "caption_length": "short|medium|long"
+          "caption": "Legenda completa no estilo configurado...",
+          "hashtags": ["hashtag1", "hashtag2", "..."],
+          "cta": "Call-to-action",
+          "visual_description": "Descrição detalhada da imagem/vídeo sugerido"
         }
       ]
     }
   ]
 }
 
-IMPORTANTE: Gere EXATAMENTE {$count} campanhas de alta qualidade, criativas e acionáveis.
+IMPORTANTE: Gere EXATAMENTE {$count} campanhas com EXATAMENTE {$postsPerCampaign} posts cada, respeitando todas as configurações da marca.
 PROMPT;
     }
 

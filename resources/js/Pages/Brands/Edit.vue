@@ -52,6 +52,16 @@ interface Brand {
     accent_color: string | null;
     keywords: string[] | null;
     ai_context: string | null;
+    content_engine_config: {
+        posts_per_campaign?: number;
+        campaigns_per_generation?: number;
+        caption_style?: string;
+        hashtag_count?: number;
+        generate_images?: boolean;
+        auto_hashtags?: boolean;
+        include_cta?: boolean;
+        include_emojis?: boolean;
+    } | null;
     assets: BrandAsset[];
 }
 
@@ -498,6 +508,59 @@ const urlTypeOptions = [
                     <p class="text-sm text-gray-500 mb-4">Informações adicionais que serão enviadas como contexto quando a IA gerar conteúdo para esta marca.</p>
                     <textarea id="ai_context" v-model="form.ai_context" rows="4" class="block w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" placeholder="Ex: Nossa empresa atua no mercado desde 2010, focamos em soluções sustentáveis..." />
                     <InputError :message="form.errors.ai_context" class="mt-2" />
+                </div>
+
+                <!-- Configurações do Content Engine -->
+                <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-lg font-semibold text-white">Configurações do Content Engine</h2>
+                            <p class="text-sm text-gray-500">Personalize como o Content Engine gera campanhas para esta marca</p>
+                        </div>
+                        <Link :href="route('social.content-engine.index')" class="text-sm text-purple-400 hover:text-purple-300">
+                            Abrir Content Engine →
+                        </Link>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                        <div class="p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                            <p class="text-xs text-gray-500 mb-1">Posts por Campanha</p>
+                            <p class="text-sm font-medium text-white">{{ brand.content_engine_config?.posts_per_campaign ?? 3 }}</p>
+                        </div>
+                        <div class="p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                            <p class="text-xs text-gray-500 mb-1">Campanhas por Geração</p>
+                            <p class="text-sm font-medium text-white">{{ brand.content_engine_config?.campaigns_per_generation ?? 5 }}</p>
+                        </div>
+                        <div class="p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                            <p class="text-xs text-gray-500 mb-1">Estilo da Legenda</p>
+                            <p class="text-sm font-medium text-white capitalize">{{ brand.content_engine_config?.caption_style ?? 'medium' }}</p>
+                        </div>
+                        <div class="p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                            <p class="text-xs text-gray-500 mb-1">Hashtags</p>
+                            <p class="text-sm font-medium text-white">{{ brand.content_engine_config?.hashtag_count ?? 8 }}</p>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2">
+                        <span v-if="brand.content_engine_config?.generate_images ?? true" class="rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 text-xs text-green-400">
+                            ✓ Gerar Imagens
+                        </span>
+                        <span v-if="brand.content_engine_config?.auto_hashtags ?? true" class="rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 text-xs text-green-400">
+                            ✓ Auto Hashtags
+                        </span>
+                        <span v-if="brand.content_engine_config?.include_cta ?? true" class="rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 text-xs text-green-400">
+                            ✓ Incluir CTA
+                        </span>
+                        <span v-if="brand.content_engine_config?.include_emojis ?? true" class="rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 text-xs text-green-400">
+                            ✓ Incluir Emojis
+                        </span>
+                    </div>
+
+                    <div class="mt-4 p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                        <p class="text-xs text-purple-400">
+                            <strong>Dica:</strong> Para editar essas configurações, acesse o Content Engine e vá na aba "Configurações"
+                        </p>
+                    </div>
                 </div>
 
                 <!-- Preview -->

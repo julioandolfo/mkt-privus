@@ -52,6 +52,7 @@ interface Post {
 
 interface Campaign {
     id: string;
+    db_id?: number;
     name: string;
     concept: string;
     objective: string;
@@ -63,13 +64,37 @@ interface Campaign {
     effort_level?: string;
     suggested_times?: Record<string, string[]>;
     _generated_at?: string;
+    created_at?: string;
+    status?: string;
+    status_label?: string;
+    status_color?: string;
+    rejection_reason?: string | null;
+    can_delete?: boolean;
+    can_reject?: boolean;
+    can_convert?: boolean;
+}
+
+interface BrandConfig {
+    posts_per_campaign: number;
+    campaigns_per_generation: number;
+    generate_images: boolean;
+    auto_hashtags: boolean;
+    caption_style: 'short' | 'medium' | 'long';
+    preferred_platforms: string[];
+    content_tone_override: string | null;
+    include_cta: boolean;
+    include_emojis: boolean;
+    hashtag_count: number;
+    post_types: string[];
+    best_times_source: string;
 }
 
 interface Props {
     brand: Brand | null;
     brandDna: BrandDna | null;
     hasAnalysis: boolean;
-    recentCampaigns: Campaign[];
+    campaignHistory: Campaign[];
+    brandConfig: BrandConfig;
     presetCommands: Record<string, { command: string; description: string }>;
 }
 
@@ -78,7 +103,7 @@ const page = usePage();
 const currentBrand = computed(() => page.props.currentBrand);
 
 // Estado
-const activeTab = ref<'campaigns' | 'editor' | 'dna'>('campaigns');
+const activeTab = ref<'campaigns' | 'history' | 'editor' | 'dna' | 'config'>('campaigns');
 const analyzing = ref(false);
 const analysisStatus = ref('');
 const generatingCampaigns = ref(false);
@@ -87,6 +112,11 @@ const selectedCampaign = ref<Campaign | null>(null);
 const campaignTheme = ref('');
 const userIdea = ref('');
 const generatingFromIdea = ref(false);
+const loadingHistory = ref(false);
+const historyFilter = ref('all');
+const showRejectionModal = ref(false);
+const rejectionReason = ref('');
+const campaignToReject = ref<Campaign | null>(null);
 
 // Editor Natural
 const contentToEdit = ref('');
@@ -100,6 +130,10 @@ const editingResult = ref<{
 } | null>(null);
 const applyingEdit = ref(false);
 const selectedPlatform = ref('instagram');
+
+// Configurações
+const configForm = ref<BrandConfig>({ ...props.brandConfig });
+const savingConfig = ref(false);
 
 // Plataformas
 const platformLabels: Record<string, string> = {
@@ -287,6 +321,113 @@ function getEffortLabel(level?: string): string {
     };
     return labels[level || 'low'] || level || 'Baixo';
 }
+
+function getStatusColor(status?: string): string {
+    const colors: Record<string, string> = {
+        active: 'bg-green-500/20 text-green-400 border-green-500/30',
+        rejected: 'bg-red-500/20 text-red-400 border-red-500/30',
+        converted: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+        deleted: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+    };
+    return colors[status || 'active'] || 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+}
+
+function getStatusLabel(status?: string): string {
+    const labels: Record<string, string> = {
+        active: 'Ativa',
+        rejected: 'Rejeitada',
+        converted: 'Convertida',
+        deleted: 'Excluída',
+    };
+    return labels[status || 'active'] || status || 'Desconhecido';
+}
+
+// Histórico de Campanhas
+async function loadCampaignHistory() {
+    loadingHistory.value = true;
+    try {
+        const response = await axios.get(route('social.content-engine.campaigns-history'), {
+            params: { status: historyFilter.value, limit: 20 }
+        });
+        if (response.data.success) {
+            // Atualiza o histórico (o controller já passa na prop, mas podemos recarregar)
+            router.reload({ only: ['campaignHistory'] });
+        }
+    } catch (error) {
+        console.error('Erro ao carregar histórico:', error);
+    } finally {
+        loadingHistory.value = false;
+    }
+}
+
+async function deleteCampaign(campaign: Campaign) {
+    if (!confirm(`Tem certeza que deseja excluir a campanha "${campaign.name}"?`)) {
+        return;
+    }
+
+    if (!campaign.db_id) {
+        // Campanha ainda não salva no banco (está apenas no cache)
+        campaigns.value = campaigns.value.filter(c => c.id !== campaign.id);
+        return;
+    }
+
+    try {
+        await axios.delete(route('social.content-engine.campaigns.destroy', campaign.db_id));
+        router.reload({ only: ['campaignHistory'] });
+    } catch (error) {
+        console.error('Erro ao excluir campanha:', error);
+        alert('Erro ao excluir campanha');
+    }
+}
+
+function startRejectCampaign(campaign: Campaign) {
+    campaignToReject.value = campaign;
+    rejectionReason.value = '';
+    showRejectionModal.value = true;
+}
+
+async function confirmRejectCampaign() {
+    if (!campaignToReject.value?.db_id) return;
+
+    try {
+        await axios.post(route('social.content-engine.campaigns.reject', campaignToReject.value.db_id), {
+            reason: rejectionReason.value
+        });
+        showRejectionModal.value = false;
+        campaignToReject.value = null;
+        router.reload({ only: ['campaignHistory'] });
+    } catch (error) {
+        console.error('Erro ao rejeitar campanha:', error);
+        alert('Erro ao rejeitar campanha');
+    }
+}
+
+async function restoreCampaign(campaign: Campaign) {
+    if (!campaign.db_id) return;
+
+    try {
+        await axios.post(route('social.content-engine.campaigns.restore', campaign.db_id));
+        router.reload({ only: ['campaignHistory'] });
+    } catch (error) {
+        console.error('Erro ao restaurar campanha:', error);
+        alert('Erro ao restaurar campanha');
+    }
+}
+
+// Configurações
+async function saveBrandConfig() {
+    savingConfig.value = true;
+    try {
+        await axios.put(route('social.content-engine.brand-config.update'), configForm.value);
+        router.reload({ only: ['brandConfig'] });
+        alert('Configurações salvas com sucesso!');
+    } catch (error) {
+        console.error('Erro ao salvar configurações:', error);
+        alert('Erro ao salvar configurações');
+    } finally {
+        savingConfig.value = false;
+    }
+}
 </script>
 
 <template>
@@ -406,19 +547,31 @@ function getEffortLabel(level?: string): string {
                     @click="activeTab = 'campaigns'"
                     :class="['px-4 py-3 text-sm font-medium border-b-2 transition', activeTab === 'campaigns' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-400 hover:text-gray-300']"
                 >
-                    Gerador de Campanhas
+                    Gerador
+                </button>
+                <button
+                    @click="activeTab = 'history'"
+                    :class="['px-4 py-3 text-sm font-medium border-b-2 transition', activeTab === 'history' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-400 hover:text-gray-300']"
+                >
+                    Histórico
                 </button>
                 <button
                     @click="activeTab = 'editor'"
                     :class="['px-4 py-3 text-sm font-medium border-b-2 transition', activeTab === 'editor' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-400 hover:text-gray-300']"
                 >
-                    Editor Natural
+                    Editor
                 </button>
                 <button
                     @click="activeTab = 'dna'"
                     :class="['px-4 py-3 text-sm font-medium border-b-2 transition', activeTab === 'dna' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-400 hover:text-gray-300']"
                 >
                     Brand DNA
+                </button>
+                <button
+                    @click="activeTab = 'config'"
+                    :class="['px-4 py-3 text-sm font-medium border-b-2 transition', activeTab === 'config' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-400 hover:text-gray-300']"
+                >
+                    Configurações
                 </button>
             </div>
 
@@ -516,6 +669,96 @@ function getEffortLabel(level?: string): string {
                                 <p class="text-xs text-gray-500">{{ group.campaigns?.length || 0 }} campanhas geradas</p>
                             </div>
                             <button class="text-xs text-purple-400 hover:text-purple-300">Ver detalhes</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: Histórico de Campanhas -->
+            <div v-if="activeTab === 'history'" class="space-y-6">
+                <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                    <div class="flex items-center justify-between mb-6">
+                        <h3 class="text-lg font-medium text-white">Histórico de Campanhas</h3>
+                        <select
+                            v-model="historyFilter"
+                            @change="loadCampaignHistory"
+                            class="rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-purple-500 focus:ring-purple-500"
+                        >
+                            <option value="all">Todas</option>
+                            <option value="active">Ativas</option>
+                            <option value="rejected">Rejeitadas</option>
+                            <option value="converted">Convertidas</option>
+                        </select>
+                    </div>
+
+                    <div v-if="loadingHistory" class="text-center py-8">
+                        <svg class="animate-spin h-8 w-8 text-purple-500 mx-auto" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <p class="text-sm text-gray-400 mt-2">Carregando...</p>
+                    </div>
+
+                    <div v-else-if="campaignHistory.length === 0" class="text-center py-8 text-gray-500">
+                        <p>Nenhuma campanha no histórico</p>
+                        <p class="text-sm mt-1">Gere campanhas na aba "Gerador"</p>
+                    </div>
+
+                    <div v-else class="space-y-4">
+                        <div
+                            v-for="campaign in campaignHistory"
+                            :key="campaign.db_id"
+                            class="p-4 bg-gray-800/50 rounded-xl border border-gray-700/50 hover:border-gray-600 transition"
+                        >
+                            <div class="flex items-start justify-between">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <h4 class="text-sm font-semibold text-white">{{ campaign.name }}</h4>
+                                        <span :class="['rounded-md border px-2 py-0.5 text-xs font-medium', getStatusColor(campaign.status)]">
+                                            {{ getStatusLabel(campaign.status) }}
+                                        </span>
+                                        <span :class="['rounded-md border px-2 py-0.5 text-xs font-medium', getObjectiveColor(campaign.objective)]">
+                                            {{ getObjectiveLabel(campaign.objective) }}
+                                        </span>
+                                    </div>
+                                    <p class="text-sm text-gray-400 line-clamp-2 mb-2">{{ campaign.concept }}</p>
+                                    <div class="flex items-center gap-4 text-xs text-gray-500">
+                                        <span>{{ campaign.created_at }}</span>
+                                        <span>{{ campaign.posts?.length || 0 }} posts</span>
+                                        <span v-if="campaign.rejection_reason" class="text-red-400">Motivo: {{ campaign.rejection_reason }}</span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2 ml-4">
+                                    <button
+                                        v-if="campaign.can_convert"
+                                        @click="selectCampaign(campaign)"
+                                        class="rounded-lg bg-purple-600/20 border border-purple-500/30 px-3 py-1.5 text-xs font-medium text-purple-400 hover:bg-purple-600/30 transition"
+                                    >
+                                        Ver / Criar Posts
+                                    </button>
+                                    <button
+                                        v-if="campaign.can_reject"
+                                        @click="startRejectCampaign(campaign)"
+                                        class="rounded-lg bg-red-600/20 border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-600/30 transition"
+                                    >
+                                        Rejeitar
+                                    </button>
+                                    <button
+                                        v-if="campaign.can_delete"
+                                        @click="deleteCampaign(campaign)"
+                                        class="rounded-lg bg-gray-700 border border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-600 transition"
+                                    >
+                                        Excluir
+                                    </button>
+                                    <button
+                                        v-if="campaign.status === 'deleted'"
+                                        @click="restoreCampaign(campaign)"
+                                        class="rounded-lg bg-green-600/20 border border-green-500/30 px-3 py-1.5 text-xs font-medium text-green-400 hover:bg-green-600/30 transition"
+                                    >
+                                        Restaurar
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -706,6 +949,212 @@ function getEffortLabel(level?: string): string {
                 </div>
             </div>
 
+            <!-- Tab: Configurações -->
+            <div v-if="activeTab === 'config'" class="space-y-6">
+                <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <h3 class="text-lg font-medium text-white">Configurações do Content Engine</h3>
+                            <p class="text-sm text-gray-400 mt-1">Personalize como as campanhas são geradas para esta marca</p>
+                        </div>
+                        <button
+                            @click="saveBrandConfig"
+                            :disabled="savingConfig"
+                            class="rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-50"
+                        >
+                            {{ savingConfig ? 'Salvando...' : 'Salvar Configurações' }}
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Quantidade de Posts -->
+                        <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700/50">
+                            <label class="block text-sm font-medium text-white mb-2">Posts por Campanha</label>
+                            <input
+                                v-model.number="configForm.posts_per_campaign"
+                                type="number"
+                                min="1"
+                                max="10"
+                                class="w-full rounded-lg bg-gray-700 border-gray-600 text-white"
+                            />
+                            <p class="text-xs text-gray-500 mt-1">Quantidade de posts gerados em cada campanha (1-10)</p>
+                        </div>
+
+                        <!-- Campanhas por Geração -->
+                        <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700/50">
+                            <label class="block text-sm font-medium text-white mb-2">Campanhas por Geração</label>
+                            <input
+                                v-model.number="configForm.campaigns_per_generation"
+                                type="number"
+                                min="1"
+                                max="10"
+                                class="w-full rounded-lg bg-gray-700 border-gray-600 text-white"
+                            />
+                            <p class="text-xs text-gray-500 mt-1">Quantidade de campanhas geradas de uma vez (1-10)</p>
+                        </div>
+
+                        <!-- Estilo da Legenda -->
+                        <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700/50">
+                            <label class="block text-sm font-medium text-white mb-2">Estilo da Legenda</label>
+                            <select
+                                v-model="configForm.caption_style"
+                                class="w-full rounded-lg bg-gray-700 border-gray-600 text-white"
+                            >
+                                <option value="short">Curta (até 100 caracteres)</option>
+                                <option value="medium">Média (100-300 caracteres)</option>
+                                <option value="long">Longa (300+ caracteres)</option>
+                            </select>
+                            <p class="text-xs text-gray-500 mt-1">Tamanho preferido das legendas</p>
+                        </div>
+
+                        <!-- Quantidade de Hashtags -->
+                        <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700/50">
+                            <label class="block text-sm font-medium text-white mb-2">Quantidade de Hashtags</label>
+                            <input
+                                v-model.number="configForm.hashtag_count"
+                                type="number"
+                                min="3"
+                                max="20"
+                                class="w-full rounded-lg bg-gray-700 border-gray-600 text-white"
+                            />
+                            <p class="text-xs text-gray-500 mt-1">Número de hashtags geradas (3-20)</p>
+                        </div>
+
+                        <!-- Plataformas Preferidas -->
+                        <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700/50">
+                            <label class="block text-sm font-medium text-white mb-2">Plataformas Preferidas</label>
+                            <div class="flex flex-wrap gap-2">
+                                <label v-for="(label, platform) in platformLabels" :key="platform" class="flex items-center gap-2 bg-gray-700 rounded-lg px-3 py-2 cursor-pointer hover:bg-gray-600">
+                                    <input
+                                        v-model="configForm.preferred_platforms"
+                                        :value="platform"
+                                        type="checkbox"
+                                        class="rounded border-gray-600 bg-gray-600 text-purple-600 focus:ring-purple-500"
+                                    />
+                                    <span class="text-sm text-gray-300">{{ label }}</span>
+                                </label>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Selecione nenhuma para usar todas</p>
+                        </div>
+
+                        <!-- Tipos de Post -->
+                        <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700/50">
+                            <label class="block text-sm font-medium text-white mb-2">Tipos de Post Preferidos</label>
+                            <div class="flex flex-wrap gap-2">
+                                <label class="flex items-center gap-2 bg-gray-700 rounded-lg px-3 py-2 cursor-pointer hover:bg-gray-600">
+                                    <input
+                                        v-model="configForm.post_types"
+                                        value="feed"
+                                        type="checkbox"
+                                        class="rounded border-gray-600 bg-gray-600 text-purple-600 focus:ring-purple-500"
+                                    />
+                                    <span class="text-sm text-gray-300">Feed</span>
+                                </label>
+                                <label class="flex items-center gap-2 bg-gray-700 rounded-lg px-3 py-2 cursor-pointer hover:bg-gray-600">
+                                    <input
+                                        v-model="configForm.post_types"
+                                        value="carousel"
+                                        type="checkbox"
+                                        class="rounded border-gray-600 bg-gray-600 text-purple-600 focus:ring-purple-500"
+                                    />
+                                    <span class="text-sm text-gray-300">Carousel</span>
+                                </label>
+                                <label class="flex items-center gap-2 bg-gray-700 rounded-lg px-3 py-2 cursor-pointer hover:bg-gray-600">
+                                    <input
+                                        v-model="configForm.post_types"
+                                        value="story"
+                                        type="checkbox"
+                                        class="rounded border-gray-600 bg-gray-600 text-purple-600 focus:ring-purple-500"
+                                    />
+                                    <span class="text-sm text-gray-300">Story</span>
+                                </label>
+                                <label class="flex items-center gap-2 bg-gray-700 rounded-lg px-3 py-2 cursor-pointer hover:bg-gray-600">
+                                    <input
+                                        v-model="configForm.post_types"
+                                        value="reel"
+                                        type="checkbox"
+                                        class="rounded border-gray-600 bg-gray-600 text-purple-600 focus:ring-purple-500"
+                                    />
+                                    <span class="text-sm text-gray-300">Reel</span>
+                                </label>
+                                <label class="flex items-center gap-2 bg-gray-700 rounded-lg px-3 py-2 cursor-pointer hover:bg-gray-600">
+                                    <input
+                                        v-model="configForm.post_types"
+                                        value="video"
+                                        type="checkbox"
+                                        class="rounded border-gray-600 bg-gray-600 text-purple-600 focus:ring-purple-500"
+                                    />
+                                    <span class="text-sm text-gray-300">Vídeo</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Opções Booleanas -->
+                    <div class="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <label class="flex items-center gap-3 p-4 bg-gray-800/50 rounded-xl border border-gray-700/50 cursor-pointer hover:bg-gray-800">
+                            <input
+                                v-model="configForm.generate_images"
+                                type="checkbox"
+                                class="rounded border-gray-600 bg-gray-600 text-purple-600 focus:ring-purple-500 h-5 w-5"
+                            />
+                            <div>
+                                <p class="text-sm font-medium text-white">Gerar Imagens</p>
+                                <p class="text-xs text-gray-500">Criar imagens automaticamente</p>
+                            </div>
+                        </label>
+
+                        <label class="flex items-center gap-3 p-4 bg-gray-800/50 rounded-xl border border-gray-700/50 cursor-pointer hover:bg-gray-800">
+                            <input
+                                v-model="configForm.auto_hashtags"
+                                type="checkbox"
+                                class="rounded border-gray-600 bg-gray-600 text-purple-600 focus:ring-purple-500 h-5 w-5"
+                            />
+                            <div>
+                                <p class="text-sm font-medium text-white">Auto Hashtags</p>
+                                <p class="text-xs text-gray-500">Gerar hashtags automaticamente</p>
+                            </div>
+                        </label>
+
+                        <label class="flex items-center gap-3 p-4 bg-gray-800/50 rounded-xl border border-gray-700/50 cursor-pointer hover:bg-gray-800">
+                            <input
+                                v-model="configForm.include_cta"
+                                type="checkbox"
+                                class="rounded border-gray-600 bg-gray-600 text-purple-600 focus:ring-purple-500 h-5 w-5"
+                            />
+                            <div>
+                                <p class="text-sm font-medium text-white">Incluir CTA</p>
+                                <p class="text-xs text-gray-500">Adicionar call-to-action</p>
+                            </div>
+                        </label>
+
+                        <label class="flex items-center gap-3 p-4 bg-gray-800/50 rounded-xl border border-gray-700/50 cursor-pointer hover:bg-gray-800">
+                            <input
+                                v-model="configForm.include_emojis"
+                                type="checkbox"
+                                class="rounded border-gray-600 bg-gray-600 text-purple-600 focus:ring-purple-500 h-5 w-5"
+                            />
+                            <div>
+                                <p class="text-sm font-medium text-white">Incluir Emojis</p>
+                                <p class="text-xs text-gray-500">Usar emojis nas legendas</p>
+                            </div>
+                        </label>
+                    </div>
+
+                    <!-- Override do Tom de Voz -->
+                    <div class="mt-6 p-4 bg-gray-800/50 rounded-xl border border-gray-700/50">
+                        <label class="block text-sm font-medium text-white mb-2">Override do Tom de Voz (opcional)</label>
+                        <input
+                            v-model="configForm.content_tone_override"
+                            type="text"
+                            placeholder="Deixe em branco para usar o tom da marca"
+                            class="w-full rounded-lg bg-gray-700 border-gray-600 text-white"
+                        />
+                        <p class="text-xs text-gray-500 mt-1">Ex: "mais descontraído", "técnico", "luxuoso"</p>
+                    </div>
+                </div>
+            </div>
+
             <!-- Modal: Detalhe da Campanha -->
             <div v-if="selectedCampaign" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" @click.self="closeCampaignDetail">
                 <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -785,6 +1234,39 @@ function getEffortLabel(level?: string): string {
                                 Fechar
                             </button>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal: Rejeitar Campanha -->
+            <div v-if="showRejectionModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" @click.self="showRejectionModal = false">
+                <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md p-6">
+                    <h3 class="text-lg font-semibold text-white mb-4">Rejeitar Campanha</h3>
+                    <p class="text-sm text-gray-400 mb-4">{{ campaignToReject?.name }}</p>
+                    
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-400 mb-2">Motivo (opcional)</label>
+                        <textarea
+                            v-model="rejectionReason"
+                            rows="3"
+                            placeholder="Por que está rejeitando esta campanha?"
+                            class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-red-500 focus:ring-red-500"
+                        ></textarea>
+                    </div>
+
+                    <div class="flex gap-3">
+                        <button
+                            @click="confirmRejectCampaign"
+                            class="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 transition"
+                        >
+                            Confirmar Rejeição
+                        </button>
+                        <button
+                            @click="showRejectionModal = false"
+                            class="rounded-xl bg-gray-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-600 transition"
+                        >
+                            Cancelar
+                        </button>
                     </div>
                 </div>
             </div>

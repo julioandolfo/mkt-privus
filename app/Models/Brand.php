@@ -29,12 +29,15 @@ class Brand extends Model
         'font_family',
         'keywords',
         'ai_context',
+        'content_engine_config',
         'is_active',
     ];
 
     protected $casts = [
         'keywords' => 'array',
         'urls' => 'array',
+        'ai_context' => 'array',
+        'content_engine_config' => 'array',
         'is_active' => 'boolean',
     ];
 
@@ -105,6 +108,11 @@ class Brand extends Model
     public function calendarItems(): HasMany
     {
         return $this->hasMany(ContentCalendarItem::class);
+    }
+
+    public function campaignsGenerated(): HasMany
+    {
+        return $this->hasMany(CampaignGenerated::class)->orderByDesc('created_at');
     }
 
     // ===== METHODS =====
@@ -296,5 +304,39 @@ class Brand extends Model
         }
 
         return BrandRole::from($pivot->role)->canEdit();
+    }
+
+    /**
+     * Retorna configurações de Content Engine com valores padrão
+     */
+    public function getContentEngineConfig(): array
+    {
+        $config = $this->content_engine_config ?? [];
+
+        return array_merge([
+            'posts_per_campaign' => 3,              // Quantidade de posts por campanha
+            'campaigns_per_generation' => 5,    // Quantidade de campanhas geradas por vez
+            'generate_images' => true,             // Gerar imagens automaticamente
+            'auto_hashtags' => true,               // Gerar hashtags automaticamente
+            'caption_style' => 'medium',           // Estilo da legenda: short, medium, long
+            'preferred_platforms' => [],             // Plataformas preferidas (vazio = todas)
+            'content_tone_override' => null,       // Override do tom de voz (null = usar da marca)
+            'include_cta' => true,                 // Incluir call-to-action
+            'include_emojis' => true,              // Incluir emojis
+            'hashtag_count' => 8,                  // Quantidade de hashtags
+            'post_types' => ['feed', 'carousel'],  // Tipos de post preferidos
+            'best_times_source' => 'auto',         // Fonte dos melhores horários: auto, data, default
+        ], $config);
+    }
+
+    /**
+     * Atualiza configurações de Content Engine
+     */
+    public function updateContentEngineConfig(array $newConfig): void
+    {
+        $current = $this->getContentEngineConfig();
+        $this->update([
+            'content_engine_config' => array_merge($current, $newConfig),
+        ]);
     }
 }
