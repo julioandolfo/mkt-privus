@@ -6,6 +6,7 @@ use App\Http\Controllers\ContentCalendarController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MetricsController;
 use App\Http\Controllers\AutopilotController;
+use App\Http\Controllers\ContentEngineV2Controller;
 use App\Http\Controllers\ContentRuleController;
 use App\Http\Controllers\ContentSuggestionController;
 use App\Http\Controllers\PostController;
@@ -192,6 +193,31 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::put('/suggestions/{suggestion}', [ContentSuggestionController::class, 'update'])->name('suggestions.update');
             Route::post('/suggestions/bulk-approve', [ContentSuggestionController::class, 'bulkApprove'])->name('suggestions.bulk-approve');
             Route::post('/suggestions/generate-smart', [ContentSuggestionController::class, 'generateSmart'])->name('suggestions.generate-smart');
+        });
+
+        // Content Engine V2 (Pomeli-style)
+        Route::prefix('content-engine-v2')->name('content-engine-v2.')->group(function () {
+            // Dashboard principal
+            Route::get('/', [ContentEngineV2Controller::class, 'index'])->name('index');
+
+            // Brand DNA
+            Route::post('/analyze-brand', [ContentEngineV2Controller::class, 'analyzeBrand'])->name('analyze-brand');
+            Route::get('/brand-dna', [ContentEngineV2Controller::class, 'getBrandDna'])->name('brand-dna');
+
+            // Geração de Campanhas
+            Route::post('/generate-campaigns', [ContentEngineV2Controller::class, 'generateCampaigns'])->name('generate-campaigns');
+            Route::post('/generate-from-idea', [ContentEngineV2Controller::class, 'generateFromUserIdea'])->name('generate-from-idea');
+            Route::post('/regenerate-variant', [ContentEngineV2Controller::class, 'regenerateCampaignVariant'])->name('regenerate-variant');
+
+            // Criação de Posts
+            Route::post('/create-posts-from-campaign', [ContentEngineV2Controller::class, 'createPostsFromCampaign'])->name('create-posts');
+
+            // Editor Natural
+            Route::post('/natural-edit', [ContentEngineV2Controller::class, 'naturalEdit'])->name('natural-edit');
+            Route::post('/apply-preset', [ContentEngineV2Controller::class, 'applyPreset'])->name('apply-preset');
+            Route::post('/suggest-improvements', [ContentEngineV2Controller::class, 'suggestImprovements'])->name('suggest-improvements');
+            Route::post('/generate-variations', [ContentEngineV2Controller::class, 'generateVariations'])->name('generate-variations');
+            Route::get('/preset-commands', [ContentEngineV2Controller::class, 'getPresetCommands'])->name('preset-commands');
         });
 
         // Autopilot

@@ -125,7 +125,48 @@ Schedule::call(function () {
 
 // Atualizar estatísticas de campanhas em andamento - a cada 5 minutos
 Schedule::call(function () {
-    \App\Models\EmailCampaign::where('status', 'sending')->each(fn($c) => $c->refreshStats());
+    \App\Models\EmailCampaign::where('status', 'sending')->each(function ($campaign) {
+        $campaign->refreshStats();
+
+        // Detectar campanha concluída: todos processados e sem jobs pendentes
+        $queued    = $campaign->events()->where('event_type', 'queued')->distinct('email_contact_id')->count('email_contact_id');
+        $processed = $campaign->events()->whereIn('event_type', ['sent', 'failed'])->distinct('email_contact_id')->count('email_contact_id');
+
+        if ($queued > 0 && $processed >= $queued) {
+            $campaign->update(['status' => 'sent', 'completed_at' => now()]);
+            \App\Models\SystemLog::info('email', 'campaign.auto_completed', "Campanha concluída automaticamente pelo scheduler", [
+                'campaign_id' => $campaign->id,
+                'sent'        => $campaign->fresh()->total_sent,
+            ]);
+            return;
+        }
+
+        // Detectar campanha travada: sem jobs na fila e sem atividade há mais de 30 min
+        if ($campaign->started_at && $campaign->started_at->lt(now()->subMinutes(30))) {
+            $jobsNaFila = \Illuminate\Support\Facades\DB::table('jobs')
+                ->where('queue', 'email')
+                ->where('payload', 'like', "%\"campaignId\":{$campaign->id}%")
+                ->where('available_at', '<=', now()->addMinutes(5)->timestamp)
+                ->count();
+
+            $ultimoEvento = $campaign->events()->latest('occurred_at')->first();
+            $minutesSemAtividade = $ultimoEvento
+                ? now()->diffInMinutes($ultimoEvento->occurred_at)
+                : 9999;
+
+            if ($jobsNaFila === 0 && $minutesSemAtividade > 30 && $processed < $queued) {
+                \App\Models\SystemLog::error('email', 'campaign.stuck_detected', "Campanha TRAVADA detectada pelo scheduler", [
+                    'campaign_id'          => $campaign->id,
+                    'campaign_name'        => $campaign->name,
+                    'queued'               => $queued,
+                    'processed'            => $processed,
+                    'remaining'            => $queued - $processed,
+                    'minutes_sem_atividade' => $minutesSemAtividade,
+                    'jobs_na_fila'         => $jobsNaFila,
+                ]);
+            }
+        }
+    });
 })->name('email.refresh-stats')->everyFiveMinutes()->withoutOverlapping();
 
 /*
