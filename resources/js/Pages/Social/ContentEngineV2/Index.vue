@@ -521,7 +521,7 @@ async function saveBrandConfig() {
                 <div v-if="brandDna.messaging?.key_messages?.length" class="mt-4">
                     <h4 class="text-xs font-medium text-gray-500 uppercase mb-2">Mensagens-Chave</h4>
                     <div class="flex flex-wrap gap-2">
-                        <span v-for="msg in brandDna.messaging.key_messages.slice(0, 5)" :key="msg" class="rounded-lg bg-purple-500/10 border border-purple-500/20 px-2 py-1 text-xs text-purple-300">
+                        <span v-for="msg in (brandDna.messaging?.key_messages || []).slice(0, 5)" :key="msg" class="rounded-lg bg-purple-500/10 border border-purple-500/20 px-2 py-1 text-xs text-purple-300">
                             {{ msg }}
                         </span>
                     </div>
@@ -641,7 +641,7 @@ async function saveBrandConfig() {
                 </div>
 
                 <!-- Campanhas Geradas -->
-                <div v-if="campaigns.length" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div v-if="campaigns?.length" class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div
                         v-for="campaign in campaigns"
                         :key="campaign.id"
@@ -654,11 +654,11 @@ async function saveBrandConfig() {
                                 {{ getObjectiveLabel(campaign.objective) }}
                             </span>
                         </div>
-                        
+
                         <p class="text-sm text-gray-400 mb-4 line-clamp-2">{{ campaign.concept }}</p>
-                        
+
                         <div class="flex flex-wrap gap-2 mb-3">
-                            <span v-for="platform in campaign.platforms" :key="platform" class="rounded-md bg-gray-800 px-2 py-1 text-xs text-gray-400">
+                            <span v-for="platform in (campaign.platforms || [])" :key="platform" class="rounded-md bg-gray-800 px-2 py-1 text-xs text-gray-400">
                                 {{ platformLabels[platform] || platform }}
                             </span>
                             <span class="rounded-md bg-gray-800 px-2 py-1 text-xs text-gray-400">
@@ -671,20 +671,20 @@ async function saveBrandConfig() {
                                 Esforço: {{ getEffortLabel(campaign.effort_level) }}
                             </span>
                             <span class="text-xs text-purple-400 font-medium">
-                                {{ campaign.posts.length }} posts
+                                {{ campaign.posts?.length || 0 }} posts
                             </span>
                         </div>
                     </div>
                 </div>
 
                 <!-- Campanhas Recentes -->
-                <div v-if="recentCampaigns.length && !campaigns.length" class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                <div v-if="recentCampaigns?.length && !campaigns?.length" class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
                     <h3 class="text-lg font-medium text-white mb-4">Campanhas Recentes</h3>
                     <div class="space-y-3">
-                        <div v-for="(group, idx) in recentCampaigns" :key="idx" class="flex items-center justify-between p-3 bg-gray-800/50 rounded-xl">
+                        <div v-for="(group, idx) in (recentCampaigns || [])" :key="idx" class="flex items-center justify-between p-3 bg-gray-800/50 rounded-xl">
                             <div>
-                                <p class="text-sm font-medium text-white">{{ group.generated_at ? formatDate(group.generated_at) : 'Campanha anterior' }}</p>
-                                <p class="text-xs text-gray-500">{{ group.campaigns?.length || 0 }} campanhas geradas</p>
+                                <p class="text-sm font-medium text-white">{{ group?.generated_at ? formatDate(group.generated_at) : 'Campanha anterior' }}</p>
+                                <p class="text-xs text-gray-500">{{ group?.campaigns?.length || 0 }} campanhas geradas</p>
                             </div>
                             <button class="text-xs text-purple-400 hover:text-purple-300">Ver detalhes</button>
                         </div>
@@ -916,7 +916,7 @@ async function saveBrandConfig() {
                             <p class="text-sm text-white">{{ brandDna.messaging?.value_proposition }}</p>
                         </div>
                         <div class="flex flex-wrap gap-2">
-                            <span v-for="msg in brandDna.messaging?.key_messages" :key="msg" class="rounded-lg bg-purple-500/10 border border-purple-500/20 px-3 py-1.5 text-sm text-purple-300">
+                            <span v-for="msg in (brandDna.messaging?.key_messages || [])" :key="msg" class="rounded-lg bg-purple-500/10 border border-purple-500/20 px-3 py-1.5 text-sm text-purple-300">
                                 {{ msg }}
                             </span>
                         </div>
@@ -953,7 +953,7 @@ async function saveBrandConfig() {
                             <div class="p-4 bg-gray-800/50 rounded-xl">
                                 <p class="text-xs text-gray-500 mb-2">Melhores Plataformas</p>
                                 <div class="flex flex-wrap gap-2">
-                                    <span v-for="p in brandDna.content_strategy_hints.best_platforms" :key="p" class="text-sm text-gray-300">{{ platformLabels[p] || p }}</span>
+                                    <span v-for="p in (brandDna.content_strategy_hints?.best_platforms || [])" :key="p" class="text-sm text-gray-300">{{ platformLabels[p] || p }}</span>
                                 </div>
                             </div>
                             <div class="p-4 bg-gray-800/50 rounded-xl">
