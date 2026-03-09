@@ -320,13 +320,24 @@ class BrandDNAAnalyzerService
                 'model' => $response['model'] ?? 'unknown',
             ]);
 
-            $result = json_decode($response['content'], true);
+            // Limpa a resposta removendo markdown code blocks
+            $cleanContent = $this->cleanJsonResponse($response['content'] ?? '');
+
+            SystemLog::debug('content_engine', 'brand_dna.ai.cleaned', "Resposta limpa", [
+                'brand_id' => $brand->id,
+                'original_size' => mb_strlen($response['content'] ?? ''),
+                'cleaned_size' => mb_strlen($cleanContent),
+                'was_trimmed' => $cleanContent !== ($response['content'] ?? ''),
+            ]);
+
+            $result = json_decode($cleanContent, true);
 
             if (json_last_error() !== JSON_ERROR_NONE) {
                 SystemLog::error('content_engine', 'brand_dna.ai.json_error', "Erro ao parsear JSON da resposta", [
                     'brand_id' => $brand->id,
                     'json_error' => json_last_error_msg(),
-                    'response_preview' => mb_substr($response['content'], 0, 500),
+                    'response_preview' => mb_substr($cleanContent, 0, 500),
+                    'original_preview' => mb_substr($response['content'] ?? '', 0, 200),
                 ]);
                 Log::warning("Failed to parse AI analysis JSON for brand {$brand->id}");
                 return [];
@@ -346,6 +357,23 @@ class BrandDNAAnalyzerService
             ]);
             throw $e;
         }
+    }
+
+    /**
+     * Limpa a resposta da IA removendo markdown code blocks
+     */
+    private function cleanJsonResponse(string $content): string
+    {
+        // Remove code blocks markdown (```json ... ``` ou ``` ... ```)
+        $content = preg_replace('/^```json\s*/i', '', $content);
+        $content = preg_replace('/^```\s*/', '', $content);
+        $content = preg_replace('/\s*```$/', '', $content);
+        $content = preg_replace('/\s*```\s*$/', '', $content);
+
+        // Remove espaços em branco no início e fim
+        $content = trim($content);
+
+        return $content;
     }
 
     /**
