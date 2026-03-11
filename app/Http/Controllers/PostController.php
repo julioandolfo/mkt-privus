@@ -501,6 +501,37 @@ class PostController extends Controller
     }
 
     /**
+     * Cancela uma publicação travada (status publishing) — volta o post para draft.
+     */
+    public function cancelPublish(Request $request, Post $post): \Illuminate\Http\JsonResponse
+    {
+        $this->authorizePost($request, $post);
+
+        if ($post->status !== PostStatus::Publishing) {
+            return response()->json(['message' => 'Este post não está em estado de publicação.'], 422);
+        }
+
+        $post->schedules()
+            ->whereIn('status', ['pending', 'publishing'])
+            ->update([
+                'status' => 'failed',
+                'error_message' => 'Publicação cancelada pelo usuário',
+            ]);
+
+        $post->update([
+            'status' => PostStatus::Draft,
+            'scheduled_at' => null,
+        ]);
+
+        \App\Models\SystemLog::info('social', 'post.publish_cancelled', "Publicação do post #{$post->id} cancelada pelo usuário", [
+            'post_id' => $post->id,
+            'user_id' => $request->user()->id,
+        ]);
+
+        return response()->json(['message' => 'Publicação cancelada. O post voltou para rascunho.']);
+    }
+
+    /**
      * Republica um post já publicado (ou falhado) — cria novos PostSchedules e dispara imediatamente.
      */
     public function republish(Request $request, Post $post): \Illuminate\Http\JsonResponse

@@ -148,6 +148,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{post}/duplicate', [PostController::class, 'duplicate'])->name('duplicate');
             Route::post('/{post}/reschedule', [PostController::class, 'reschedule'])->name('reschedule');
             Route::post('/{post}/publish-now', [PostController::class, 'publishNow'])->name('publish-now');
+            Route::post('/{post}/cancel-publish', [PostController::class, 'cancelPublish'])->name('cancel-publish');
             Route::post('/{post}/republish', [PostController::class, 'republish'])->name('republish');
             Route::get('/{post}/analyze-media', [PostController::class, 'analyzeMedia'])->name('analyze-media');
         });

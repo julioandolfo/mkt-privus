@@ -91,6 +91,7 @@ const currentBrand = computed(() => page.props.currentBrand);
 
 const publishingId = ref<number | null>(null);
 const republishingId = ref<number | null>(null);
+const cancellingId = ref<number | null>(null);
 
 const filterStatus = ref(props.filters?.status || '');
 const filterPlatform = ref(props.filters?.platform || '');
@@ -153,6 +154,21 @@ async function publishNow(post: Post) {
         alert(typeof msg === 'object' ? Object.values(msg).join('\n') : msg);
     } finally {
         publishingId.value = null;
+    }
+}
+
+async function cancelPublish(post: Post) {
+    if (!confirm(`Cancelar a publicação de "${post.title || 'este post'}"? O post voltará para rascunho.`)) return;
+
+    cancellingId.value = post.id;
+    try {
+        await axios.post(route('social.posts.cancel-publish', post.id));
+        router.reload({ preserveScroll: true });
+    } catch (err: any) {
+        const msg = err?.response?.data?.message || 'Erro ao cancelar.';
+        alert(typeof msg === 'object' ? Object.values(msg).join('\n') : msg);
+    } finally {
+        cancellingId.value = null;
     }
 }
 
@@ -425,6 +441,22 @@ function getPlatformLabel(value: string): string {
                                     </svg>
                                 </button>
 
+                                <!-- Cancelar Publicação: somente para publishing -->
+                                <button
+                                    v-if="post.status === 'publishing'"
+                                    @click="cancelPublish(post)"
+                                    :disabled="cancellingId === post.id"
+                                    class="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-gray-800 transition disabled:opacity-50"
+                                    title="Cancelar Publicação"
+                                >
+                                    <svg v-if="cancellingId === post.id" class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                                    </svg>
+                                    <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10" /><path stroke-linecap="round" d="M15 9l-6 6M9 9l6 6" />
+                                    </svg>
+                                </button>
+
                                 <!-- Republicar: somente para published/failed -->
                                 <button
                                     v-if="['published', 'failed'].includes(post.status)"
@@ -658,6 +690,14 @@ function getPlatformLabel(value: string): string {
                         >
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/></svg>
                             Publicar
+                        </button>
+                        <button
+                            v-else-if="previewPost.status === 'publishing'"
+                            @click="closePreview(); cancelPublish(previewPost)"
+                            class="flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium text-red-600 hover:bg-red-50 transition border-l border-gray-100"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" d="M15 9l-6 6M9 9l6 6"/></svg>
+                            Cancelar
                         </button>
                         <button
                             v-else-if="['published', 'failed'].includes(previewPost.status)"
