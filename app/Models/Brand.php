@@ -142,6 +142,14 @@ class Brand extends Model
         // Listar URLs/sites da marca
         $urlsContext = $this->getUrlsContextForAI();
 
+        // Converter ai_context array para string
+        $aiContext = '';
+        if (!empty($this->ai_context) && is_array($this->ai_context)) {
+            $aiContext = json_encode($this->ai_context, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        } elseif (!empty($this->ai_context)) {
+            $aiContext = (string) $this->ai_context;
+        }
+
         $context = <<<EOT
         CONTEXTO DA MARCA:
         - Nome: {$this->name}
@@ -150,7 +158,7 @@ class Brand extends Model
         - Tom de voz: {$this->tone_of_voice}
         - Palavras-chave: {$keywords}
         - Cores: Primária {$this->primary_color}, Secundária {$this->secondary_color}, Acento {$this->accent_color}
-        {$this->ai_context}
+        {$aiContext}
         EOT;
 
         if ($urlsContext) {
