@@ -67,7 +67,16 @@ class ContentEngineV2Controller extends Controller
             ]);
         }
 
-        // Com marca - retornar dados básicos sem depender de serviços externos
+        // Com marca - buscar dados do cache
+        $brandDna = null;
+        $hasAnalysis = false;
+        try {
+            $hasAnalysis = $this->brandAnalyzer->hasCompleteAnalysis($brand);
+            $brandDna = $this->brandAnalyzer->getCachedAnalysis($brand);
+        } catch (\Exception $e) {
+            // Ignora erro e continua sem dados
+        }
+
         return Inertia::render('Social/ContentEngineV2/Index', [
             'brand' => [
                 'id' => $brand->id,
@@ -75,8 +84,8 @@ class ContentEngineV2Controller extends Controller
                 'segment' => $brand->segment,
                 'website' => $brand->website,
             ],
-            'brandDna' => null,
-            'hasAnalysis' => false,
+            'brandDna' => $brandDna,
+            'hasAnalysis' => $hasAnalysis,
             'campaignHistory' => [],
             'brandConfig' => [
                 'posts_per_campaign' => 3,
