@@ -178,17 +178,20 @@ class SocialDataAnalyzerService
         // Processa dados por plataforma
         $platformStats = [];
         foreach ($byPlatform as $platform => $data) {
-            $typeCounts = array_count_values($data['types']);
+            // Filtrar apenas valores string/int para array_count_values
+            $validTypes = array_filter($data['types'], fn($v) => is_string($v) || is_int($v));
+            $typeCounts = !empty($validTypes) ? array_count_values($validTypes) : [];
             arsort($typeCounts);
 
-            $hashtagCounts = array_count_values($data['hashtags']);
+            $validHashtags = array_filter($data['hashtags'], fn($v) => is_string($v) || is_int($v));
+            $hashtagCounts = !empty($validHashtags) ? array_count_values($validHashtags) : [];
             arsort($hashtagCounts);
 
             $platformStats[$platform] = [
                 'total_posts' => $data['count'],
                 'most_used_type' => array_key_first($typeCounts) ?? 'feed',
                 'type_distribution' => $typeCounts,
-                'avg_caption_length' => round(array_sum($data['avg_caption_length']) / count($data['avg_caption_length'])),
+                'avg_caption_length' => !empty($data['avg_caption_length']) ? round(array_sum($data['avg_caption_length']) / count($data['avg_caption_length'])) : 0,
                 'top_hashtags' => array_slice(array_keys($hashtagCounts), 0, 5),
             ];
         }
