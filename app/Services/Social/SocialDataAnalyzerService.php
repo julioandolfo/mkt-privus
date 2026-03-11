@@ -214,67 +214,8 @@ class SocialDataAnalyzerService
      */
     private function calculateBestTimes(Brand $brand): array
     {
-        $posts = Post::where('brand_id', $brand->id)
-            ->where('status', 'published')
-            ->whereNotNull('published_at')
-            ->whereNotNull('engagement_data')
-            ->where('published_at', '>=', now()->subDays(60))
-            ->get();
-
-        if ($posts->isEmpty()) {
-            return $this->getDefaultBestTimes();
-        }
-
-        // Agrupa posts por hora do dia
-        $hourlyPerformance = [];
-        foreach ($posts as $post) {
-            $hour = $post->published_at->format('H');
-            $engagement = $this->extractEngagementScore($post->engagement_data);
-
-            if (!isset($hourlyPerformance[$hour])) {
-                $hourlyPerformance[$hour] = ['total_engagement' => 0, 'count' => 0];
-            }
-            $hourlyPerformance[$hour]['total_engagement'] += $engagement;
-            $hourlyPerformance[$hour]['count']++;
-        }
-
-        // Calcula média por hora
-        $hourlyAvg = [];
-        foreach ($hourlyPerformance as $hour => $data) {
-            $hourlyAvg[$hour] = $data['total_engagement'] / $data['count'];
-        }
-
-        // Ordena por performance
-        arsort($hourlyAvg);
-
-        // Agrupa por dia da semana também
-        $weekdayPerformance = [];
-        foreach ($posts as $post) {
-            $weekday = $post->published_at->format('l'); // Monday, Tuesday...
-            $engagement = $this->extractEngagementScore($post->engagement_data);
-
-            if (!isset($weekdayPerformance[$weekday])) {
-                $weekdayPerformance[$weekday] = ['total_engagement' => 0, 'count' => 0];
-            }
-            $weekdayPerformance[$weekday]['total_engagement'] += $engagement;
-            $weekdayPerformance[$weekday]['count']++;
-        }
-
-        $weekdayAvg = [];
-        foreach ($weekdayPerformance as $day => $data) {
-            $weekdayAvg[$day] = $data['total_engagement'] / $data['count'];
-        }
-        arsort($weekdayAvg);
-
-        return [
-            'based_on_data' => true,
-            'posts_analyzed' => $posts->count(),
-            'best_hours' => array_slice(array_keys($hourlyAvg), 0, 3),
-            'best_weekdays' => array_slice(array_keys($weekdayAvg), 0, 3),
-            'hourly_scores' => array_map(fn($v) => round($v, 2), $hourlyAvg),
-            'weekday_scores' => array_map(fn($v) => round($v, 2), $weekdayAvg),
-            'default_hours' => ['09:00', '12:00', '18:00'], // fallback
-        ];
+        // Retorna horários padrão (coluna engagement_data não existe na tabela posts)
+        return $this->getDefaultBestTimes();
     }
 
     /**
