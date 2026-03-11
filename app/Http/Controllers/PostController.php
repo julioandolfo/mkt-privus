@@ -439,22 +439,19 @@ class PostController extends Controller
             ], 422);
         }
 
-        $dispatched = 0;
+        $results = [];
 
         foreach ($accounts as $account) {
-            // Buscar schedule existente para esta conta
             $schedule = PostSchedule::where('post_id', $post->id)
                 ->where('social_account_id', $account->id)
                 ->latest()
                 ->first();
 
-            // Se já foi publicado com sucesso nesta conta, pular
             if ($schedule && $schedule->status === 'published') {
                 continue;
             }
 
             if ($schedule) {
-                // Reutilizar o schedule existente — resetar para nova tentativa
                 $schedule->update([
                     'status'            => 'publishing',
                     'scheduled_at'      => $now,
@@ -463,7 +460,6 @@ class PostController extends Controller
                     'error_message'     => null,
                 ]);
             } else {
-                // Criar novo schedule
                 $schedule = PostSchedule::create([
                     'post_id'           => $post->id,
                     'social_account_id' => $account->id,
@@ -476,27 +472,65 @@ class PostController extends Controller
                 ]);
             }
 
-            \App\Jobs\PublishPostJob::dispatch($schedule)->onQueue('autopilot');
-            $dispatched++;
+            // Executar publicação síncrona (não depende do queue worker)
+            try {
+                \App\Jobs\PublishPostJob::dispatchSync($schedule);
+                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => true];
+            } catch (\Throwable $e) {
+                $schedule->markAsFailed("Erro na publicação: {$e->getMessage()}");
+                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => false, 'error' => $e->getMessage()];
+                \App\Models\SystemLog::error('social', 'post.publish_now.error', "Erro ao publicar post #{$post->id} em {$account->platform->value}", [
+                    'post_id'    => $post->id,
+                    'account_id' => $account->id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
         }
 
-        if ($dispatched === 0) {
-            // Todos já foram publicados com sucesso — marcar post como publicado
+        if (empty($results)) {
             $post->update(['status' => 'published', 'published_at' => now()]);
             return response()->json(['message' => 'Post já publicado em todas as contas conectadas.']);
         }
 
-        \App\Models\SystemLog::info('social', 'post.publish_now', "Publicação manual disparada para post #{$post->id}", [
+        $succeeded = collect($results)->where('ok', true)->count();
+        $failed = collect($results)->where('ok', false);
+
+        \App\Models\SystemLog::info('social', 'post.publish_now', "Publicação manual do post #{$post->id}: {$succeeded}/" . count($results) . " conta(s) OK", [
             'post_id'    => $post->id,
             'brand_id'   => $brand->id,
             'platforms'  => $post->platforms,
-            'dispatched' => $dispatched,
+            'results'    => $results,
             'user_id'    => $request->user()->id,
         ]);
 
+        // Atualizar status do post baseado nos resultados
+        $post->refresh();
+        $allSchedules = $post->schedules()->get();
+        $allPublished = $allSchedules->every(fn($s) => $s->status === 'published');
+        $anyPublished = $allSchedules->contains(fn($s) => $s->status === 'published');
+        $allFinal = $allSchedules->every(fn($s) => in_array($s->status, ['published', 'failed']));
+
+        if ($allPublished) {
+            $post->update(['status' => PostStatus::Published, 'published_at' => now()]);
+        } elseif ($anyPublished && $allFinal) {
+            $post->update(['status' => PostStatus::Published, 'published_at' => now()]);
+        } elseif ($allFinal) {
+            $post->update(['status' => PostStatus::Failed]);
+        }
+
+        if ($failed->isNotEmpty()) {
+            $errorSummary = $failed->map(fn($r) => "{$r['platform']}: {$r['error']}")->implode('; ');
+            return response()->json([
+                'message' => $succeeded > 0
+                    ? "Publicado em {$succeeded} conta(s), mas falhou em {$failed->count()}: {$errorSummary}"
+                    : "Falha na publicação: {$errorSummary}",
+                'results' => $results,
+            ], $succeeded > 0 ? 200 : 422);
+        }
+
         return response()->json([
-            'message'    => "Publicação iniciada! {$dispatched} conta(s) serão publicadas em instantes.",
-            'dispatched' => $dispatched,
+            'message'  => "Publicado com sucesso em {$succeeded} conta(s)!",
+            'results'  => $results,
         ]);
     }
 
@@ -568,10 +602,9 @@ class PostController extends Controller
             'published_at' => null,
         ]);
 
-        $dispatched = 0;
+        $results = [];
 
         foreach ($accounts as $account) {
-            // Sempre criar um novo schedule para republicação
             $schedule = PostSchedule::create([
                 'post_id'           => $post->id,
                 'social_account_id' => $account->id,
@@ -583,21 +616,54 @@ class PostController extends Controller
                 'last_attempted_at' => $now,
             ]);
 
-            \App\Jobs\PublishPostJob::dispatch($schedule)->onQueue('autopilot');
-            $dispatched++;
+            try {
+                \App\Jobs\PublishPostJob::dispatchSync($schedule);
+                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => true];
+            } catch (\Throwable $e) {
+                $schedule->markAsFailed("Erro na republicação: {$e->getMessage()}");
+                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => false, 'error' => $e->getMessage()];
+                \App\Models\SystemLog::error('social', 'post.republish.error', "Erro ao republicar post #{$post->id} em {$account->platform->value}", [
+                    'post_id'    => $post->id,
+                    'account_id' => $account->id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
         }
 
-        \App\Models\SystemLog::info('social', 'post.republish', "Republicação disparada para post #{$post->id}", [
+        $succeeded = collect($results)->where('ok', true)->count();
+        $failed = collect($results)->where('ok', false);
+
+        \App\Models\SystemLog::info('social', 'post.republish', "Republicação do post #{$post->id}: {$succeeded}/" . count($results) . " conta(s) OK", [
             'post_id'    => $post->id,
             'brand_id'   => $brand->id,
             'platforms'  => $post->platforms,
-            'dispatched' => $dispatched,
+            'results'    => $results,
             'user_id'    => $request->user()->id,
         ]);
 
+        // Atualizar status do post
+        $post->refresh();
+        $allSchedules = $post->schedules()->get();
+        $anyPublished = $allSchedules->contains(fn($s) => $s->status === 'published');
+        $allFinal = $allSchedules->every(fn($s) => in_array($s->status, ['published', 'failed']));
+
+        if ($anyPublished && $allFinal) {
+            $post->update(['status' => PostStatus::Published, 'published_at' => now()]);
+        } elseif ($allFinal && !$anyPublished) {
+            $post->update(['status' => PostStatus::Failed]);
+        }
+
+        if ($failed->isNotEmpty()) {
+            $errorSummary = $failed->map(fn($r) => "{$r['platform']}: {$r['error']}")->implode('; ');
+            return response()->json([
+                'message' => $succeeded > 0
+                    ? "Republicado em {$succeeded} conta(s), mas falhou em {$failed->count()}: {$errorSummary}"
+                    : "Falha na republicação: {$errorSummary}",
+            ], $succeeded > 0 ? 200 : 422);
+        }
+
         return response()->json([
-            'message'    => "Republicação iniciada! {$dispatched} conta(s) serão publicadas em instantes.",
-            'dispatched' => $dispatched,
+            'message' => "Republicado com sucesso em {$succeeded} conta(s)!",
         ]);
     }
 

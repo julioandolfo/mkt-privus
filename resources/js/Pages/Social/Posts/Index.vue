@@ -147,11 +147,14 @@ async function publishNow(post: Post) {
 
     publishingId.value = post.id;
     try {
-        await axios.post(route('social.posts.publish-now', post.id));
+        const res = await axios.post(route('social.posts.publish-now', post.id));
+        const msg = res.data?.message;
+        if (msg) alert(msg);
         router.reload({ preserveScroll: true });
     } catch (err: any) {
-        const msg = err?.response?.data?.message || err?.response?.data?.errors?.accounts || 'Erro ao publicar.';
+        const msg = err?.response?.data?.message || 'Erro ao publicar.';
         alert(typeof msg === 'object' ? Object.values(msg).join('\n') : msg);
+        router.reload({ preserveScroll: true });
     } finally {
         publishingId.value = null;
     }
@@ -177,11 +180,14 @@ async function republish(post: Post) {
 
     republishingId.value = post.id;
     try {
-        await axios.post(route('social.posts.republish', post.id));
+        const res = await axios.post(route('social.posts.republish', post.id));
+        const msg = res.data?.message;
+        if (msg) alert(msg);
         router.reload({ preserveScroll: true });
     } catch (err: any) {
         const msg = err?.response?.data?.message || 'Erro ao republicar.';
         alert(typeof msg === 'object' ? Object.values(msg).join('\n') : msg);
+        router.reload({ preserveScroll: true });
     } finally {
         republishingId.value = null;
     }
