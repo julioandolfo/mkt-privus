@@ -43,18 +43,42 @@ class PublishPostJob implements ShouldQueue
 
     public function handle(PostPublisherService $publisherService): void
     {
+        \App\Models\SystemLog::info('social', 'autopilot.job_start', "Autopilot: job iniciado para schedule #{$this->schedule->id}", [
+            'schedule_id' => $this->schedule->id,
+            'post_id'     => $this->schedule->post_id,
+            'queue'       => $this->queue ?? 'default',
+            'connection'  => $this->connection ?? config('queue.default'),
+        ]);
+
         $schedule = $this->schedule->fresh(['post.media', 'socialAccount']);
 
         if (!$schedule || !$schedule->post) {
-            Log::warning('Autopilot: Schedule ou Post não encontrado', [
-                'schedule_id' => $this->schedule->id,
+            $msg = !$schedule
+                ? "Schedule #{$this->schedule->id} não encontrado no banco"
+                : "Post não encontrado para schedule #{$this->schedule->id}";
+            Log::warning("Autopilot: {$msg}");
+            \App\Models\SystemLog::error('social', 'autopilot.not_found', "Autopilot: {$msg}", [
+                'schedule_id'    => $this->schedule->id,
+                'schedule_exists' => !!$schedule,
+                'post_exists'    => $schedule ? !!$schedule->post : false,
             ]);
             return;
         }
 
-        // Se ja foi publicado (processamento duplicado), ignorar
         if ($schedule->status === 'published') {
+            \App\Models\SystemLog::info('social', 'autopilot.already_published', "Autopilot: schedule #{$schedule->id} já publicado, ignorando", [
+                'schedule_id' => $schedule->id,
+                'post_id'     => $schedule->post_id,
+            ]);
             return;
+        }
+
+        if (!$schedule->socialAccount) {
+            \App\Models\SystemLog::error('social', 'autopilot.no_account', "Autopilot: schedule #{$schedule->id} sem conta social vinculada", [
+                'schedule_id'      => $schedule->id,
+                'post_id'          => $schedule->post_id,
+                'social_account_id' => $schedule->social_account_id,
+            ]);
         }
 
         Log::info("Autopilot: Publicando schedule #{$schedule->id}", [
