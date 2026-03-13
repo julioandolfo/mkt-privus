@@ -56,26 +56,34 @@ class EmailTrackingService
     }
 
     /**
-     * Processa evento de abertura
+     * Processa evento de abertura.
+     * Se abriu, necessariamente foi entregue — cria "delivered" se ainda não existir.
      */
     public function processOpen(string $token): void
     {
         $data = $this->decodeToken($token);
         if (!$data) return;
 
+        $campaignId = $data['campaign_id'];
+        $contactId  = $data['contact_id'];
+
+        // Garante o evento "delivered" (abertura prova entrega)
+        $this->ensureDelivered($campaignId, $contactId);
+
         EmailCampaignEvent::create([
-            'email_campaign_id' => $data['campaign_id'],
-            'email_contact_id' => $data['contact_id'],
+            'email_campaign_id' => $campaignId,
+            'email_contact_id' => $contactId,
             'event_type' => 'opened',
             'occurred_at' => now(),
             'metadata' => [
                 'ip' => request()->ip(),
                 'user_agent' => request()->userAgent(),
+                'source' => 'pixel',
             ],
         ]);
 
         // Atualizar estatísticas cache
-        $campaign = EmailCampaign::find($data['campaign_id']);
+        $campaign = EmailCampaign::find($campaignId);
         if ($campaign) {
             $campaign->increment('total_opened');
             $uniqueOpens = $campaign->events()
@@ -87,18 +95,24 @@ class EmailTrackingService
     }
 
     /**
-     * Processa evento de clique
+     * Processa evento de clique.
+     * Se clicou, necessariamente foi entregue e abriu — cria "delivered" se ainda não existir.
      */
     public function processClick(string $token): ?string
     {
         $data = $this->decodeToken($token);
         if (!$data) return null;
 
-        $url = $data['url'] ?? null;
+        $campaignId = $data['campaign_id'];
+        $contactId  = $data['contact_id'];
+        $url        = $data['url'] ?? null;
+
+        // Garante o evento "delivered"
+        $this->ensureDelivered($campaignId, $contactId);
 
         EmailCampaignEvent::create([
-            'email_campaign_id' => $data['campaign_id'],
-            'email_contact_id' => $data['contact_id'],
+            'email_campaign_id' => $campaignId,
+            'email_contact_id' => $contactId,
             'event_type' => 'clicked',
             'occurred_at' => now(),
             'metadata' => [
@@ -109,7 +123,7 @@ class EmailTrackingService
         ]);
 
         // Atualizar estatísticas cache
-        $campaign = EmailCampaign::find($data['campaign_id']);
+        $campaign = EmailCampaign::find($campaignId);
         if ($campaign) {
             $campaign->increment('total_clicked');
             $uniqueClicks = $campaign->events()
@@ -120,6 +134,33 @@ class EmailTrackingService
         }
 
         return $url;
+    }
+
+    /**
+     * Cria evento "delivered" se ainda não existir para este contato/campanha.
+     * Usado quando há prova implícita de entrega (abertura ou clique via pixel).
+     */
+    private function ensureDelivered(int $campaignId, int $contactId): void
+    {
+        $already = EmailCampaignEvent::where('email_campaign_id', $campaignId)
+            ->where('email_contact_id', $contactId)
+            ->where('event_type', 'delivered')
+            ->exists();
+
+        if ($already) return;
+
+        EmailCampaignEvent::create([
+            'email_campaign_id' => $campaignId,
+            'email_contact_id' => $contactId,
+            'event_type' => 'delivered',
+            'occurred_at' => now(),
+            'metadata' => ['source' => 'inferred_from_engagement'],
+        ]);
+
+        $campaign = EmailCampaign::find($campaignId);
+        if ($campaign) {
+            $campaign->increment('total_delivered');
+        }
     }
 
     /**

@@ -142,9 +142,18 @@ class SendPulseWebhookController extends Controller
      */
     private function processEmailEvent(array $event): void
     {
-        $email = $event['email'] ?? null;
-        $campaignId = $event['campaign_id'] ?? $event['id'] ?? null;
-        $eventType = $event['event'] ?? $event['type'] ?? $event['action'] ?? null;
+        $email      = $event['email'] ?? null;
+        $eventType  = $event['event'] ?? $event['type'] ?? $event['action'] ?? $event['status'] ?? null;
+        $messageId  = $event['message_id'] ?? $event['id'] ?? $event['email_id'] ?? null;
+        $campaignId = $event['campaign_id'] ?? null;
+
+        SystemLog::info('email', 'webhook.received', "Webhook recebido do SendPulse", [
+            'email'      => $email,
+            'event_type' => $eventType,
+            'message_id' => $messageId,
+            'campaign_id'=> $campaignId,
+            'raw'        => $event,
+        ]);
 
         if (!$email && !$eventType) {
             Log::warning('SendPulse Email Webhook: missing email and event type', ['event' => $event]);
@@ -154,22 +163,52 @@ class SendPulseWebhookController extends Controller
         // Encontrar contato pelo email
         $contact = $email ? EmailContact::where('email', $email)->first() : null;
 
-        // Encontrar campanha
+        // Encontrar campanha — o SendPulse usa o próprio ID (message_id), não o nosso
+        // Estratégia 1: pelo message_id salvo no evento 'sent'
         $campaign = null;
-        if ($campaignId) {
-            $campaign = EmailCampaign::find($campaignId);
-            // Tentar também pelo sendpulse_campaign_id se existir
-            if (!$campaign) {
-                $campaign = EmailCampaign::where('settings->sendpulse_campaign_id', $campaignId)->first();
+
+        if ($messageId) {
+            $sentEvent = EmailCampaignEvent::where('event_type', 'sent')
+                ->where('metadata->message_id', $messageId)
+                ->with('campaign')
+                ->first();
+            if ($sentEvent) {
+                $campaign = $sentEvent->campaign;
             }
+        }
+
+        // Estratégia 2: pelo email do contato — campanha mais recente com evento 'sent' para este email
+        if (!$campaign && $contact) {
+            $sentEvent = EmailCampaignEvent::where('event_type', 'sent')
+                ->where('email_contact_id', $contact->id)
+                ->orderByDesc('occurred_at')
+                ->with('campaign')
+                ->first();
+            if ($sentEvent) {
+                $campaign = $sentEvent->campaign;
+            }
+        }
+
+        // Estratégia 3: por campaign_id numérico (caso seja nosso ID)
+        if (!$campaign && $campaignId && is_numeric($campaignId)) {
+            $campaign = EmailCampaign::find($campaignId);
         }
 
         // Mapear o tipo de evento do SendPulse para nosso sistema
         $mappedType = $this->mapEmailEventType($eventType);
 
+        SystemLog::info('email', 'webhook.resolved', "Webhook associado", [
+            'email'       => $email,
+            'event_type'  => $eventType,
+            'mapped_type' => $mappedType,
+            'campaign_id' => $campaign?->id,
+            'contact_id'  => $contact?->id,
+            'found_by_message_id' => isset($sentEvent),
+        ]);
+
         if (!$mappedType) {
             Log::info('SendPulse Email Webhook: unmapped event type', [
-                'type' => $eventType,
+                'type'  => $eventType,
                 'email' => $email,
             ]);
             return;
