@@ -533,12 +533,13 @@ const seoScore = computed(() => {
                                 <label class="text-sm text-gray-400 mb-1 block">Usuário WordPress</label>
                                 <input v-model="connectionForm.wp_username" type="text" placeholder="admin"
                                     class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                <p class="text-[10px] text-gray-600 mt-1">Nome de usuário exato (não e-mail, não nome de exibição). Veja em WordPress &gt; Usuários.</p>
                             </div>
                             <div>
                                 <label class="text-sm text-gray-400 mb-1 block">Application Password</label>
-                                <input v-model="connectionForm.wp_app_password" type="password" placeholder="xxxx xxxx xxxx xxxx"
+                                <input v-model="connectionForm.wp_app_password" type="text" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
                                     class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
-                                <p class="text-[10px] text-gray-600 mt-1">WordPress > Usuários > Perfil > Application Passwords</p>
+                                <p class="text-[10px] text-gray-600 mt-1">Gere em WordPress &gt; Usuários &gt; Perfil &gt; Application Passwords. Copie com os espaços.</p>
                             </div>
 
                             <div v-if="connectionError" class="rounded-xl bg-red-900/30 border border-red-700/50 p-3 text-xs text-red-300">{{ connectionError }}</div>

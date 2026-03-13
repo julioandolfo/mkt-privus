@@ -45,10 +45,10 @@ class WordPressPublishService
             }
 
             if ($response->status() === 401 || $response->status() === 403) {
-                return ['success' => false, 'error' => 'Credenciais inválidas ou sem permissão para publicar posts.'];
+                return ['success' => false, 'error' => $this->extractWpError($response)];
             }
 
-            return ['success' => false, 'error' => "Erro HTTP {$response->status()}: {$response->body()}"];
+            return ['success' => false, 'error' => $this->extractWpError($response)];
         } catch (\Throwable $e) {
             return ['success' => false, 'error' => "Não foi possível conectar: {$e->getMessage()}"];
         }
@@ -157,7 +157,7 @@ class WordPressPublishService
                 ];
             }
 
-            $errorMsg = $response->json('message') ?? $response->body();
+            $errorMsg = $this->extractWpError($response);
             $article->update(['status' => 'failed']);
 
             SystemLog::error('blog', 'article.publish_error', "Falha ao publicar: {$errorMsg}", [
@@ -166,7 +166,7 @@ class WordPressPublishService
                 'response' => substr($response->body(), 0, 500),
             ]);
 
-            return ['success' => false, 'error' => "WordPress: {$errorMsg}"];
+            return ['success' => false, 'error' => $errorMsg];
         } catch (\Throwable $e) {
             $article->update(['status' => 'failed']);
 
@@ -568,6 +568,103 @@ class WordPressPublishService
     }
 
     // ===== PRIVATE =====
+
+    /**
+     * Extrai mensagem de erro legível de uma resposta WordPress.
+     * Lida com respostas JSON (REST API), HTML (página de login/erro) e texto simples.
+     */
+    private function extractWpError(\Illuminate\Http\Client\Response $response): string
+    {
+        $status = $response->status();
+        $body = $response->body();
+        $contentType = $response->header('Content-Type') ?? '';
+
+        // Tentar extrair via JSON primeiro (resposta REST API padrão)
+        $jsonMsg = $response->json('message');
+        $jsonCode = $response->json('code');
+
+        if ($jsonMsg) {
+            // Limpar tags HTML que eventualmente venham no JSON
+            $clean = strip_tags($jsonMsg);
+
+            // Mapear códigos de erro do WP para mensagens amigáveis
+            return match ($jsonCode) {
+                'rest_cannot_create'         => "Sem permissão para criar posts. Verifique se o usuário tem papel de Editor ou Administrador.",
+                'rest_cannot_edit'           => "Sem permissão para editar posts no WordPress.",
+                'incorrect_password'         => "Senha incorreta. Verifique se o Application Password foi copiado corretamente (formato: xxxx xxxx xxxx xxxx).",
+                'invalid_username'           => "Usuário '{$this->extractUsernameHint($body)}' não encontrado no WordPress. Use o nome de usuário exato (não e-mail, não nome de exibição).",
+                'rest_forbidden'             => "Acesso negado pela API WordPress. Verifique se a REST API está habilitada no site.",
+                default                      => $clean,
+            };
+        }
+
+        // Resposta é HTML (página de login ou erro do WordPress)
+        if (str_contains($contentType, 'text/html') || str_starts_with(ltrim($body), '<')) {
+            // Extrair texto da tag de erro do WordPress
+            if (preg_match('/<[^>]*(?:error|message|notice)[^>]*>([^<]+)<\//', $body, $m)) {
+                $extracted = trim(strip_tags($m[0]));
+                if ($extracted) {
+                    return $this->mapWpHtmlError($extracted, $status);
+                }
+            }
+
+            // Detectar página de login do WordPress (credenciais rejeitadas)
+            if (str_contains($body, 'login_error') || str_contains($body, 'loginform') || str_contains($body, 'wp-login')) {
+                if (str_contains($body, 'nome de usuário') || str_contains($body, 'unknown username') || str_contains($body, 'invalid_username')) {
+                    return "Usuário não encontrado no WordPress. Use o nome de usuário exato (não e-mail, não nome de exibição). Ex: 'admin'.";
+                }
+                if (str_contains($body, 'senha') || str_contains($body, 'incorrect_password') || str_contains($body, 'password')) {
+                    return "Senha incorreta. Verifique se o Application Password está correto (formato: xxxx xxxx xxxx xxxx xxxx xxxx).";
+                }
+                return "Credenciais inválidas. Verifique o usuário e o Application Password em WordPress > Usuários > Perfil > Application Passwords.";
+            }
+
+            // HTTP 401/403 com HTML
+            if ($status === 401 || $status === 403) {
+                return "Acesso negado (HTTP {$status}). Verifique o usuário e o Application Password. Certifique-se de que o Application Password foi gerado em WordPress > Usuários > Perfil.";
+            }
+
+            return "Erro HTTP {$status}. O WordPress não aceitou as credenciais ou a REST API está bloqueada.";
+        }
+
+        // Fallback: limpar e retornar
+        $clean = strip_tags($body);
+        return $clean ?: "Erro HTTP {$status} ao publicar no WordPress.";
+    }
+
+    /**
+     * Mapeia mensagens de erro HTML do WordPress para textos amigáveis
+     */
+    private function mapWpHtmlError(string $text, int $status): string
+    {
+        $lower = mb_strtolower($text);
+
+        if (str_contains($lower, 'nome de usuário') || str_contains($lower, 'unknown username') || str_contains($lower, 'usuário')) {
+            return "Usuário não encontrado no WordPress. Use o nome de usuário exato (não e-mail). Ex: 'admin'.";
+        }
+
+        if (str_contains($lower, 'senha') || str_contains($lower, 'password') || str_contains($lower, 'incorrect')) {
+            return "Application Password incorreto. Gere um novo em WordPress > Usuários > Perfil > Application Passwords.";
+        }
+
+        if (str_contains($lower, 'forbidden') || str_contains($lower, 'permiss')) {
+            return "Sem permissão. Verifique se o usuário tem papel de Editor ou Administrador e se a REST API está habilitada.";
+        }
+
+        return strip_tags($text);
+    }
+
+    /**
+     * Tenta extrair o username da mensagem de erro do WordPress
+     */
+    private function extractUsernameHint(string $body): string
+    {
+        // WP às vezes inclui o username na mensagem de erro do JSON
+        if (preg_match('/"([^"]{2,50})"/', $body, $m)) {
+            return $m[1];
+        }
+        return '?';
+    }
 
     /**
      * Obtém a URL base do site WordPress
