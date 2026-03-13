@@ -198,6 +198,24 @@ async function submitGenerate() {
 }
 
 // Generate article from item
+async function updateItemField(item: CalendarItem, field: string, value: any) {
+    try {
+        await axios.put(route('blog.calendar.items.update', item.id), { [field]: value });
+        // Atualizar localmente
+        if (field === 'blog_category_id') {
+            item.category_id = value;
+            const cat = props.categories.find(c => c.id === value);
+            item.category = cat?.name ?? null;
+        }
+        if (field === 'wordpress_connection_id') {
+            item.connection_id = value;
+        }
+        // Atualizar na lista do calendário
+        const idx = calendarItems.value.findIndex(i => i.id === item.id);
+        if (idx !== -1) calendarItems.value[idx] = { ...calendarItems.value[idx], ...item };
+    } catch { }
+}
+
 async function generateArticle(item: CalendarItem) {
     generatingArticle.value = true;
     try {
@@ -470,6 +488,29 @@ const pendingCount = computed(() => calendarItems.value.filter(i => i.status ===
                             <div v-if="selectedItem.category" class="flex items-center gap-2">
                                 <span class="text-gray-600">Categoria:</span>
                                 <span class="text-gray-300">{{ selectedItem.category }}</span>
+                            </div>
+                        </div>
+
+                        <!-- Configurações de publicação -->
+                        <div class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-3 space-y-2.5">
+                            <p class="text-[11px] text-gray-500 uppercase tracking-wider font-medium">Configurações de publicação</p>
+                            <div>
+                                <label class="text-[11px] text-gray-500 mb-1 block">Destino WordPress</label>
+                                <select :value="selectedItem.connection_id"
+                                    @change="updateItemField(selectedItem, 'wordpress_connection_id', ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)"
+                                    class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option :value="null">Nenhum (local)</option>
+                                    <option v-for="c in connections" :key="c.id" :value="c.id">{{ c.name }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-[11px] text-gray-500 mb-1 block">Categoria do artigo</label>
+                                <select :value="selectedItem.category_id"
+                                    @change="updateItemField(selectedItem, 'blog_category_id', ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)"
+                                    class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option :value="null">Sem categoria</option>
+                                    <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+                                </select>
                             </div>
                         </div>
 
