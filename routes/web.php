@@ -474,6 +474,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // Conexões WordPress — ANTES das rotas com {article}
         Route::post('/connections', [BlogController::class, 'storeConnection'])->name('connections.store');
         Route::post('/connections/test', [BlogController::class, 'testConnection'])->name('connections.test');
+        Route::put('/connections/{connection}', [BlogController::class, 'updateConnection'])->name('connections.update');
         Route::delete('/connections/{connection}', [BlogController::class, 'destroyConnection'])->name('connections.destroy');
         Route::get('/connections/{connection}/categories', [BlogController::class, 'connectionCategories'])->name('connections.categories');
 

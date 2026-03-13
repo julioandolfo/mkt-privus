@@ -588,6 +588,31 @@ class BlogController extends Controller
         return response()->json($result);
     }
 
+    public function updateConnection(Request $request, AnalyticsConnection $connection): JsonResponse
+    {
+        $request->validate([
+            'name'           => 'required|string|max:255',
+            'site_url'       => 'required|url',
+            'wp_username'    => 'required|string|max:255',
+            'wp_app_password' => 'nullable|string|max:500',
+        ]);
+
+        $config = $connection->config ?? [];
+        $config['site_url']    = rtrim($request->input('site_url'), '/');
+        $config['wp_username'] = $request->input('wp_username');
+
+        if ($request->filled('wp_app_password')) {
+            $config['wp_app_password'] = $request->input('wp_app_password');
+        }
+
+        $connection->update([
+            'name'   => $request->input('name'),
+            'config' => $config,
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Conexão atualizada com sucesso.']);
+    }
+
     public function destroyConnection(AnalyticsConnection $connection): JsonResponse
     {
         if ($connection->platform !== 'wordpress') {
@@ -856,11 +881,12 @@ class BlogController extends Controller
             ->where('is_active', true)
             ->get(['id', 'name', 'platform', 'external_name', 'config'])
             ->map(fn($c) => [
-                'id' => $c->id,
-                'name' => $c->name,
-                'platform' => $c->platform,
+                'id'             => $c->id,
+                'name'           => $c->name,
+                'platform'       => $c->platform,
                 'platform_label' => $c->platform === 'wordpress' ? 'WordPress' : 'WooCommerce',
-                'site_url' => $c->config['site_url'] ?? $c->config['store_url'] ?? '',
+                'site_url'       => $c->config['site_url'] ?? $c->config['store_url'] ?? '',
+                'wp_username'    => $c->config['wp_username'] ?? '',
             ])
             ->toArray();
     }

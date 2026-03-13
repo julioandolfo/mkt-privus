@@ -6,7 +6,7 @@ import axios from 'axios';
 
 const props = defineProps<{
     categories: { id: number; name: string; slug: string; description: string | null; articles_count: number; wp_category_id: number | null; wordpress_connection_id: number | null }[];
-    connections: { id: number; name: string; platform: string; platform_label: string; site_url: string }[];
+    connections: { id: number; name: string; platform: string; platform_label: string; site_url: string; wp_username: string }[];
 }>();
 
 const showForm = ref(false);
@@ -14,6 +14,61 @@ const editingId = ref<number | null>(null);
 const syncing = ref(false);
 const syncResult = ref<{ type: 'success' | 'error'; message: string } | null>(null);
 const selectedSyncConnection = ref<number | null>(null);
+
+// Connection management
+const editingConnection = ref<typeof props.connections[0] | null>(null);
+const connectionSaving = ref(false);
+const connectionResult = ref<{ type: 'success' | 'error'; message: string } | null>(null);
+const deletingConnectionId = ref<number | null>(null);
+const connForm = ref({ name: '', site_url: '', wp_username: '', wp_app_password: '' });
+
+function openEditConnection(conn: typeof props.connections[0]) {
+    editingConnection.value = conn;
+    connForm.value = { name: conn.name, site_url: conn.site_url, wp_username: conn.wp_username, wp_app_password: '' };
+    connectionResult.value = null;
+}
+
+function closeEditConnection() {
+    editingConnection.value = null;
+    connectionResult.value = null;
+}
+
+async function saveConnection() {
+    if (!editingConnection.value) return;
+    connectionSaving.value = true;
+    connectionResult.value = null;
+    try {
+        const { data } = await axios.put(route('blog.connections.update', editingConnection.value.id), connForm.value);
+        if (data.success) {
+            connectionResult.value = { type: 'success', message: data.message };
+            router.reload({ only: ['connections'] });
+            setTimeout(() => closeEditConnection(), 1200);
+        } else {
+            connectionResult.value = { type: 'error', message: data.error || 'Erro ao salvar.' };
+        }
+    } catch (e: any) {
+        connectionResult.value = { type: 'error', message: e.response?.data?.message || 'Erro ao salvar conexão.' };
+    } finally {
+        connectionSaving.value = false;
+    }
+}
+
+async function deleteConnection(id: number) {
+    if (!confirm('Remover esta conexão WordPress? Artigos já publicados não serão afetados.')) return;
+    deletingConnectionId.value = id;
+    try {
+        const { data } = await axios.delete(route('blog.connections.destroy', id));
+        if (data.success) {
+            router.reload({ only: ['connections'] });
+        } else {
+            alert(data.error || 'Erro ao remover.');
+        }
+    } catch (e: any) {
+        alert(e.response?.data?.message || 'Erro ao remover conexão.');
+    } finally {
+        deletingConnectionId.value = null;
+    }
+}
 
 const form = useForm({
     name: '',
@@ -121,6 +176,92 @@ function getConnectionName(connectionId: number | null): string {
             <div class="rounded-xl bg-gray-900 border border-gray-800 p-3 text-center">
                 <p class="text-lg font-bold text-yellow-400">{{ localOnly }}</p>
                 <p class="text-[11px] text-gray-500">Apenas Local</p>
+            </div>
+        </div>
+
+        <!-- Connections Management -->
+        <div v-if="connections.length > 0" class="rounded-2xl bg-gray-900 border border-gray-800 p-4 mb-4">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2">
+                    <div class="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center">
+                        <svg class="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium text-white">Conexões WordPress</p>
+                        <p class="text-[11px] text-gray-500">Edite ou remova suas conexões</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="space-y-2">
+                <div v-for="conn in connections" :key="conn.id"
+                    class="rounded-xl bg-gray-800/60 border border-gray-700 p-3 flex items-center justify-between gap-3">
+                    <div class="min-w-0">
+                        <p class="text-sm font-medium text-white truncate">{{ conn.name }}</p>
+                        <p class="text-[11px] text-gray-500 truncate">{{ conn.site_url }} · {{ conn.platform_label }} · {{ conn.wp_username }}</p>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <button @click="openEditConnection(conn)"
+                            class="rounded-lg px-2.5 py-1 text-[11px] text-gray-300 hover:bg-gray-700 border border-gray-600 transition">
+                            Editar
+                        </button>
+                        <button @click="deleteConnection(conn.id)" :disabled="deletingConnectionId === conn.id"
+                            class="rounded-lg px-2.5 py-1 text-[11px] text-red-400 hover:bg-red-500/10 border border-red-500/30 transition disabled:opacity-50">
+                            {{ deletingConnectionId === conn.id ? '...' : 'Remover' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit Connection Modal -->
+        <div v-if="editingConnection" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div class="w-full max-w-md rounded-2xl bg-gray-900 border border-gray-700 p-6 shadow-2xl">
+                <h3 class="text-base font-semibold text-white mb-4">Editar Conexão WordPress</h3>
+
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-xs text-gray-400 mb-1 block">Nome da conexão *</label>
+                        <input v-model="connForm.name" type="text" required
+                            class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-400 mb-1 block">URL do site *</label>
+                        <input v-model="connForm.site_url" type="url" required placeholder="https://seusite.com.br"
+                            class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-400 mb-1 block">Nome de usuário WordPress *</label>
+                        <input v-model="connForm.wp_username" type="text" required
+                            class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                        <p class="text-[10px] text-gray-600 mt-1">Nome de usuário de login exato (não e-mail, não nome de exibição). Veja em WordPress › Usuários.</p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-400 mb-1 block">Application Password</label>
+                        <input v-model="connForm.wp_app_password" type="text"
+                            class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                            placeholder="Deixe em branco para manter a atual" />
+                        <p class="text-[10px] text-gray-600 mt-1">Gere em WordPress › Usuários › Perfil › Application Passwords. Copie com os espaços.</p>
+                    </div>
+                </div>
+
+                <div v-if="connectionResult" class="mt-3 px-3 py-2 rounded-lg text-xs"
+                    :class="connectionResult.type === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'">
+                    {{ connectionResult.message }}
+                </div>
+
+                <div class="flex gap-2 mt-4">
+                    <button @click="saveConnection" :disabled="connectionSaving"
+                        class="flex-1 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition">
+                        {{ connectionSaving ? 'Salvando...' : 'Salvar' }}
+                    </button>
+                    <button @click="closeEditConnection" type="button"
+                        class="rounded-xl px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 transition">
+                        Cancelar
+                    </button>
+                </div>
             </div>
         </div>
 
