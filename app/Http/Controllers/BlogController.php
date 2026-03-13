@@ -895,8 +895,8 @@ class BlogController extends Controller
             'config'      => [
                 'enabled'          => (bool)  ($cfg['blog_autopilot_enabled']  ?? false),
                 'posts_per_week'   => (int)   ($cfg['blog_posts_per_week']     ?? 2),
-                'connection_id'    => (int|null)($cfg['blog_connection_id']    ?? null) ?: null,
-                'category_id'      => (int|null)($cfg['blog_category_id']      ?? null) ?: null,
+                'connection_id'    => $cfg['blog_connection_id']  ? (int) $cfg['blog_connection_id']  : null,
+                'category_id'      => $cfg['blog_category_id']   ? (int) $cfg['blog_category_id']    : null,
                 'require_approval' => (bool)  ($cfg['blog_require_approval']   ?? true),
                 'tone'             => $cfg['blog_tone']                        ?? '',
                 'instructions'     => $cfg['blog_instructions']                ?? '',

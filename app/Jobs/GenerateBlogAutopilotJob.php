@@ -49,8 +49,8 @@ class GenerateBlogAutopilotJob implements ShouldQueue
                 }
 
                 $postsPerWeek    = (int)   ($cfg['blog_posts_per_week']      ?? 2);
-                $connectionId    = (int|null)($cfg['blog_connection_id']     ?? null) ?: null;
-                $categoryId      = (int|null)($cfg['blog_category_id']       ?? null) ?: null;
+                $connectionId    = $cfg['blog_connection_id'] ? (int) $cfg['blog_connection_id'] : null;
+                $categoryId      = $cfg['blog_category_id']  ? (int) $cfg['blog_category_id']  : null;
                 $requireApproval = (bool)  ($cfg['blog_require_approval']    ?? true);
                 $tone            = $cfg['blog_tone']                         ?? ($brand->tone_of_voice ?? '');
                 $instructions    = $cfg['blog_instructions']                 ?? '';
