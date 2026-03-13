@@ -592,7 +592,7 @@ class WordPressPublishService
                 'rest_cannot_create'         => "Sem permissão para criar posts. Verifique se o usuário tem papel de Editor ou Administrador.",
                 'rest_cannot_edit'           => "Sem permissão para editar posts no WordPress.",
                 'incorrect_password'         => "Senha incorreta. Verifique se o Application Password foi copiado corretamente (formato: xxxx xxxx xxxx xxxx).",
-                'invalid_username'           => "Usuário '{$this->extractUsernameHint($body)}' não encontrado no WordPress. Use o nome de usuário exato (não e-mail, não nome de exibição).",
+                'invalid_username'           => "Usuário não encontrado no WordPress. Use o nome de usuário de login exato (não e-mail, não nome de exibição). Confira em WordPress › Usuários › Todos os usuários, coluna 'Nome de usuário'.",
                 'rest_forbidden'             => "Acesso negado pela API WordPress. Verifique se a REST API está habilitada no site.",
                 default                      => $clean,
             };
@@ -652,18 +652,6 @@ class WordPressPublishService
         }
 
         return strip_tags($text);
-    }
-
-    /**
-     * Tenta extrair o username da mensagem de erro do WordPress
-     */
-    private function extractUsernameHint(string $body): string
-    {
-        // WP às vezes inclui o username na mensagem de erro do JSON
-        if (preg_match('/"([^"]{2,50})"/', $body, $m)) {
-            return $m[1];
-        }
-        return '?';
     }
 
     /**
