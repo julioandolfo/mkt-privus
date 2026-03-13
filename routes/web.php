@@ -478,6 +478,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/connections/{connection}', [BlogController::class, 'destroyConnection'])->name('connections.destroy');
         Route::get('/connections/{connection}/categories', [BlogController::class, 'connectionCategories'])->name('connections.categories');
 
+        // Autopilot de blog
+        Route::get('/autopilot', [BlogController::class, 'autopilot'])->name('autopilot');
+        Route::post('/autopilot', [BlogController::class, 'saveAutopilot'])->name('autopilot.save');
+        Route::post('/autopilot/run', [BlogController::class, 'runAutopilot'])->name('autopilot.run');
+
         // Calendário editorial — ANTES das rotas com {article}
         Route::get('/calendar', [BlogController::class, 'calendar'])->name('calendar');
         Route::get('/calendar/items', [BlogController::class, 'calendarItems'])->name('calendar.items');

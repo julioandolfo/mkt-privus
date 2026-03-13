@@ -6,7 +6,9 @@ use App\Models\AnalyticsConnection;
 use App\Models\BlogArticle;
 use App\Models\BlogCalendarItem;
 use App\Models\BlogCategory;
+use App\Models\Brand;
 use App\Models\SystemLog;
+use App\Jobs\GenerateBlogAutopilotJob;
 use App\Services\Blog\BlogArticleService;
 use App\Services\Blog\BlogCalendarService;
 use App\Services\Blog\WordPressPublishService;
@@ -877,6 +879,84 @@ class BlogController extends Controller
             ->delete();
 
         return response()->json(['success' => true, 'deleted' => $deleted, 'message' => "{$deleted} pauta(s) removida(s)."]);
+    }
+
+    // ===== AUTOPILOT DE BLOG =====
+
+    public function autopilot(): Response
+    {
+        $brandId     = session('current_brand_id');
+        $brand       = Brand::find($brandId);
+        $cfg         = $brand?->getContentEngineConfig() ?? [];
+        $connections = $this->getWordPressConnections($brandId);
+        $categories  = BlogCategory::forBrand($brandId)->orderBy('name')->get(['id', 'name']);
+
+        return Inertia::render('Blog/Autopilot', [
+            'config'      => [
+                'enabled'          => (bool)  ($cfg['blog_autopilot_enabled']  ?? false),
+                'posts_per_week'   => (int)   ($cfg['blog_posts_per_week']     ?? 2),
+                'connection_id'    => (int|null)($cfg['blog_connection_id']    ?? null) ?: null,
+                'category_id'      => (int|null)($cfg['blog_category_id']      ?? null) ?: null,
+                'require_approval' => (bool)  ($cfg['blog_require_approval']   ?? true),
+                'tone'             => $cfg['blog_tone']                        ?? '',
+                'instructions'     => $cfg['blog_instructions']                ?? '',
+                'cover_width'      => (int)   ($cfg['blog_cover_width']        ?? 1750),
+                'cover_height'     => (int)   ($cfg['blog_cover_height']       ?? 650),
+            ],
+            'connections' => $connections,
+            'categories'  => $categories,
+        ]);
+    }
+
+    public function saveAutopilot(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'enabled'          => 'boolean',
+            'posts_per_week'   => 'integer|min:1|max:7',
+            'connection_id'    => 'nullable|integer|exists:analytics_connections,id',
+            'category_id'      => 'nullable|integer|exists:blog_categories,id',
+            'require_approval' => 'boolean',
+            'tone'             => 'nullable|string|max:100',
+            'instructions'     => 'nullable|string|max:2000',
+            'cover_width'      => 'nullable|integer|min:100|max:4000',
+            'cover_height'     => 'nullable|integer|min:100|max:4000',
+        ]);
+
+        $brandId = session('current_brand_id');
+        $brand   = Brand::findOrFail($brandId);
+
+        $brand->updateContentEngineConfig([
+            'blog_autopilot_enabled'  => $validated['enabled']          ?? false,
+            'blog_posts_per_week'     => $validated['posts_per_week']   ?? 2,
+            'blog_connection_id'      => $validated['connection_id']    ?? null,
+            'blog_category_id'        => $validated['category_id']      ?? null,
+            'blog_require_approval'   => $validated['require_approval'] ?? true,
+            'blog_tone'               => $validated['tone']             ?? '',
+            'blog_instructions'       => $validated['instructions']     ?? '',
+            'blog_cover_width'        => $validated['cover_width']      ?? 1750,
+            'blog_cover_height'       => $validated['cover_height']     ?? 650,
+        ]);
+
+        SystemLog::info('blog', 'autopilot.config_saved', 'Configurações de autopilot de blog salvas', [
+            'brand_id' => $brandId,
+            'enabled'  => $validated['enabled'] ?? false,
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Configurações salvas com sucesso.']);
+    }
+
+    public function runAutopilot(Request $request): JsonResponse
+    {
+        $brandId = session('current_brand_id');
+
+        GenerateBlogAutopilotJob::dispatch()->onQueue('default');
+
+        SystemLog::info('blog', 'autopilot.manual_run', 'Autopilot de blog disparado manualmente', [
+            'brand_id' => $brandId,
+            'user_id'  => Auth::id(),
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Autopilot iniciado! As pautas serão geradas em instantes.']);
     }
 
     // ===== PRIVATE =====

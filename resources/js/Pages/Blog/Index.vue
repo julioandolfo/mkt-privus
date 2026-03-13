@@ -120,9 +120,17 @@ async function publishArticle(id: number) {
                     <h1 class="text-xl font-semibold text-white">Blog</h1>
                     <p class="text-sm text-gray-500 mt-0.5">Gerencie artigos e publique no WordPress</p>
                 </div>
-                <Link :href="route('blog.create')" class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition">
-                    + Novo Artigo
-                </Link>
+                <div class="flex items-center gap-2">
+                    <Link :href="route('blog.autopilot')" class="rounded-xl border border-gray-700 px-3 py-2 text-xs text-gray-400 hover:text-white transition flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Autopilot
+                    </Link>
+                    <Link :href="route('blog.create')" class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition">
+                        + Novo Artigo
+                    </Link>
+                </div>
             </div>
         </template>
 

@@ -205,6 +205,9 @@ Schedule::call(function () {
 // Gerar artigos de blog com IA - 1x por dia às 9h
 Schedule::job(new \App\Jobs\GenerateBlogArticlesJob)->dailyAt('09:00')->withoutOverlapping(30);
 
+// Autopilot de blog: gera pautas + artigos semanalmente (segunda às 07h)
+Schedule::job(new \App\Jobs\GenerateBlogAutopilotJob)->weeklyOn(1, '07:00')->withoutOverlapping(120);
+
 // Publicar artigos agendados - a cada 5 minutos
 Schedule::call(function () {
     if (!\Illuminate\Support\Facades\Schema::hasTable('blog_articles')) return;
