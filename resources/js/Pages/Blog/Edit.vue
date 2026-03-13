@@ -64,6 +64,14 @@ const wordCount = computed(() => {
     return form.content.replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length;
 });
 
+const filteredCategories = computed(() => {
+    if (!form.wordpress_connection_id) return props.categories;
+    return props.categories.filter(c =>
+        c.wordpress_connection_id === form.wordpress_connection_id ||
+        c.wordpress_connection_id === null
+    );
+});
+
 const seoScore = computed(() => {
     let score = 0;
     if (form.meta_title) score += 15;
@@ -340,7 +348,7 @@ async function uploadCover(event: Event) {
                     <select v-model="form.blog_category_id"
                         class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500">
                         <option :value="null">Sem categoria</option>
-                        <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+                        <option v-for="c in filteredCategories" :key="c.id" :value="c.id">{{ c.name }}</option>
                     </select>
                 </div>
                 <div>

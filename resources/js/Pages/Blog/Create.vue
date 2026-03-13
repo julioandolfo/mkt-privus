@@ -191,6 +191,15 @@ const wordCount = computed(() => {
     return form.content.replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length;
 });
 
+const filteredCategories = computed(() => {
+    if (!form.wordpress_connection_id) return props.categories;
+    // Mostrar categorias vinculadas à conexão selecionada + categorias sem vínculo
+    return props.categories.filter(c =>
+        c.wordpress_connection_id === form.wordpress_connection_id ||
+        c.wordpress_connection_id === null
+    );
+});
+
 const seoScore = computed(() => {
     let score = 0;
     if (form.meta_title) score += 15;
@@ -258,7 +267,16 @@ const seoScore = computed(() => {
                     </div>
                 </div>
 
-                <!-- AI Topic suggestions -->
+                <!-- Categoria padrão -->
+                <div class="mb-4">
+                    <label class="text-sm text-gray-400 mb-1 block">Categoria do artigo</label>
+                    <select v-model="form.blog_category_id"
+                        class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        <option :value="null">Sem categoria</option>
+                        <option v-for="c in filteredCategories" :key="c.id" :value="c.id">{{ c.name }}</option>
+                    </select>
+                    <p class="text-[10px] text-gray-600 mt-1">O artigo será publicado nessa categoria no WordPress.</p>
+                </div>
                 <div class="mb-4">
                     <div class="flex items-center justify-between mb-2">
                         <label class="text-sm text-gray-400">Tema do artigo *</label>
@@ -430,7 +448,7 @@ const seoScore = computed(() => {
                         <select v-model="form.blog_category_id"
                             class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500">
                             <option :value="null">Sem categoria</option>
-                            <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+                            <option v-for="c in filteredCategories" :key="c.id" :value="c.id">{{ c.name }}</option>
                         </select>
                     </div>
                     <div>
