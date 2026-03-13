@@ -68,6 +68,7 @@ const navigation: NavItem[] = [
             { name: 'Calendário', href: 'blog.calendar', routeMatch: 'blog.calendar*' },
             { name: 'Novo Artigo', href: 'blog.create', routeMatch: 'blog.create' },
             { name: 'Categorias', href: 'blog.categories', routeMatch: 'blog.categories*' },
+            { name: 'Autopilot', href: 'blog.autopilot', routeMatch: 'blog.autopilot*' },
         ],
     },
     {
