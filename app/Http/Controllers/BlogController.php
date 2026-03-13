@@ -605,12 +605,22 @@ class BlogController extends Controller
             $config['wp_app_password'] = $request->input('wp_app_password');
         }
 
+        // Testar conexão com as credenciais atualizadas
+        $testConnection = new AnalyticsConnection(['config' => $config]);
+        $testResult = $this->wpService->testConnection($testConnection);
+
+        if (!$testResult['success']) {
+            return response()->json(['success' => false, 'error' => $testResult['error']]);
+        }
+
         $connection->update([
             'name'   => $request->input('name'),
             'config' => $config,
+            'sync_status' => 'success',
+            'last_synced_at' => now(),
         ]);
 
-        return response()->json(['success' => true, 'message' => 'Conexão atualizada com sucesso.']);
+        return response()->json(['success' => true, 'message' => 'Conexão atualizada e testada com sucesso.']);
     }
 
     public function destroyConnection(AnalyticsConnection $connection): JsonResponse

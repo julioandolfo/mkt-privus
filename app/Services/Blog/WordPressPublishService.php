@@ -75,6 +75,15 @@ class WordPressPublishService
         $article->update(['status' => 'publishing']);
 
         try {
+            // Debug: logar credenciais usadas (sem expor a senha)
+            SystemLog::info('blog', 'article.publish_attempt', "Tentando publicar artigo no WordPress", [
+                'article_id'    => $article->id,
+                'connection_id' => $connection->id,
+                'site_url'      => $baseUrl,
+                'wp_username'   => $auth['user'],
+                'pass_length'   => strlen($auth['pass']),
+                'pass_first4'   => substr($auth['pass'], 0, 4) . '...',
+            ]);
             // 1. Upload da imagem de capa (se existir)
             $featuredMediaId = null;
             if ($article->cover_image_path) {
@@ -161,9 +170,11 @@ class WordPressPublishService
             $article->update(['status' => 'failed']);
 
             SystemLog::error('blog', 'article.publish_error', "Falha ao publicar: {$errorMsg}", [
-                'article_id' => $article->id,
-                'status' => $response->status(),
-                'response' => substr($response->body(), 0, 500),
+                'article_id'    => $article->id,
+                'status'        => $response->status(),
+                'wp_username'   => $auth['user'],
+                'content_type'  => $response->header('Content-Type'),
+                'response_raw'  => substr($response->body(), 0, 800),
             ]);
 
             return ['success' => false, 'error' => $errorMsg];
