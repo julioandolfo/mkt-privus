@@ -5,6 +5,16 @@ import { Head, Link, usePage, router } from '@inertiajs/vue3';
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import axios from 'axios';
 
+interface AIModelOption {
+    value: string;
+    label: string;
+    provider: string;
+}
+
+const props = defineProps<{
+    aiModels: AIModelOption[];
+}>();
+
 const page = usePage();
 const currentBrand = computed(() => page.props.currentBrand as any);
 const brands = computed(() => (page.props.brands || []) as any[]);
@@ -72,7 +82,7 @@ const generateForm = ref({
     platforms: ['instagram'] as string[],
     categories: [] as string[],
     tone: '',
-    ai_model: 'gemini-2.0-flash',
+    ai_model: props.aiModels[0]?.value || 'gpt-4o-mini',
     instructions: '',
     format_mode: 'auto' as 'auto' | 'manual',
     post_types: [] as string[],
@@ -145,14 +155,7 @@ const postTypeLabels: Record<string, string> = {
     feed: 'Feed', carousel: 'Carousel', story: 'Story', reel: 'Reel', video: 'Video', pin: 'Pin',
 };
 
-const aiModels = [
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
-    { value: 'gemini-2.0-pro', label: 'Gemini 2.0 Pro' },
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' },
-    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
-];
+const aiModels = props.aiModels;
 
 // Calendar computations
 const currentMonth = computed(() => currentDate.value.getMonth());
@@ -814,7 +817,7 @@ onMounted(fetchCalendarData);
                             <div>
                                 <label class="text-xs text-gray-400 mb-1 block">Modelo IA</label>
                                 <select v-model="generateForm.ai_model" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white">
-                                    <option v-for="m in aiModels" :key="m.value" :value="m.value">{{ m.label }}</option>
+                                    <option v-for="m in aiModels" :key="m.value" :value="m.value">{{ m.label }} ({{ m.provider }})</option>
                                 </select>
                             </div>
                         </div>

@@ -984,7 +984,9 @@ class PostController extends Controller
      */
     public function calendar(): Response
     {
-        return Inertia::render('Social/Calendar/Index');
+        return Inertia::render('Social/Calendar/Index', [
+            'aiModels' => $this->getAIModelOptions(),
+        ]);
     }
 
     /**
@@ -1282,7 +1284,7 @@ class PostController extends Controller
 
     private function getAIModelOptions(): array
     {
-        return collect(AIModel::cases())->map(fn($m) => [
+        return collect(AIModel::availableCases())->map(fn($m) => [
             'value' => $m->value,
             'label' => $m->label(),
             'provider' => $m->provider()->label(),

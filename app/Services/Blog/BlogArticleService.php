@@ -371,14 +371,34 @@ PROMPT;
     private function buildCoverImagePrompt(Brand $brand, string $title, string $excerpt): string
     {
         $segment = $brand->segment ?? 'negócio';
-        $colors = "cores predominantes: {$brand->primary_color} e {$brand->secondary_color}";
 
-        return "Create a professional, modern blog cover image for an article titled \"{$title}\". "
-            . "The image should be clean, visually appealing, and suitable for a {$segment} brand. "
-            . "Style: modern, minimalist, professional. {$colors}. "
-            . "Do NOT include any text or words in the image. "
-            . "The image should convey the essence of the article topic through visual metaphors and composition. "
-            . ($excerpt ? "Article context: {$excerpt}" : '');
+        $prompt = "Create a REALISTIC, photographic-style blog cover image for a Brazilian brand article. ";
+        $prompt .= "Article title (in Portuguese): \"{$title}\". ";
+        $prompt .= "The image must look like a real professional photograph — NOT an illustration, NOT a cartoon, NOT digital art. ";
+        $prompt .= "Brand: {$brand->name} ({$segment}). ";
+
+        if ($brand->primary_color) {
+            $prompt .= "Brand colors: {$brand->primary_color}";
+            if ($brand->secondary_color) $prompt .= " and {$brand->secondary_color}";
+            $prompt .= " — use subtly in lighting, background tones, or props. ";
+        }
+
+        // Contexto de produtos para imagens mais relevantes
+        $products = $brand->products()->limit(3)->get();
+        if ($products->isNotEmpty()) {
+            $productNames = $products->pluck('label')->implode(', ');
+            $prompt .= "The brand sells: {$productNames}. Include relevant products or similar items in the composition when the topic relates to them. ";
+        }
+
+        $prompt .= "Style: clean editorial photography, natural lighting, real textures, warm tones, professional studio quality. ";
+        $prompt .= "Think: magazine cover photo, editorial spread, lifestyle product shot. ";
+        $prompt .= "Do NOT include any text or words in the image — text will be added separately as overlay. ";
+
+        if ($excerpt) {
+            $prompt .= "Article context: " . mb_substr($excerpt, 0, 200);
+        }
+
+        return $prompt;
     }
 
     private function parseArticleResponse(string $content): array

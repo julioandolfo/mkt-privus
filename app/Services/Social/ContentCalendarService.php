@@ -38,7 +38,7 @@ class ContentCalendarService
         $platforms = $options['platforms'] ?? ['instagram'];
         $categories = $options['categories'] ?? [];
         $tone = $options['tone'] ?? $brand->tone_of_voice ?? 'profissional e acessivel';
-        $aiModel = $options['ai_model'] ?? 'gemini-2.0-flash';
+        $aiModel = $options['ai_model'] ?? AIModel::defaultModel()->value;
         $extraInstructions = $options['instructions'] ?? '';
         $batchStatus = $options['batch_status'] ?? null; // 'draft' para geracao automatica, null para manual
         $formatMode = $options['format_mode'] ?? 'auto'; // 'auto' ou 'manual'
@@ -189,8 +189,8 @@ class ContentCalendarService
 
         $brandContext = $brand->getAIContext();
         $platform = $item->platforms[0] ?? 'instagram';
-        $aiModel = $item->ai_model_used ? AIModel::tryFrom($item->ai_model_used) : AIModel::GeminiFlash;
-        if (!$aiModel) $aiModel = AIModel::GeminiFlash;
+        $aiModel = $item->ai_model_used ? AIModel::tryFrom($item->ai_model_used) : AIModel::defaultModel();
+        if (!$aiModel) $aiModel = AIModel::defaultModel();
 
         $prompt = $this->buildPostPrompt($brandContext, $item);
 
@@ -212,7 +212,7 @@ class ContentCalendarService
             );
 
             $hashtagResponse = $this->aiGateway->chat(
-                model: AIModel::GeminiFlash,
+                model: AIModel::defaultModel(),
                 messages: [
                     ['role' => 'system', 'content' => $hashtagPrompt],
                     ['role' => 'user', 'content' => "Gere hashtags para esta legenda sobre \"{$item->title}\":\n\n{$captionResponse['content']}"],

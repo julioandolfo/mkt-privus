@@ -43,4 +43,48 @@ enum AIModel: string
             self::GeminiPro => 2000000,
         };
     }
+
+    public function isAvailable(): bool
+    {
+        $envKey = $this->provider()->envKey();
+        $key = config('services.' . $this->serviceConfigKey()) ?: env($envKey);
+        return !empty($key);
+    }
+
+    private function serviceConfigKey(): string
+    {
+        return match ($this->provider()) {
+            AIProvider::OpenAI => 'openai.api_key',
+            AIProvider::Anthropic => 'anthropic.api_key',
+            AIProvider::Google => 'gemini.api_key',
+        };
+    }
+
+    /**
+     * Retorna apenas modelos que possuem API key configurada,
+     * priorizando OpenAI no topo da lista.
+     */
+    public static function availableCases(): array
+    {
+        $available = collect(self::cases())
+            ->filter(fn(self $m) => $m->isAvailable());
+
+        // OpenAI primeiro, depois demais providers em ordem
+        return $available->sortBy(function (self $m) {
+            return match ($m->provider()) {
+                AIProvider::OpenAI => 0,
+                AIProvider::Anthropic => 1,
+                AIProvider::Google => 2,
+            };
+        })->values()->toArray();
+    }
+
+    /**
+     * Retorna o melhor modelo padrão (OpenAI preferido).
+     */
+    public static function defaultModel(): self
+    {
+        $available = self::availableCases();
+        return $available[0] ?? self::GPT4oMini;
+    }
 }

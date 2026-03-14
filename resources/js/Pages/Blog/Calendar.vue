@@ -36,6 +36,7 @@ interface DraftBatch {
 const props = defineProps<{
     categories: { id: number; name: string }[];
     connections: { id: number; name: string; platform: string; platform_label: string; site_url: string }[];
+    aiModels: { value: string; label: string; provider: string }[];
 }>();
 
 const currentDate = ref(new Date());
@@ -54,7 +55,7 @@ const generateForm = ref({
     instructions: '',
     wordpress_connection_id: null as number | null,
     blog_category_id: null as number | null,
-    ai_model: 'gpt-4o-mini',
+    ai_model: props.aiModels[0]?.value || 'gpt-4o-mini',
     cover_width: 1750,
     cover_height: 650,
 });

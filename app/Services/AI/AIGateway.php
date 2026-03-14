@@ -152,11 +152,12 @@ class AIGateway
         // Enriquecer prompt com contexto visual da marca
         $enhancedPrompt = $prompt;
         if ($brand) {
-            $brandHints = "Style context: Brand '{$brand->name}'";
-            if ($brand->primary_color) $brandHints .= ", primary color {$brand->primary_color}";
-            if ($brand->secondary_color) $brandHints .= ", secondary color {$brand->secondary_color}";
-            if ($brand->segment) $brandHints .= ", segment: {$brand->segment}";
-            $enhancedPrompt = "{$brandHints}. {$prompt}";
+            $brandHints = "Brand: '{$brand->name}'";
+            if ($brand->segment) $brandHints .= " ({$brand->segment})";
+            if ($brand->primary_color) $brandHints .= ". Colors: {$brand->primary_color}";
+            if ($brand->secondary_color) $brandHints .= ", {$brand->secondary_color}";
+            $brandHints .= ". IMPORTANT: Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art.";
+            $enhancedPrompt = "{$brandHints}\n\n{$prompt}";
         }
 
         // Limitar a 4000 chars (limite DALL-E 3)
@@ -222,50 +223,61 @@ class AIGateway
         ?string $imageStyle = null,
     ): string {
         $aspectRatio = match ($postType) {
-            'story', 'reel' => 'portrait (9:16)',
-            'video' => 'landscape (16:9)',
-            default => 'square (1:1)',
+            'story', 'reel' => 'portrait 9:16',
+            'video' => 'landscape 16:9',
+            default => 'square 1:1',
         };
 
-        $prompt = "Create a professional social media post image for {$platform}. ";
-        $prompt .= "Format: {$aspectRatio}. ";
+        $prompt = "Create a REALISTIC, photographic-style image for a Brazilian social media post ({$platform}, {$aspectRatio}). ";
+        $prompt .= "The image should look like a real high-quality professional photograph, NOT an illustration, NOT a cartoon, NOT a digital art piece. ";
         $prompt .= "Topic: {$topic}. ";
 
         if ($imageStyle) {
             $prompt .= "Visual style: {$imageStyle}. ";
         } else {
-            $prompt .= "Style: modern, clean, professional, high quality. ";
+            $prompt .= "Style: realistic product photography, professional studio lighting, clean modern composition, warm and inviting, Brazilian marketing aesthetic. ";
         }
 
         if ($brand->segment) {
-            $prompt .= "Industry: {$brand->segment}. ";
+            $prompt .= "Industry/segment: {$brand->segment}. ";
         }
 
         if ($brand->primary_color) {
-            $prompt .= "Use brand colors: primary {$brand->primary_color}";
+            $prompt .= "Brand color palette: primary {$brand->primary_color}";
             if ($brand->secondary_color) $prompt .= ", secondary {$brand->secondary_color}";
             if ($brand->accent_color) $prompt .= ", accent {$brand->accent_color}";
-            $prompt .= ". ";
+            $prompt .= ". Use these colors subtly in the background, props, or lighting tones — NOT as flat graphic overlays. ";
+        }
+
+        // Produtos: descrição detalhada para gerar imagens com produtos reais
+        $products = $brand->products()->limit(5)->get();
+        if ($products->isNotEmpty()) {
+            $productDescriptions = $products->map(function ($p) {
+                $desc = $p->label;
+                if (!empty($p->description)) $desc .= " ({$p->description})";
+                return $desc;
+            })->implode('; ');
+            $prompt .= "The brand sells these products: {$productDescriptions}. ";
+            $prompt .= "IMPORTANT: Create a product photography composition showing these products or similar items in a real-world context (on a table, being used, in packaging, lifestyle setting). ";
         }
 
         $mascot = $brand->mascots()->primary()->first() ?? $brand->mascots()->first();
         if ($mascot) {
-            $prompt .= "The brand has a mascot/character named \"{$mascot->label}\". When relevant to the topic, include a friendly character or mascot figure in the image. ";
+            $mascotDesc = $mascot->label;
+            if (!empty($mascot->description)) $mascotDesc .= ": {$mascot->description}";
+            $prompt .= "The brand has a mascot: \"{$mascotDesc}\". Include it only when it naturally fits the topic. ";
         }
 
-        $hasProducts = $brand->products()->exists();
-        if ($hasProducts) {
-            $prompt .= "The brand sells physical/digital products. When the topic is product-related, create a product showcase-style composition. ";
-        }
-
-        $captionEssence = mb_substr(strip_tags($caption), 0, 150);
+        $captionEssence = mb_substr(strip_tags($caption), 0, 200);
         if ($captionEssence) {
-            $prompt .= "Content context: \"{$captionEssence}\". ";
+            $prompt .= "Post caption context (in Portuguese): \"{$captionEssence}\". ";
         }
 
-        $prompt .= "Do NOT include any text, words or letters in the image. ";
-        $prompt .= "The image should be purely visual/photographic/illustrative. ";
-        $prompt .= "Make it eye-catching and suitable for a social media feed.";
+        // Regras de texto na imagem
+        $prompt .= "If the topic naturally calls for text (promotions, announcements, tips), include SHORT text IN PORTUGUESE (Brazilian Portuguese) as clean overlay typography. ";
+        $prompt .= "If no text is needed, keep the image purely photographic. ";
+        $prompt .= "The final result must look like a real Instagram post from a professional Brazilian brand — NOT like AI-generated art, NOT like a tech illustration. ";
+        $prompt .= "Think: product photos, lifestyle shots, studio photography, real textures, natural lighting.";
 
         return $prompt;
     }

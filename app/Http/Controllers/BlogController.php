@@ -653,9 +653,16 @@ class BlogController extends Controller
         $categories = BlogCategory::forBrand($brandId)->orderBy('name')->get(['id', 'name']);
         $connections = $this->getWordPressConnections($brandId);
 
+        $aiModels = collect(\App\Enums\AIModel::availableCases())->map(fn($m) => [
+            'value' => $m->value,
+            'label' => $m->label(),
+            'provider' => $m->provider()->label(),
+        ])->toArray();
+
         return Inertia::render('Blog/Calendar', [
             'categories' => $categories,
             'connections' => $connections,
+            'aiModels' => $aiModels,
         ]);
     }
 
