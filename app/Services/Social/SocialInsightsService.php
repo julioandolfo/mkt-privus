@@ -176,6 +176,11 @@ class SocialInsightsService
             $data['posts_count'] = $p['media_count'] ?? null;
             $data['platform_data']['username'] = $p['username'] ?? null;
             $data['platform_data']['biography'] = $p['biography'] ?? null;
+
+            $freshAvatar = $p['profile_picture_url'] ?? null;
+            if ($freshAvatar) {
+                $account->update(['avatar_url' => $freshAvatar]);
+            }
         }
 
         // 2. Insights do perfil (ultimos 28 dias)
@@ -733,6 +738,15 @@ class SocialInsightsService
             $data['followers_count'] = $p['followers_count'] ?? $p['fan_count'] ?? null;
             $data['platform_data']['fan_count'] = $p['fan_count'] ?? null;
             $data['platform_data']['category'] = $p['category'] ?? null;
+
+            $pic = Http::get("https://graph.facebook.com/{$apiVersion}/{$pageId}/picture", [
+                'access_token' => $token,
+                'redirect' => 'false',
+                'type' => 'large',
+            ]);
+            if ($pic->successful() && ($picUrl = $pic->json('data.url'))) {
+                $account->update(['avatar_url' => $picUrl]);
+            }
         }
 
         // 2. Page Insights (ultimos 7 dias, somando diarios)
@@ -867,6 +881,11 @@ class SocialInsightsService
             $data['posts_count'] = (int) ($stats['videoCount'] ?? 0);
             $data['video_views'] = (int) ($stats['viewCount'] ?? 0);
             $data['platform_data']['total_views'] = (int) ($stats['viewCount'] ?? 0);
+
+            $freshAvatar = $channel->json('items.0.snippet.thumbnails.default.url');
+            if ($freshAvatar) {
+                $account->update(['avatar_url' => $freshAvatar]);
+            }
         }
 
         // 2. YouTube Analytics (ultimos 30 dias) - requer youtube.readonly scope
@@ -949,6 +968,11 @@ class SocialInsightsService
             $data['following_count'] = $u['following_count'] ?? null;
             $data['likes'] = $u['likes_count'] ?? null;
             $data['posts_count'] = $u['video_count'] ?? null;
+
+            $freshAvatar = $u['avatar_url'] ?? null;
+            if ($freshAvatar) {
+                $account->update(['avatar_url' => $freshAvatar]);
+            }
         }
 
         // Video list para engagement recente
@@ -1076,6 +1100,11 @@ class SocialInsightsService
             $u = $user->json();
             $data['followers_count'] = $u['follower_count'] ?? null;
             $data['posts_count'] = $u['pin_count'] ?? null;
+
+            $freshAvatar = $u['profile_image'] ?? null;
+            if ($freshAvatar) {
+                $account->update(['avatar_url' => $freshAvatar]);
+            }
         }
 
         // Analytics (ultimos 30 dias)

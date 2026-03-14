@@ -379,7 +379,7 @@ const typeGroups = computed(() => [
                                             v-if="account.avatar_url"
                                             :src="account.avatar_url"
                                             class="w-10 h-10 rounded-full object-cover"
-                                            @error="($event.target as HTMLImageElement).style.display = 'none'"
+                                            @error="() => { account.avatar_url = null }"
                                         />
                                         <div v-else class="w-10 h-10 rounded-full flex items-center justify-center" :class="platformInfo[account.platform]?.bgColor ?? 'bg-gray-700'">
                                             <svg class="w-5 h-5" :style="{ color: platformInfo[account.platform]?.color ?? '#888' }" viewBox="0 0 24 24" fill="currentColor">

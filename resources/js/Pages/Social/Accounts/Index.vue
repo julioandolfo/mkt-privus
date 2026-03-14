@@ -520,8 +520,8 @@ function formatNumber(num: number | null | undefined): string {
                             <div class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-800/30 transition">
                                 <!-- Avatar -->
                                 <div class="relative shrink-0">
-                                    <img v-if="account.avatar_url" :src="account.avatar_url" :alt="account.display_name || account.username" class="w-10 h-10 rounded-xl object-cover" />
-                                    <div v-else class="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold" :style="{ backgroundColor: account.platform_color }">
+                                    <img v-if="account.avatar_url" :src="account.avatar_url" :alt="account.display_name || account.username" class="w-10 h-10 rounded-xl object-cover" @error="($event: Event) => (($event.target as HTMLImageElement).style.display = 'none', account.avatar_url = null)" />
+                                    <div v-if="!account.avatar_url" class="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold" :style="{ backgroundColor: account.platform_color }">
                                         {{ (account.display_name || account.username || 'A')[0].toUpperCase() }}
                                     </div>
                                 </div>

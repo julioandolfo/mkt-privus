@@ -759,8 +759,8 @@ const periodOptions = [
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     <div v-for="account in socialAccounts" :key="account.id" class="rounded-2xl bg-gray-900 border border-gray-800 p-4">
                         <div class="flex items-center gap-3 mb-3">
-                            <img v-if="account.avatar_url" :src="account.avatar_url" class="w-10 h-10 rounded-xl object-cover" @error="($event.target as HTMLImageElement).style.display = 'none'" />
-                            <div v-else class="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold" :class="platformInfo[account.platform]?.bg ?? 'bg-gray-700'" :style="{ color: platformInfo[account.platform]?.color ?? '#888' }">
+                            <img v-if="account.avatar_url" :src="account.avatar_url" class="w-10 h-10 rounded-xl object-cover" @error="() => { account.avatar_url = null }" />
+                            <div v-if="!account.avatar_url" class="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold" :class="platformInfo[account.platform]?.bg ?? 'bg-gray-700'" :style="{ color: platformInfo[account.platform]?.color ?? '#888' }">
                                 {{ (account.display_name || account.username || 'A')[0].toUpperCase() }}
                             </div>
                             <div class="min-w-0 flex-1">
