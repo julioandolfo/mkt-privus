@@ -886,22 +886,24 @@ class BlogController extends Controller
     public function autopilot(): Response
     {
         $brandId     = session('current_brand_id');
-        $brand       = Brand::find($brandId);
-        $cfg         = $brand?->getContentEngineConfig() ?? [];
+        $brand       = $brandId ? Brand::find($brandId) : null;
+        $cfg         = $brand ? $brand->getContentEngineConfig() : [];
         $connections = $this->getWordPressConnections($brandId);
-        $categories  = BlogCategory::forBrand($brandId)->orderBy('name')->get(['id', 'name']);
+        $categories  = $brandId
+            ? BlogCategory::forBrand($brandId)->orderBy('name')->get(['id', 'name'])
+            : collect();
 
         return Inertia::render('Blog/Autopilot', [
             'config'      => [
-                'enabled'          => (bool)  ($cfg['blog_autopilot_enabled']  ?? false),
-                'posts_per_week'   => (int)   ($cfg['blog_posts_per_week']     ?? 2),
-                'connection_id'    => $cfg['blog_connection_id']  ? (int) $cfg['blog_connection_id']  : null,
-                'category_id'      => $cfg['blog_category_id']   ? (int) $cfg['blog_category_id']    : null,
-                'require_approval' => (bool)  ($cfg['blog_require_approval']   ?? true),
-                'tone'             => $cfg['blog_tone']                        ?? '',
-                'instructions'     => $cfg['blog_instructions']                ?? '',
-                'cover_width'      => (int)   ($cfg['blog_cover_width']        ?? 1750),
-                'cover_height'     => (int)   ($cfg['blog_cover_height']       ?? 650),
+                'enabled'          => (bool) ($cfg['blog_autopilot_enabled'] ?? false),
+                'posts_per_week'   => (int)  ($cfg['blog_posts_per_week']   ?? 2),
+                'connection_id'    => !empty($cfg['blog_connection_id']) ? (int) $cfg['blog_connection_id'] : null,
+                'category_id'      => !empty($cfg['blog_category_id'])  ? (int) $cfg['blog_category_id']  : null,
+                'require_approval' => (bool) ($cfg['blog_require_approval'] ?? true),
+                'tone'             => $cfg['blog_tone']           ?? '',
+                'instructions'     => $cfg['blog_instructions']   ?? '',
+                'cover_width'      => (int)  ($cfg['blog_cover_width']  ?? 1750),
+                'cover_height'     => (int)  ($cfg['blog_cover_height'] ?? 650),
             ],
             'connections' => $connections,
             'categories'  => $categories,
