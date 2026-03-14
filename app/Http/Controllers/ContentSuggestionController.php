@@ -28,10 +28,12 @@ class ContentSuggestionController extends Controller
                 'stats' => $this->emptyStats(),
                 'suggestions' => [],
                 'recentApproved' => [],
+                'highlightId' => null,
             ]);
         }
 
-        // Stats
+        $highlightId = $request->query('suggestion') ? (int) $request->query('suggestion') : null;
+
         $stats = [
             'pending' => $brand->contentSuggestions()->pending()->count(),
             'approved_today' => $brand->contentSuggestions()
@@ -43,16 +45,26 @@ class ContentSuggestionController extends Controller
             'rules_active' => $brand->contentRules()->active()->count(),
         ];
 
-        // Sugestoes pendentes
-        $suggestions = $brand->contentSuggestions()
+        $suggestionsQuery = $brand->contentSuggestions()
             ->pending()
             ->with('contentRule:id,name,category')
             ->orderByDesc('created_at')
-            ->limit(30)
-            ->get()
+            ->limit(30);
+
+        $suggestions = $suggestionsQuery->get()
             ->map(fn($s) => $this->formatSuggestion($s));
 
-        // Recentes aprovadas/convertidas
+        // Se highlight_id não está nos pendentes, buscar separadamente
+        $highlightedSuggestion = null;
+        if ($highlightId && !$suggestions->contains('id', $highlightId)) {
+            $hl = $brand->contentSuggestions()
+                ->with('contentRule:id,name,category')
+                ->find($highlightId);
+            if ($hl) {
+                $highlightedSuggestion = $this->formatSuggestion($hl);
+            }
+        }
+
         $recentApproved = $brand->contentSuggestions()
             ->whereIn('status', ['approved', 'converted'])
             ->with('contentRule:id,name')
@@ -65,6 +77,8 @@ class ContentSuggestionController extends Controller
             'stats' => $stats,
             'suggestions' => $suggestions,
             'recentApproved' => $recentApproved,
+            'highlightId' => $highlightId,
+            'highlightedSuggestion' => $highlightedSuggestion,
         ]);
     }
 

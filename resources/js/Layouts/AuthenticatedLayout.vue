@@ -36,6 +36,7 @@ const navigation: NavItem[] = [
             { name: 'Posts', href: 'social.posts.index', routeMatch: 'social.posts.*' },
             { name: 'Calendário', href: 'social.calendar.index', routeMatch: 'social.calendar.*' },
             { name: 'Content Engine', href: 'social.content-engine.index', routeMatch: 'social.content-engine.*' },
+            { name: 'Sugestões IA', href: 'social.content-engine.suggestions.index', routeMatch: 'social.content-engine.suggestions.*' },
             { name: 'Autopilot', href: 'social.autopilot.index', routeMatch: 'social.autopilot.*' },
             { name: 'Contas', href: 'social.accounts.index', routeMatch: 'social.accounts.*' },
         ],

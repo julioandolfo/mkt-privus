@@ -270,6 +270,14 @@ async function generatePostFromItem(itemId: number) {
         const res = await axios.post(route('social.calendar.content.generate-post', itemId));
         generateResult.value = res.data.message;
         await fetchCalendarData();
+        // Atualizar selectedItem com suggestion_id para mostrar link "Ver Sugestão"
+        if (selectedItem.value && selectedItem.value.id === itemId && res.data.suggestion_id) {
+            selectedItem.value = {
+                ...selectedItem.value,
+                suggestion_id: res.data.suggestion_id,
+                status: 'generated',
+            };
+        }
     } catch (e: any) {
         alert(e.response?.data?.error || 'Erro ao gerar post.');
     } finally {
@@ -891,13 +899,19 @@ onMounted(fetchCalendarData);
                         <p class="text-xs text-amber-300">Esta pauta foi gerada automaticamente pela IA e aguarda sua aprovacao. Edite se necessario e aprove para ativa-la.</p>
                     </div>
 
+                    <!-- Post gerado -->
+                    <div v-if="selectedItem.status === 'generated' && selectedItem.suggestion_id" class="mt-4 rounded-xl bg-emerald-900/20 border border-emerald-700/30 px-4 py-3">
+                        <p class="text-xs text-emerald-300 font-medium mb-1">Post gerado com sucesso!</p>
+                        <p class="text-xs text-emerald-400/70">A sugestão inclui legenda, hashtags e imagem gerada pela IA. Clique em "Ver Sugestão" para revisar, aprovar ou rejeitar.</p>
+                    </div>
+
                     <div class="flex items-center justify-between mt-5 pt-4 border-t border-gray-800">
                         <div class="flex items-center gap-2">
                             <button v-if="selectedItem.status === 'pending'" @click="deleteItem(selectedItem.id)" class="rounded-xl px-3 py-2 text-xs text-red-400 hover:text-red-300 border border-red-800/50 hover:border-red-700 transition">
                                 Remover
                             </button>
-                            <Link v-if="selectedItem.suggestion_id" :href="route('social.content-engine.index')" class="rounded-xl px-3 py-2 text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-800/50 transition">
-                                Ver no Content Engine
+                            <Link v-if="selectedItem.suggestion_id" :href="route('social.content-engine.suggestions.index', { suggestion: selectedItem.suggestion_id })" class="rounded-xl px-3 py-2 text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-800/50 transition">
+                                Ver Sugestão
                             </Link>
                         </div>
                         <div class="flex items-center gap-2">

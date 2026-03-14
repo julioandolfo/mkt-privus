@@ -53,13 +53,15 @@ interface Props {
     };
     suggestions: Suggestion[];
     recentApproved: Suggestion[];
+    highlightId: number | null;
+    highlightedSuggestion: Suggestion | null;
 }
 
 const props = defineProps<Props>();
 const page = usePage();
 const currentBrand = computed(() => page.props.currentBrand);
 
-const expandedId = ref<number | null>(null);
+const expandedId = ref<number | null>(props.highlightId);
 const rejectingId = ref<number | null>(null);
 const rejectReason = ref('');
 const generating = ref(false);
@@ -192,6 +194,40 @@ async function generateSmart() {
                 <button @click="selectedIds = []" class="text-sm text-gray-400 hover:text-white transition">Limpar</button>
             </div>
 
+            <!-- Sugestão destacada (vinda do calendário) -->
+            <div v-if="highlightedSuggestion" class="rounded-2xl bg-indigo-950/30 border border-indigo-500/30 mb-6 p-5">
+                <div class="flex items-center gap-2 mb-3">
+                    <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                    <h2 class="text-sm font-semibold text-indigo-300">Sugestão do Calendário</h2>
+                    <span :class="['rounded-md border px-1.5 py-0.5 text-[10px] font-medium', 'bg-' + highlightedSuggestion.status_color + '-500/20 border-' + highlightedSuggestion.status_color + '-500/30 text-' + highlightedSuggestion.status_color + '-400']">
+                        {{ highlightedSuggestion.status_label }}
+                    </span>
+                </div>
+                <p v-if="highlightedSuggestion.title" class="text-sm font-medium text-gray-200 mb-2">{{ highlightedSuggestion.title }}</p>
+                <div v-if="highlightedSuggestion.has_generated_image && highlightedSuggestion.generated_image_url" class="mb-3">
+                    <div class="relative inline-block rounded-xl overflow-hidden border border-gray-700">
+                        <img :src="highlightedSuggestion.generated_image_url" :alt="highlightedSuggestion.title || 'Imagem'" class="max-h-56 w-auto rounded-xl object-cover" />
+                        <span class="absolute top-2 left-2 rounded-md bg-purple-600/90 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">DALL-E 3</span>
+                    </div>
+                </div>
+                <p class="text-sm text-gray-300 whitespace-pre-line mb-2">{{ highlightedSuggestion.caption }}</p>
+                <div v-if="highlightedSuggestion.hashtags?.length" class="flex flex-wrap gap-1.5 mb-3">
+                    <span v-for="tag in highlightedSuggestion.hashtags" :key="tag" class="text-[11px] text-indigo-400">{{ tag }}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span v-for="p in highlightedSuggestion.platforms" :key="p" class="rounded-md bg-gray-700 px-1.5 py-0.5 text-[10px] text-gray-400">{{ platformLabels[p] || p }}</span>
+                </div>
+                <div v-if="highlightedSuggestion.status === 'pending'" class="flex gap-2 mt-4">
+                    <button @click="approveSuggestion(highlightedSuggestion.id)" class="rounded-lg bg-green-600 px-4 py-2 text-xs font-medium text-white hover:bg-green-700 transition">Aprovar e criar post</button>
+                    <button @click="startReject(highlightedSuggestion.id)" class="rounded-lg bg-red-600/20 border border-red-500/30 px-4 py-2 text-xs font-medium text-red-400 hover:bg-red-600/30 transition">Rejeitar</button>
+                </div>
+                <div v-else-if="highlightedSuggestion.metadata?.converted_to_post_id" class="mt-4">
+                    <Link :href="route('social.posts.edit', highlightedSuggestion.metadata.converted_to_post_id)" class="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-700 transition inline-block">
+                        Ver Post Criado
+                    </Link>
+                </div>
+            </div>
+
             <!-- Sugestoes Pendentes -->
             <div class="rounded-2xl bg-gray-900 border border-gray-800 mb-6">
                 <div class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
@@ -204,7 +240,8 @@ async function generateSmart() {
                 </div>
 
                 <div v-if="suggestions.length" class="divide-y divide-gray-800">
-                    <div v-for="s in suggestions" :key="s.id" class="px-5 py-4">
+                    <div v-for="s in suggestions" :key="s.id" :id="'suggestion-' + s.id"
+                        :class="['px-5 py-4', highlightId === s.id ? 'bg-indigo-950/30 ring-1 ring-indigo-500/30' : '']">
                         <div class="flex items-start gap-3">
                             <input type="checkbox" :checked="selectedIds.includes(s.id)" @change="toggleSelect(s.id)" class="mt-1 rounded border-gray-600 bg-gray-800 text-indigo-600 focus:ring-indigo-500" />
                             <div class="flex-1 min-w-0">

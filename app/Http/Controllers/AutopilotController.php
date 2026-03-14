@@ -3,7 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\PublishPostJob;
+use App\Models\Brand;
 use App\Models\PostSchedule;
+use App\Models\SystemLog;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -12,7 +15,7 @@ use Inertia\Response;
 class AutopilotController extends Controller
 {
     /**
-     * Dashboard do Autopilot - monitoramento de publicacoes automaticas
+     * Dashboard do Autopilot - monitoramento + configurações
      */
     public function index(Request $request): Response
     {
@@ -24,13 +27,13 @@ class AutopilotController extends Controller
                 'upcoming' => [],
                 'recent' => [],
                 'failed' => [],
+                'config' => $this->defaultConfig(),
+                'socialAccounts' => [],
             ]);
         }
 
-        // Buscar schedules da marca ativa (via posts da marca)
         $brandPostIds = $brand->posts()->pluck('id');
 
-        // Estatisticas
         $stats = [
             'pending' => PostSchedule::whereIn('post_id', $brandPostIds)->pending()->count(),
             'publishing' => PostSchedule::whereIn('post_id', $brandPostIds)->publishing()->count(),
@@ -43,7 +46,6 @@ class AutopilotController extends Controller
             'published_total' => PostSchedule::whereIn('post_id', $brandPostIds)->published()->count(),
         ];
 
-        // Proximos agendamentos (pendentes)
         $upcoming = PostSchedule::whereIn('post_id', $brandPostIds)
             ->whereIn('status', ['pending', 'publishing'])
             ->with(['post:id,title,caption,platforms', 'socialAccount:id,platform,username'])
@@ -52,7 +54,6 @@ class AutopilotController extends Controller
             ->get()
             ->map(fn($s) => $this->formatSchedule($s));
 
-        // Publicados recentemente
         $recent = PostSchedule::whereIn('post_id', $brandPostIds)
             ->published()
             ->with(['post:id,title,caption,platforms', 'socialAccount:id,platform,username'])
@@ -61,7 +62,6 @@ class AutopilotController extends Controller
             ->get()
             ->map(fn($s) => $this->formatSchedule($s));
 
-        // Com falha
         $failed = PostSchedule::whereIn('post_id', $brandPostIds)
             ->failed()
             ->with(['post:id,title,caption,platforms', 'socialAccount:id,platform,username'])
@@ -70,12 +70,113 @@ class AutopilotController extends Controller
             ->get()
             ->map(fn($s) => $this->formatSchedule($s));
 
+        $cfg = $brand->getContentEngineConfig();
+
+        $socialAccounts = $brand->socialAccounts()
+            ->where('is_active', true)
+            ->get(['id', 'platform', 'username'])
+            ->map(fn($a) => [
+                'id' => $a->id,
+                'platform' => $a->platform,
+                'username' => $a->username,
+            ]);
+
         return Inertia::render('Social/Autopilot/Index', [
             'stats' => $stats,
             'upcoming' => $upcoming,
             'recent' => $recent,
             'failed' => $failed,
+            'config' => [
+                'enabled'             => (bool) ($cfg['social_autopilot_enabled'] ?? false),
+                'posts_per_week'      => (int)  ($cfg['social_posts_per_week'] ?? 5),
+                'platforms'           => $cfg['preferred_platforms'] ?? [],
+                'post_types'          => $cfg['post_types'] ?? ['feed', 'carousel'],
+                'generate_images'     => (bool) ($cfg['generate_images'] ?? true),
+                'auto_hashtags'       => (bool) ($cfg['auto_hashtags'] ?? true),
+                'hashtag_count'       => (int)  ($cfg['hashtag_count'] ?? 8),
+                'caption_style'       => $cfg['caption_style'] ?? 'medium',
+                'include_cta'         => (bool) ($cfg['include_cta'] ?? true),
+                'include_emojis'      => (bool) ($cfg['include_emojis'] ?? true),
+                'tone'                => $cfg['content_tone_override'] ?? '',
+                'instructions'        => $cfg['social_instructions'] ?? '',
+                'best_times_source'   => $cfg['best_times_source'] ?? 'auto',
+                'auto_approve'        => (bool) ($cfg['social_auto_approve'] ?? false),
+            ],
+            'socialAccounts' => $socialAccounts,
         ]);
+    }
+
+    /**
+     * Salvar configurações do autopilot social
+     */
+    public function saveSettings(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'enabled'           => 'boolean',
+            'posts_per_week'    => 'integer|min:1|max:21',
+            'platforms'         => 'nullable|array',
+            'post_types'        => 'nullable|array',
+            'generate_images'   => 'boolean',
+            'auto_hashtags'     => 'boolean',
+            'hashtag_count'     => 'integer|min:0|max:30',
+            'caption_style'     => 'string|in:short,medium,long',
+            'include_cta'       => 'boolean',
+            'include_emojis'    => 'boolean',
+            'tone'              => 'nullable|string|max:100',
+            'instructions'      => 'nullable|string|max:2000',
+            'best_times_source' => 'string|in:auto,data,default',
+            'auto_approve'      => 'boolean',
+        ]);
+
+        $brand = $request->user()->getActiveBrand();
+        if (!$brand) {
+            return response()->json(['success' => false, 'error' => 'Nenhuma marca selecionada.']);
+        }
+
+        $brand->updateContentEngineConfig([
+            'social_autopilot_enabled' => $validated['enabled'] ?? false,
+            'social_posts_per_week'    => $validated['posts_per_week'] ?? 5,
+            'preferred_platforms'      => $validated['platforms'] ?? [],
+            'post_types'               => $validated['post_types'] ?? ['feed', 'carousel'],
+            'generate_images'          => $validated['generate_images'] ?? true,
+            'auto_hashtags'            => $validated['auto_hashtags'] ?? true,
+            'hashtag_count'            => $validated['hashtag_count'] ?? 8,
+            'caption_style'            => $validated['caption_style'] ?? 'medium',
+            'include_cta'              => $validated['include_cta'] ?? true,
+            'include_emojis'           => $validated['include_emojis'] ?? true,
+            'content_tone_override'    => $validated['tone'] ?? null,
+            'social_instructions'      => $validated['instructions'] ?? '',
+            'best_times_source'        => $validated['best_times_source'] ?? 'auto',
+            'social_auto_approve'      => $validated['auto_approve'] ?? false,
+        ]);
+
+        SystemLog::info('social', 'autopilot.config_saved', 'Configurações de autopilot social salvas', [
+            'brand_id' => $brand->id,
+            'enabled'  => $validated['enabled'] ?? false,
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Configurações salvas com sucesso.']);
+    }
+
+    /**
+     * Executar ciclo do autopilot agora (gerar sugestões + calendário)
+     */
+    public function runNow(Request $request): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+        if (!$brand) {
+            return response()->json(['success' => false, 'error' => 'Nenhuma marca selecionada.']);
+        }
+
+        \App\Jobs\GenerateSmartSuggestionsJob::dispatch();
+        \App\Jobs\GenerateCalendarPostsJob::dispatch();
+
+        SystemLog::info('social', 'autopilot.manual_run', 'Autopilot social disparado manualmente', [
+            'brand_id' => $brand->id,
+            'user_id'  => $request->user()->id,
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Autopilot iniciado! Sugestões e posts do calendário serão gerados em instantes.']);
     }
 
     /**
@@ -140,6 +241,26 @@ class AutopilotController extends Controller
             'failed' => 0,
             'retryable' => 0,
             'published_total' => 0,
+        ];
+    }
+
+    private function defaultConfig(): array
+    {
+        return [
+            'enabled'           => false,
+            'posts_per_week'    => 5,
+            'platforms'         => [],
+            'post_types'        => ['feed', 'carousel'],
+            'generate_images'   => true,
+            'auto_hashtags'     => true,
+            'hashtag_count'     => 8,
+            'caption_style'     => 'medium',
+            'include_cta'       => true,
+            'include_emojis'    => true,
+            'tone'              => '',
+            'instructions'      => '',
+            'best_times_source' => 'auto',
+            'auto_approve'      => false,
         ];
     }
 }

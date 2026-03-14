@@ -217,7 +217,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/rules/{rule}/toggle', [ContentRuleController::class, 'toggle'])->name('rules.toggle');
             Route::post('/rules/{rule}/generate', [ContentRuleController::class, 'generate'])->name('rules.generate');
 
-            // Sugestões antigas (Legacy - API apenas)
+            // Sugestões (Content Engine legado)
+            Route::get('/suggestions', [ContentSuggestionController::class, 'index'])->name('suggestions.index');
             Route::post('/suggestions/{suggestion}/approve', [ContentSuggestionController::class, 'approve'])->name('suggestions.approve');
             Route::post('/suggestions/{suggestion}/reject', [ContentSuggestionController::class, 'reject'])->name('suggestions.reject');
             Route::put('/suggestions/{suggestion}', [ContentSuggestionController::class, 'update'])->name('suggestions.update');
@@ -233,6 +234,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // Autopilot
         Route::get('/autopilot', [AutopilotController::class, 'index'])->name('autopilot.index');
         Route::post('/autopilot/{schedule}/retry', [AutopilotController::class, 'retry'])->name('autopilot.retry');
+        Route::post('/autopilot/settings', [AutopilotController::class, 'saveSettings'])->name('autopilot.save-settings');
+        Route::post('/autopilot/run', [AutopilotController::class, 'runNow'])->name('autopilot.run');
 
         // Contas sociais
         Route::prefix('accounts')->name('accounts.')->group(function () {
