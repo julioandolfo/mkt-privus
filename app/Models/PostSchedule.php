@@ -23,6 +23,15 @@ class PostSchedule extends Model
         'published_at',
         'platform_post_id',
         'platform_post_url',
+        'likes',
+        'comments',
+        'shares',
+        'saves',
+        'reach',
+        'impressions',
+        'video_views',
+        'engagement_rate',
+        'metrics_synced_at',
         'error_message',
         'metadata',
     ];
@@ -32,9 +41,18 @@ class PostSchedule extends Model
         'scheduled_at' => 'datetime',
         'published_at' => 'datetime',
         'last_attempted_at' => 'datetime',
+        'metrics_synced_at' => 'datetime',
         'metadata' => 'array',
         'attempts' => 'integer',
         'max_attempts' => 'integer',
+        'likes' => 'integer',
+        'comments' => 'integer',
+        'shares' => 'integer',
+        'saves' => 'integer',
+        'reach' => 'integer',
+        'impressions' => 'integer',
+        'video_views' => 'integer',
+        'engagement_rate' => 'decimal:2',
     ];
 
     // ===== RELATIONSHIPS =====
@@ -118,5 +136,15 @@ class PostSchedule extends Model
             'status' => 'failed',
             'error_message' => $errorMessage,
         ]);
+    }
+
+    public function getTotalEngagement(): int
+    {
+        return $this->likes + $this->comments + $this->shares + $this->saves;
+    }
+
+    public function hasMetrics(): bool
+    {
+        return $this->metrics_synced_at !== null;
     }
 }

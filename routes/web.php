@@ -151,6 +151,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{post}/cancel-publish', [PostController::class, 'cancelPublish'])->name('cancel-publish');
             Route::post('/{post}/republish', [PostController::class, 'republish'])->name('republish');
             Route::get('/{post}/analyze-media', [PostController::class, 'analyzeMedia'])->name('analyze-media');
+            Route::post('/sync-metrics', [PostController::class, 'syncMetrics'])->name('sync-metrics');
         });
 
         // Geracao de conteudo com IA
@@ -234,6 +235,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // Autopilot
         Route::get('/autopilot', [AutopilotController::class, 'index'])->name('autopilot.index');
         Route::post('/autopilot/{schedule}/retry', [AutopilotController::class, 'retry'])->name('autopilot.retry');
+        Route::post('/autopilot/clear-failed', [AutopilotController::class, 'clearFailed'])->name('autopilot.clear-failed');
         Route::post('/autopilot/settings', [AutopilotController::class, 'saveSettings'])->name('autopilot.save-settings');
         Route::post('/autopilot/run', [AutopilotController::class, 'runNow'])->name('autopilot.run');
 

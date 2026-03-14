@@ -146,6 +146,25 @@ const props = defineProps<{
     activeGoals: GoalData[];
     followersChart: ChartPoint[];
     recentActivity: any[];
+    topPosts: {
+        id: number;
+        title: string | null;
+        caption: string;
+        platforms: string[];
+        published_at: string | null;
+        platform: string;
+        likes: number;
+        comments: number;
+        shares: number;
+        saves: number;
+        reach: number;
+        impressions: number;
+        engagement_rate: number;
+        total_engagement: number;
+        media_url: string | null;
+        media_type: string | null;
+        platform_post_url: string | null;
+    }[];
     analyticsSummary?: AnalyticsSummary | null;
     emailSummary?: EmailSummary | null;
     smsSummary?: {
@@ -1039,6 +1058,57 @@ const periodOptions = [
                             </div>
                         </div>
                     </Link>
+                </div>
+            </div>
+
+            <!-- ===== TOP POSTS POR ENGAJAMENTO ===== -->
+            <div v-if="topPosts.length > 0" class="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-sm font-medium text-white flex items-center gap-2">
+                        <svg class="w-4 h-4 text-amber-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                        Top Posts por Engajamento
+                    </h2>
+                    <Link :href="route('social.posts.index')" class="text-xs text-indigo-400 hover:text-indigo-300 transition">Ver todos</Link>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <div
+                        v-for="(tp, idx) in topPosts"
+                        :key="tp.id + '-' + tp.platform"
+                        class="group flex gap-3 rounded-xl bg-gray-800/50 border border-gray-700/50 p-3 hover:border-gray-600 transition"
+                    >
+                        <!-- Rank + Image -->
+                        <div class="relative w-16 h-16 rounded-lg bg-gray-800 flex-shrink-0 overflow-hidden">
+                            <div class="absolute top-0.5 left-0.5 z-10 w-5 h-5 rounded-full bg-amber-500/90 flex items-center justify-center text-[10px] font-bold text-white shadow">{{ idx + 1 }}</div>
+                            <img v-if="tp.media_url && tp.media_type !== 'video'" :src="tp.media_url" class="w-full h-full object-cover" />
+                            <video v-else-if="tp.media_url && tp.media_type === 'video'" :src="tp.media_url" class="w-full h-full object-cover" preload="metadata" muted />
+                            <div v-else class="w-full h-full flex items-center justify-center"><svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>
+                        </div>
+                        <!-- Info -->
+                        <div class="flex-1 min-w-0">
+                            <p class="text-xs text-gray-300 font-medium truncate">{{ tp.title || tp.caption || 'Post' }}</p>
+                            <div class="flex items-center gap-1 mt-0.5 mb-1.5">
+                                <span class="w-2 h-2 rounded-full" :style="{ backgroundColor: platformInfo[tp.platform]?.color || '#6B7280' }" />
+                                <span class="text-[10px] text-gray-500">{{ platformInfo[tp.platform]?.name || tp.platform }} &middot; {{ tp.published_at }}</span>
+                            </div>
+                            <div class="flex items-center gap-3 text-[11px]">
+                                <span class="flex items-center gap-1 text-pink-400 font-medium">
+                                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                                    {{ formatNumber(tp.likes) }}
+                                </span>
+                                <span class="flex items-center gap-1 text-blue-400 font-medium">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                    {{ formatNumber(tp.comments) }}
+                                </span>
+                                <span class="flex items-center gap-1 text-emerald-400 font-medium">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                                    {{ formatNumber(tp.shares) }}
+                                </span>
+                                <span class="font-bold ml-auto" :class="tp.engagement_rate >= 5 ? 'text-green-400' : tp.engagement_rate >= 2 ? 'text-amber-400' : 'text-gray-400'">
+                                    {{ tp.engagement_rate }}%
+                                </span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 

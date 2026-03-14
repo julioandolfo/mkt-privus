@@ -52,8 +52,18 @@ const statusLabels: Record<string, { label: string; class: string }> = {
     failed: { label: 'Falhou', class: 'bg-red-500/20 text-red-400 border-red-500/30' },
 };
 
+const clearingFailed = ref(false);
+
 function retrySchedule(id: number) { router.post(route('social.autopilot.retry', id)); }
 function getStatusBadge(s: string) { return statusLabels[s] || statusLabels.pending; }
+
+function clearFailed() {
+    if (!confirm('Remover todas as publicações com falha? Esta ação não pode ser desfeita.')) return;
+    clearingFailed.value = true;
+    router.post(route('social.autopilot.clear-failed'), {}, {
+        onFinish: () => { clearingFailed.value = false; },
+    });
+}
 
 const platformOptions = [
     { value: 'instagram', label: 'Instagram' },
@@ -433,11 +443,15 @@ async function runNow() {
 
                     <!-- Posts com Falha -->
                     <div class="rounded-2xl bg-gray-900 border border-gray-800">
-                        <div class="px-5 py-4 border-b border-gray-800">
+                        <div class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
                             <h2 class="text-sm font-semibold text-white flex items-center gap-2">
                                 <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
                                 Publicações com Falha
                             </h2>
+                            <button v-if="failed.length" @click="clearFailed" :disabled="clearingFailed"
+                                class="rounded-lg px-2.5 py-1 text-[11px] font-medium text-red-400 hover:text-red-300 border border-red-800/50 hover:border-red-700 transition disabled:opacity-50">
+                                {{ clearingFailed ? 'Limpando...' : 'Limpar todas' }}
+                            </button>
                         </div>
                         <div v-if="failed.length" class="divide-y divide-gray-800">
                             <div v-for="item in failed" :key="item.id" class="px-5 py-3">

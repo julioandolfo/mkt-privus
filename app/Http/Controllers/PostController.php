@@ -68,29 +68,48 @@ class PostController extends Controller
             });
         }
 
-        $posts = $query->paginate(12)->through(fn($post) => [
-            'id' => $post->id,
-            'title' => $post->title,
-            'caption' => $post->caption,
-            'hashtags' => $post->hashtags,
-            'type' => $post->type?->value,
-            'type_label' => $post->type?->label(),
-            'status' => $post->status->value,
-            'status_label' => $post->status->label(),
-            'status_color' => $post->status->color(),
-            'platforms' => $post->platforms ?? [],
-            'scheduled_at' => $post->scheduled_at?->format('d/m/Y H:i'),
-            'published_at' => $post->published_at?->format('d/m/Y H:i'),
-            'created_at' => $post->created_at->format('d/m/Y H:i'),
-            'user_name' => $post->user?->name,
-            'media' => $post->media->map(fn($m) => [
-                'id' => $m->id,
-                'type' => $m->type,
-                'file_path' => $m->file_path ? Storage::url($m->file_path) : null,
-                'file_name' => $m->file_name,
-                'alt_text' => $m->alt_text,
-            ]),
-        ]);
+        $posts = $query->paginate(12)->through(function ($post) {
+            $schedules = $post->schedules()->where('status', 'published')->get();
+            $hasMetrics = $schedules->whereNotNull('metrics_synced_at')->isNotEmpty();
+
+            $metrics = $hasMetrics ? [
+                'likes' => $schedules->sum('likes'),
+                'comments' => $schedules->sum('comments'),
+                'shares' => $schedules->sum('shares'),
+                'saves' => $schedules->sum('saves'),
+                'reach' => $schedules->sum('reach'),
+                'impressions' => $schedules->sum('impressions'),
+                'video_views' => $schedules->sum('video_views'),
+                'engagement_rate' => $schedules->avg('engagement_rate'),
+                'total_engagement' => $schedules->sum('likes') + $schedules->sum('comments') + $schedules->sum('shares') + $schedules->sum('saves'),
+                'synced_at' => $schedules->max('metrics_synced_at')?->diffForHumans(),
+            ] : null;
+
+            return [
+                'id' => $post->id,
+                'title' => $post->title,
+                'caption' => $post->caption,
+                'hashtags' => $post->hashtags,
+                'type' => $post->type?->value,
+                'type_label' => $post->type?->label(),
+                'status' => $post->status->value,
+                'status_label' => $post->status->label(),
+                'status_color' => $post->status->color(),
+                'platforms' => $post->platforms ?? [],
+                'scheduled_at' => $post->scheduled_at?->format('d/m/Y H:i'),
+                'published_at' => $post->published_at?->format('d/m/Y H:i'),
+                'created_at' => $post->created_at->format('d/m/Y H:i'),
+                'user_name' => $post->user?->name,
+                'metrics' => $metrics,
+                'media' => $post->media->map(fn($m) => [
+                    'id' => $m->id,
+                    'type' => $m->type,
+                    'file_path' => $m->file_path ? Storage::url($m->file_path) : null,
+                    'file_name' => $m->file_name,
+                    'alt_text' => $m->alt_text,
+                ]),
+            ];
+        });
 
         // Estatisticas
         $stats = [
@@ -100,10 +119,75 @@ class PostController extends Controller
             'failed' => Post::forBrand($brand->id)->where('status', PostStatus::Failed)->count(),
         ];
 
+        // Métricas globais de engajamento
+        $brandPostIds = Post::forBrand($brand->id)->pluck('id');
+        $publishedSchedules = PostSchedule::whereIn('post_id', $brandPostIds)
+            ->where('status', 'published')
+            ->whereNotNull('metrics_synced_at')
+            ->get();
+
+        $engagementStats = null;
+        if ($publishedSchedules->isNotEmpty()) {
+            $totalLikes = $publishedSchedules->sum('likes');
+            $totalComments = $publishedSchedules->sum('comments');
+            $totalShares = $publishedSchedules->sum('shares');
+            $totalSaves = $publishedSchedules->sum('saves');
+            $totalReach = $publishedSchedules->sum('reach');
+            $totalImpressions = $publishedSchedules->sum('impressions');
+            $totalEngagement = $totalLikes + $totalComments + $totalShares + $totalSaves;
+
+            $engagementStats = [
+                'total_likes' => $totalLikes,
+                'total_comments' => $totalComments,
+                'total_shares' => $totalShares,
+                'total_saves' => $totalSaves,
+                'total_reach' => $totalReach,
+                'total_impressions' => $totalImpressions,
+                'total_engagement' => $totalEngagement,
+                'avg_engagement_rate' => round($publishedSchedules->avg('engagement_rate'), 2),
+                'posts_with_metrics' => $publishedSchedules->count(),
+            ];
+        }
+
+        // Top 5 posts por engajamento
+        $topPosts = [];
+        if ($publishedSchedules->isNotEmpty()) {
+            $topSchedules = $publishedSchedules->sortByDesc(function ($s) {
+                return $s->likes + $s->comments + $s->shares + $s->saves;
+            })->take(5);
+
+            foreach ($topSchedules as $schedule) {
+                $post = $schedule->post;
+                if (!$post) continue;
+                $post->load('media');
+                $topPosts[] = [
+                    'id' => $post->id,
+                    'title' => $post->title,
+                    'caption' => mb_substr($post->caption ?? '', 0, 100),
+                    'type' => $post->type?->value,
+                    'platforms' => $post->platforms ?? [],
+                    'published_at' => $post->published_at?->format('d/m/Y'),
+                    'platform' => $schedule->platform->value ?? $schedule->platform,
+                    'likes' => $schedule->likes,
+                    'comments' => $schedule->comments,
+                    'shares' => $schedule->shares,
+                    'saves' => $schedule->saves,
+                    'reach' => $schedule->reach,
+                    'engagement_rate' => $schedule->engagement_rate,
+                    'total_engagement' => $schedule->likes + $schedule->comments + $schedule->shares + $schedule->saves,
+                    'media_url' => $post->media->first()?->file_path ? Storage::url($post->media->first()->file_path) : null,
+                    'media_type' => $post->media->first()?->type,
+                    'platform_post_url' => $schedule->platform_post_url,
+                ];
+            }
+        }
+
         return Inertia::render('Social/Posts/Index', [
             'posts' => $posts,
             'filters' => $request->only(['status', 'platform', 'type', 'search']),
             'stats' => $stats,
+            'engagementStats' => $engagementStats,
+            'topPosts' => $topPosts,
             'platforms' => $this->getPlatformOptions(),
             'statuses' => $this->getStatusOptions(),
         ]);
@@ -895,27 +979,36 @@ class PostController extends Controller
     ): string {
         $context = [];
 
-        // Analisar histórico de engajamento
         if ($analyzeHistory) {
             $recentPosts = Post::forBrand($brand->id)
                 ->where('status', PostStatus::Published)
                 ->latest('published_at')
                 ->limit(10)
-                ->get(['caption', 'platforms', 'published_at', 'metadata']);
+                ->get(['id', 'caption', 'platforms', 'published_at']);
 
             if ($recentPosts->isNotEmpty()) {
                 $topPosts = $recentPosts->map(function ($p) {
-                    $likes = $p->metadata['likes'] ?? $p->metadata['engagement']?? 0;
+                    $schedule = $p->schedules()
+                        ->where('status', 'published')
+                        ->whereNotNull('metrics_synced_at')
+                        ->orderByDesc('likes')
+                        ->first();
+
+                    $likes = $schedule?->likes ?? 0;
+
                     return [
                         'caption_preview' => mb_substr($p->caption, 0, 100),
                         'platforms' => $p->platforms,
                         'likes' => $likes,
+                        'comments' => $schedule?->comments ?? 0,
+                        'engagement_rate' => $schedule?->engagement_rate ?? 0,
                     ];
                 })->sortByDesc('likes')->take(5);
 
                 $context[] = "ANÁLISE DE HISTÓRICO DE POSTS (top 5 por engajamento):";
                 foreach ($topPosts as $i => $tp) {
-                    $context[] = "  " . ($i + 1) . ". [{$tp['likes']} likes] \"{$tp['caption_preview']}...\"";
+                    $engLabel = $tp['engagement_rate'] > 0 ? " | {$tp['engagement_rate']}% eng" : '';
+                    $context[] = "  " . ($i + 1) . ". [{$tp['likes']} likes, {$tp['comments']} comments{$engLabel}] \"{$tp['caption_preview']}...\"";
                 }
                 $context[] = "Use esse padrão como referência para tom, estilo e formato que mais engaja.";
             }
@@ -1204,6 +1297,18 @@ class PostController extends Controller
             'media_count' => count($results),
             'media'       => $results,
         ]);
+    }
+
+    public function syncMetrics(Request $request): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+        if (!$brand) {
+            return response()->json(['message' => 'Nenhuma marca ativa.'], 422);
+        }
+
+        \App\Jobs\SyncPostMetricsJob::dispatchSync();
+
+        return response()->json(['message' => 'Métricas sincronizadas com sucesso!']);
     }
 
     // ===== PRIVATE METHODS =====

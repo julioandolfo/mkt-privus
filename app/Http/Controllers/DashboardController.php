@@ -297,6 +297,49 @@ class DashboardController extends Controller
             $recentActivity = $recentPosts->toArray();
         }
 
+        // ===== TOP POSTS POR ENGAJAMENTO =====
+        $topPosts = [];
+        {
+            $postIds = Post::when($brandId, fn($q) => $q->where('brand_id', $brandId))->pluck('id');
+
+            if ($postIds->isNotEmpty()) {
+                $topSchedules = \App\Models\PostSchedule::whereIn('post_id', $postIds)
+                    ->where('status', 'published')
+                    ->whereNotNull('metrics_synced_at')
+                    ->orderByRaw('(likes + comments + shares + saves) DESC')
+                    ->limit(6)
+                    ->with(['post.media', 'socialAccount'])
+                    ->get();
+
+                foreach ($topSchedules as $schedule) {
+                    $post = $schedule->post;
+                    if (!$post) continue;
+
+                    $topPosts[] = [
+                        'id' => $post->id,
+                        'title' => $post->title,
+                        'caption' => mb_substr($post->caption ?? '', 0, 80),
+                        'platforms' => $post->platforms ?? [],
+                        'published_at' => $post->published_at?->format('d/m/Y'),
+                        'platform' => $schedule->platform->value ?? $schedule->platform,
+                        'likes' => $schedule->likes,
+                        'comments' => $schedule->comments,
+                        'shares' => $schedule->shares,
+                        'saves' => $schedule->saves,
+                        'reach' => $schedule->reach,
+                        'impressions' => $schedule->impressions,
+                        'engagement_rate' => $schedule->engagement_rate,
+                        'total_engagement' => $schedule->likes + $schedule->comments + $schedule->shares + $schedule->saves,
+                        'media_url' => $post->media->first()?->file_path
+                            ? \Illuminate\Support\Facades\Storage::url($post->media->first()->file_path)
+                            : null,
+                        'media_type' => $post->media->first()?->type,
+                        'platform_post_url' => $schedule->platform_post_url,
+                    ];
+                }
+            }
+        }
+
         // ===== ANALYTICS RESUMO (periodo selecionado) =====
         $analyticsSummary = null;
         {
@@ -572,6 +615,7 @@ class DashboardController extends Controller
             'activeGoals' => $activeGoals,
             'followersChart' => $followersChart,
             'recentActivity' => $recentActivity,
+            'topPosts' => $topPosts,
             'analyticsSummary' => $analyticsSummary,
             'emailSummary' => $emailSummary,
             'smsSummary' => $smsSummary,

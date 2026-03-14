@@ -71,6 +71,11 @@ Schedule::job(new GenerateMonthlyCalendarJob)->monthlyOn(25, '08:00')->withoutOv
 Schedule::command('social:sync-insights --all')->dailyAt('08:00')->withoutOverlapping();
 Schedule::command('social:sync-insights --all')->dailyAt('20:00')->withoutOverlapping();
 
+// Sincronizar métricas individuais de posts publicados - 3x por dia
+Schedule::job(new \App\Jobs\SyncPostMetricsJob)->dailyAt('09:00')->withoutOverlapping(10);
+Schedule::job(new \App\Jobs\SyncPostMetricsJob)->dailyAt('15:00')->withoutOverlapping(10);
+Schedule::job(new \App\Jobs\SyncPostMetricsJob)->dailyAt('21:00')->withoutOverlapping(10);
+
 // Auto-sync metricas vinculadas a contas sociais - logo apos o sync de insights
 Schedule::job(new \App\Jobs\SyncSocialMetricEntriesJob)->dailyAt('08:30')->withoutOverlapping();
 Schedule::job(new \App\Jobs\SyncSocialMetricEntriesJob)->dailyAt('20:30')->withoutOverlapping();

@@ -208,6 +208,30 @@ class AutopilotController extends Controller
         return redirect()->back()->with('success', 'Re-tentativa agendada com sucesso!');
     }
 
+    /**
+     * Limpar todas as publicações com falha (deletar os schedules)
+     */
+    public function clearFailed(Request $request): RedirectResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+        if (!$brand) {
+            return redirect()->back()->withErrors(['brand' => 'Nenhuma marca selecionada.']);
+        }
+
+        $brandPostIds = $brand->posts()->pluck('id');
+
+        $deleted = PostSchedule::whereIn('post_id', $brandPostIds)
+            ->where('status', 'failed')
+            ->delete();
+
+        SystemLog::info('social', 'autopilot.clear_failed', "{$deleted} agendamento(s) com falha removido(s)", [
+            'brand_id' => $brand->id,
+            'deleted_count' => $deleted,
+        ]);
+
+        return redirect()->back()->with('success', "{$deleted} falha(s) removida(s) com sucesso.");
+    }
+
     // ===== PRIVATE =====
 
     private function formatSchedule(PostSchedule $schedule): array
