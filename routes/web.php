@@ -157,6 +157,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // Geracao de conteudo com IA
         Route::post('/generate', [PostController::class, 'generateContent'])->name('generate');
         Route::post('/generate-complete', [PostController::class, 'generateCompletePost'])->name('generate-complete');
+        Route::post('/{post}/regenerate-image', [PostController::class, 'regenerateImage'])->name('regenerate-image');
 
         // Calendario
         Route::get('/calendar', [PostController::class, 'calendar'])->name('calendar.index');

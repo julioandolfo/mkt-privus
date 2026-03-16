@@ -82,10 +82,10 @@ const generateForm = ref({
     platforms: ['instagram'] as string[],
     categories: [] as string[],
     tone: '',
-    ai_model: props.aiModels[0]?.value || 'gpt-4o-mini',
+    ai_model: props.aiModels.find(m => m.value === 'gpt-4o')?.value || props.aiModels[0]?.value || 'gpt-4o',
     instructions: '',
     format_mode: 'auto' as 'auto' | 'manual',
-    post_types: [] as string[],
+    post_types: ['feed'] as string[],
 });
 
 // Selected item for edit
@@ -96,7 +96,7 @@ const editForm = ref({
     description: '',
     category: '',
     platforms: [] as string[],
-    post_type: '',
+    post_type: 'feed',
     tone: '',
     instructions: '',
     scheduled_date: '',
@@ -248,7 +248,7 @@ function openGenerateModal() {
     generateForm.value.instructions = '';
     generateForm.value.categories = [];
     generateForm.value.format_mode = 'auto';
-    generateForm.value.post_types = [];
+    generateForm.value.post_types = ['feed'];
     generateResult.value = null;
     showGenerateModal.value = true;
 }
@@ -818,6 +818,7 @@ onMounted(fetchCalendarData);
                                 <label class="text-xs text-gray-400 mb-1 block">Modelo IA</label>
                                 <select v-model="generateForm.ai_model" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white">
                                     <option v-for="m in aiModels" :key="m.value" :value="m.value">{{ m.label }} ({{ m.provider }})</option>
+                                    <option v-if="!aiModels.length" value="gpt-4o">GPT-4o (OpenAI)</option>
                                 </select>
                             </div>
                         </div>

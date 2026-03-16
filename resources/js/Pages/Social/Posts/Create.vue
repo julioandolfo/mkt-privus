@@ -60,7 +60,7 @@ const aiCompleteOpen = ref(false);
 const aiCompleteTopic = ref('');
 const aiCompleteTone = ref('');
 const aiCompleteInstructions = ref('');
-const aiCompleteModel = ref(props.aiModels[0]?.value || 'gpt-4o-mini');
+const aiCompleteModel = ref(props.aiModels.find(m => m.value === 'gpt-4o')?.value || props.aiModels[0]?.value || 'gpt-4o');
 const aiCompleteGenerating = ref(false);
 const aiCompleteError = ref('');
 const aiCompleteStep = ref<'config' | 'generating' | 'result'>('config');
@@ -73,6 +73,28 @@ const analyzeSocial = ref(true);
 const generateImage = ref(true);
 const imageStyle = ref('');
 const imageSize = ref('1024x1024');
+const referenceImages = ref<File[]>([]);
+const referenceImagePreviews = ref<string[]>([]);
+const referenceInput = ref<HTMLInputElement | null>(null);
+
+function triggerReferenceInput() { referenceInput.value?.click(); }
+
+function onReferenceSelect(event: Event) {
+    const target = event.target as HTMLInputElement;
+    if (!target.files) return;
+    for (const file of Array.from(target.files)) {
+        if (!file.type.startsWith('image/') || referenceImages.value.length >= 3) continue;
+        referenceImages.value.push(file);
+        referenceImagePreviews.value.push(URL.createObjectURL(file));
+    }
+    target.value = '';
+}
+
+function removeReference(index: number) {
+    URL.revokeObjectURL(referenceImagePreviews.value[index]);
+    referenceImages.value.splice(index, 1);
+    referenceImagePreviews.value.splice(index, 1);
+}
 
 const imageStyleOptions = [
     { value: '', label: 'Automático (baseado na marca)' },
@@ -207,19 +229,23 @@ async function generateCompletePost() {
     aiCompleteStep.value = 'generating';
 
     try {
-        const response = await axios.post(route('social.generate-complete'), {
-            topic: aiCompleteTopic.value,
-            platform: form.platforms[0],
-            type: form.type,
-            tone: aiCompleteTone.value || undefined,
-            instructions: aiCompleteInstructions.value || undefined,
-            model: aiCompleteModel.value,
-            analyze_history: analyzeHistory.value,
-            analyze_website: analyzeWebsite.value,
-            analyze_social: analyzeSocial.value,
-            generate_image: generateImage.value,
-            image_style: imageStyle.value || undefined,
-            image_size: imageSize.value,
+        const formData = new FormData();
+        formData.append('topic', aiCompleteTopic.value);
+        formData.append('platform', form.platforms[0]);
+        if (form.type) formData.append('type', form.type);
+        if (aiCompleteTone.value) formData.append('tone', aiCompleteTone.value);
+        if (aiCompleteInstructions.value) formData.append('instructions', aiCompleteInstructions.value);
+        formData.append('model', aiCompleteModel.value);
+        formData.append('analyze_history', analyzeHistory.value ? '1' : '0');
+        formData.append('analyze_website', analyzeWebsite.value ? '1' : '0');
+        formData.append('analyze_social', analyzeSocial.value ? '1' : '0');
+        formData.append('generate_image', generateImage.value ? '1' : '0');
+        if (imageStyle.value) formData.append('image_style', imageStyle.value);
+        formData.append('image_size', imageSize.value);
+        referenceImages.value.forEach((file, i) => formData.append(`reference_images[${i}]`, file));
+
+        const response = await axios.post(route('social.generate-complete'), formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
         });
 
         aiCompleteResult.value = response.data;
@@ -840,18 +866,37 @@ const toneOptions = [
                                     <span class="text-[10px] text-gray-500 ml-2">(DALL-E 3 — requer chave OpenAI)</span>
                                 </div>
                             </label>
-                            <div v-if="generateImage" class="grid grid-cols-2 gap-3 pl-7">
-                                <div>
-                                    <label class="text-xs text-gray-400 mb-1 block">Estilo Visual</label>
-                                    <select v-model="imageStyle" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500">
-                                        <option v-for="s in imageStyleOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
-                                    </select>
+                            <div v-if="generateImage" class="space-y-3 pl-7">
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="text-xs text-gray-400 mb-1 block">Estilo Visual</label>
+                                        <select v-model="imageStyle" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500">
+                                            <option v-for="s in imageStyleOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-gray-400 mb-1 block">Proporção</label>
+                                        <select v-model="imageSize" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500">
+                                            <option v-for="s in imageSizeOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
+                                        </select>
+                                    </div>
                                 </div>
                                 <div>
-                                    <label class="text-xs text-gray-400 mb-1 block">Proporção</label>
-                                    <select v-model="imageSize" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500">
-                                        <option v-for="s in imageSizeOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
-                                    </select>
+                                    <label class="text-xs text-gray-400 mb-1.5 block">Imagens de Referência (opcional, max 3)</label>
+                                    <p class="text-[10px] text-gray-500 mb-2">A IA analisará essas imagens para replicar o estilo visual na imagem gerada.</p>
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <div v-for="(preview, i) in referenceImagePreviews" :key="i" class="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-700 group">
+                                            <img :src="preview" class="w-full h-full object-cover" />
+                                            <button type="button" @click="removeReference(i)" class="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                                                <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                                            </button>
+                                        </div>
+                                        <button v-if="referenceImagePreviews.length < 3" type="button" @click="triggerReferenceInput"
+                                            class="w-16 h-16 rounded-lg border-2 border-dashed border-gray-700 flex items-center justify-center text-gray-500 hover:border-indigo-500 hover:text-indigo-400 transition">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                        </button>
+                                        <input ref="referenceInput" type="file" accept="image/*" multiple class="hidden" @change="onReferenceSelect" />
+                                    </div>
                                 </div>
                             </div>
                         </div>

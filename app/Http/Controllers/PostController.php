@@ -868,6 +868,8 @@ class PostController extends Controller
             'generate_image' => 'boolean',
             'image_style' => 'nullable|string|max:200',
             'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792',
+            'reference_images' => 'nullable|array|max:3',
+            'reference_images.*' => 'image|max:10240',
         ]);
 
         $brand = $request->user()->getActiveBrand();
@@ -923,6 +925,8 @@ class PostController extends Controller
             $imageData = null;
             if ($validated['generate_image'] ?? false) {
                 try {
+                    $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
+
                     $imagePrompt = $this->buildImagePrompt(
                         $brand,
                         $validated['topic'],
@@ -931,6 +935,10 @@ class PostController extends Controller
                         $postType,
                         $validated['image_style'] ?? null,
                     );
+
+                    if ($referenceContext) {
+                        $imagePrompt .= "\n\nREFERENCE IMAGE CONTEXT (replicate this visual style/composition): " . $referenceContext;
+                    }
 
                     $imageData = $aiGateway->generateImage(
                         prompt: $imagePrompt,
@@ -1070,6 +1078,144 @@ class PostController extends Controller
         return AIGateway::buildSocialImagePrompt(
             $brand, $topic, $caption, $platform->value, $postType->value, $imageStyle
         );
+    }
+
+    /**
+     * Analisa imagens de referência via GPT-4o Vision e retorna descrição textual
+     */
+    private function analyzeReferenceImages(Request $request, AIGateway $aiGateway, \App\Models\Brand $brand): ?string
+    {
+        $files = $request->file('reference_images');
+        if (!$files || empty($files)) return null;
+
+        $imageContents = [];
+        foreach ($files as $file) {
+            $base64 = base64_encode(file_get_contents($file->getRealPath()));
+            $mime = $file->getMimeType();
+            $imageContents[] = [
+                'type' => 'image_url',
+                'image_url' => ['url' => "data:{$mime};base64,{$base64}", 'detail' => 'low'],
+            ];
+        }
+
+        $messages = [
+            ['role' => 'system', 'content' => 'You analyze reference images for social media post creation. Describe the visual style, composition, colors, subjects, and mood in detail. Be concise but thorough. Output in English.'],
+            ['role' => 'user', 'content' => array_merge(
+                [['type' => 'text', 'text' => 'Describe these reference images in detail — style, composition, colors, objects, mood — so I can recreate a similar image with AI:']],
+                $imageContents,
+            )],
+        ];
+
+        try {
+            $result = $aiGateway->chat(
+                model: AIModel::GPT4o,
+                messages: $messages,
+                brand: $brand,
+                user: $request->user(),
+                feature: 'reference_image_analysis',
+            );
+            return $result['content'] ?? null;
+        } catch (\Exception $e) {
+            Log::warning("Reference image analysis failed: {$e->getMessage()}");
+            return null;
+        }
+    }
+
+    /**
+     * Regenerar imagem de um post existente
+     */
+    public function regenerateImage(Request $request, Post $post): JsonResponse
+    {
+        $brand = $request->user()->getActiveBrand();
+        if (!$brand || $post->brand_id !== $brand->id) {
+            return response()->json(['error' => 'Acesso negado.'], 403);
+        }
+
+        $validated = $request->validate([
+            'media_id' => 'nullable|integer|exists:post_media,id',
+            'prompt_context' => 'nullable|string|max:1000',
+            'image_style' => 'nullable|string|max:200',
+            'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792',
+            'reference_images' => 'nullable|array|max:3',
+            'reference_images.*' => 'image|max:10240',
+        ]);
+
+        try {
+            $aiGateway = app(AIGateway::class);
+
+            $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
+
+            $topic = $validated['prompt_context'] ?? $post->title ?? mb_substr($post->caption ?? '', 0, 200);
+            $platform = SocialPlatform::tryFrom($post->platforms[0] ?? 'instagram') ?? SocialPlatform::Instagram;
+            $postType = PostType::tryFrom($post->type ?? 'feed') ?? PostType::Feed;
+
+            $imagePrompt = $this->buildImagePrompt(
+                $brand,
+                $topic,
+                $post->caption ?? '',
+                $platform,
+                $postType,
+                $validated['image_style'] ?? null,
+            );
+
+            if ($validated['prompt_context'] ?? null) {
+                $imagePrompt .= "\n\nADDITIONAL CONTEXT: " . $validated['prompt_context'];
+            }
+
+            if ($referenceContext) {
+                $imagePrompt .= "\n\nREFERENCE IMAGE CONTEXT (replicate this visual style/composition): " . $referenceContext;
+            }
+
+            $imageData = $aiGateway->generateImage(
+                prompt: $imagePrompt,
+                brand: $brand,
+                user: $request->user(),
+                size: $validated['image_size'] ?? '1024x1024',
+                quality: 'standard',
+            );
+
+            if (!empty($imageData['url'])) {
+                $imageContent = file_get_contents($imageData['url']);
+                if ($imageContent) {
+                    $filename = 'post-media/' . $brand->id . '/' . uniqid('ai-regen-') . '.png';
+                    \Illuminate\Support\Facades\Storage::disk('public')->put($filename, $imageContent);
+                    $storagePath = $filename;
+
+                    if (!empty($validated['media_id'])) {
+                        $media = \App\Models\PostMedia::where('id', $validated['media_id'])
+                            ->where('post_id', $post->id)
+                            ->first();
+                        if ($media) {
+                            if ($media->file_path) {
+                                \Illuminate\Support\Facades\Storage::disk('public')->delete($media->file_path);
+                            }
+                            $media->update([
+                                'file_path' => $storagePath,
+                                'file_name' => basename($filename),
+                            ]);
+                        }
+                    } else {
+                        \App\Models\PostMedia::create([
+                            'post_id' => $post->id,
+                            'type' => 'image',
+                            'file_path' => $storagePath,
+                            'file_name' => basename($filename),
+                            'order' => $post->media()->count(),
+                        ]);
+                    }
+
+                    return response()->json([
+                        'success' => true,
+                        'image_url' => \Illuminate\Support\Facades\Storage::url($storagePath),
+                        'message' => 'Imagem regenerada com sucesso!',
+                    ]);
+                }
+            }
+
+            return response()->json(['error' => 'Falha ao gerar imagem.'], 500);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Erro: ' . $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -1389,10 +1535,20 @@ class PostController extends Controller
 
     private function getAIModelOptions(): array
     {
-        return collect(AIModel::availableCases())->map(fn($m) => [
+        $models = collect(AIModel::availableCases())->map(fn($m) => [
             'value' => $m->value,
             'label' => $m->label(),
             'provider' => $m->provider()->label(),
         ])->toArray();
+
+        if (empty($models)) {
+            $models = collect(AIModel::cases())->map(fn($m) => [
+                'value' => $m->value,
+                'label' => $m->label(),
+                'provider' => $m->provider()->label(),
+            ])->toArray();
+        }
+
+        return $models;
     }
 }

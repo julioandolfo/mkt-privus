@@ -79,9 +79,105 @@ const aiModalOpen = ref(false);
 const aiTopic = ref('');
 const aiTone = ref('');
 const aiInstructions = ref('');
-const aiModel = ref(props.aiModels[0]?.value || 'gpt-4o-mini');
+const aiModel = ref(props.aiModels.find(m => m.value === 'gpt-4o')?.value || props.aiModels[0]?.value || 'gpt-4o');
 const aiGenerating = ref(false);
 const aiError = ref('');
+
+// Regenerate Image
+const showRegenModal = ref(false);
+const regenMediaId = ref<number | null>(null);
+const regenPromptContext = ref('');
+const regenImageStyle = ref('');
+const regenImageSize = ref('1024x1024');
+const regenReferenceImages = ref<File[]>([]);
+const regenReferencePreviews = ref<string[]>([]);
+const regenLoading = ref(false);
+const regenError = ref('');
+const regenInputRef = ref<HTMLInputElement | null>(null);
+
+const imageStyleOptions = [
+    { value: '', label: 'Automático (baseado na marca)' },
+    { value: 'flat design, minimalist, vector illustration', label: 'Flat / Minimalista' },
+    { value: 'photorealistic, professional photography', label: 'Fotorrealista' },
+    { value: '3D render, modern, glossy', label: 'Render 3D' },
+    { value: 'watercolor, artistic, soft', label: 'Aquarela / Artístico' },
+    { value: 'neon, vibrant, dark background', label: 'Neon / Vibrante' },
+    { value: 'vintage, retro, film grain', label: 'Vintage / Retrô' },
+    { value: 'geometric, abstract, modern', label: 'Geométrico / Abstrato' },
+    { value: 'hand drawn, sketch, creative', label: 'Ilustração Manual' },
+];
+
+const imageSizeOptions = [
+    { value: '1024x1024', label: 'Quadrado (1:1) - Feed' },
+    { value: '1792x1024', label: 'Paisagem (16:9)' },
+    { value: '1024x1792', label: 'Retrato (9:16) - Stories/Reels' },
+];
+
+function openRegenModal(mediaId: number | null = null) {
+    regenMediaId.value = mediaId;
+    regenPromptContext.value = '';
+    regenImageStyle.value = '';
+    regenImageSize.value = '1024x1024';
+    regenReferenceImages.value = [];
+    regenReferencePreviews.value = [];
+    regenError.value = '';
+    showRegenModal.value = true;
+}
+
+function onRegenRefSelect(event: Event) {
+    const target = event.target as HTMLInputElement;
+    if (!target.files) return;
+    for (const file of Array.from(target.files)) {
+        if (!file.type.startsWith('image/') || regenReferenceImages.value.length >= 3) continue;
+        regenReferenceImages.value.push(file);
+        regenReferencePreviews.value.push(URL.createObjectURL(file));
+    }
+    target.value = '';
+}
+
+function removeRegenRef(index: number) {
+    URL.revokeObjectURL(regenReferencePreviews.value[index]);
+    regenReferenceImages.value.splice(index, 1);
+    regenReferencePreviews.value.splice(index, 1);
+}
+
+async function submitRegenerate() {
+    regenLoading.value = true;
+    regenError.value = '';
+    try {
+        const fd = new FormData();
+        if (regenMediaId.value) fd.append('media_id', String(regenMediaId.value));
+        if (regenPromptContext.value) fd.append('prompt_context', regenPromptContext.value);
+        if (regenImageStyle.value) fd.append('image_style', regenImageStyle.value);
+        fd.append('image_size', regenImageSize.value);
+        regenReferenceImages.value.forEach((file, i) => fd.append(`reference_images[${i}]`, file));
+
+        const resp = await axios.post(route('social.regenerate-image', props.post.id), fd, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+
+        if (resp.data.success) {
+            if (regenMediaId.value) {
+                const media = existingMedia.value.find(m => m.id === regenMediaId.value);
+                if (media) media.file_path = resp.data.image_url;
+            } else {
+                existingMedia.value.push({
+                    id: Date.now(),
+                    type: 'image',
+                    file_path: resp.data.image_url,
+                    file_name: 'ai-regenerated.png',
+                    alt_text: null,
+                    order: existingMedia.value.length,
+                });
+            }
+            showRegenModal.value = false;
+        }
+    } catch (e: any) {
+        regenError.value = e.response?.data?.error || 'Erro ao regenerar imagem.';
+    } finally {
+        regenLoading.value = false;
+    }
+}
 
 // Hashtags
 const hashtagInput = ref('');
@@ -334,11 +430,25 @@ const statusOptions = [
                             <div v-else class="flex items-center justify-center h-full text-gray-500">
                                 <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                             </div>
+                            <div class="absolute inset-x-0 bottom-0 flex gap-1 p-1 opacity-0 group-hover:opacity-100 transition">
+                                <button v-if="media.type === 'image'" type="button" @click="openRegenModal(media.id)"
+                                    class="flex-1 flex items-center justify-center gap-1 rounded-lg bg-indigo-600/90 py-1.5 text-[10px] font-medium text-white hover:bg-indigo-700 transition">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" /></svg>
+                                    Regerar
+                                </button>
+                            </div>
                             <button type="button" @click="removeExistingMedia(index)" class="absolute top-1 right-1 p-1 rounded-lg bg-red-500/80 text-white opacity-0 group-hover:opacity-100 transition">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                             </button>
                         </div>
                     </div>
+
+                    <!-- Botão gerar nova imagem com IA -->
+                    <button type="button" @click="openRegenModal(null)"
+                        class="mb-4 flex items-center gap-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2.5 text-sm text-indigo-300 hover:bg-indigo-500/20 transition">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
+                        Gerar Nova Imagem com IA
+                    </button>
 
                     <!-- New uploads preview -->
                     <div v-if="mediaPreviews.length" class="grid grid-cols-2 gap-3 sm:grid-cols-4 md:grid-cols-5 mb-4">
@@ -491,6 +601,86 @@ const statusOptions = [
                             <svg v-if="aiGenerating" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" /><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
                             {{ aiGenerating ? 'Gerando...' : 'Gerar Legenda + Hashtags' }}
                         </button>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!-- Modal Regenerar Imagem -->
+        <Teleport to="body">
+            <div v-if="showRegenModal" class="fixed inset-0 z-[60] flex items-center justify-center">
+                <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showRegenModal = false" />
+                <div class="relative w-full max-w-lg rounded-2xl bg-gray-900 border border-gray-700 shadow-2xl mx-4 max-h-[90vh] overflow-y-auto">
+                    <div class="sticky top-0 bg-gray-900 border-b border-gray-800 p-6 pb-4 z-10">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600/30 to-indigo-600/30 flex items-center justify-center">
+                                    <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 class="text-lg font-semibold text-white">{{ regenMediaId ? 'Regenerar Imagem' : 'Gerar Nova Imagem' }}</h3>
+                                    <p class="text-xs text-gray-500">DALL-E 3 com contexto da marca</p>
+                                </div>
+                            </div>
+                            <button @click="showRegenModal = false" class="text-gray-500 hover:text-white transition">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="p-6 pt-4 space-y-4">
+                        <div>
+                            <label class="text-sm text-gray-400 mb-1 block">Contexto / Instruções para a imagem</label>
+                            <textarea v-model="regenPromptContext" rows="3"
+                                class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                :placeholder="'Ex: Foto do produto com fundo azul, estilo lifestyle...'" />
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs text-gray-400 mb-1 block">Estilo Visual</label>
+                                <select v-model="regenImageStyle" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option v-for="s in imageStyleOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-400 mb-1 block">Proporção</label>
+                                <select v-model="regenImageSize" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option v-for="s in imageSizeOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="text-xs text-gray-400 mb-1.5 block">Imagens de Referência (opcional, max 3)</label>
+                            <p class="text-[10px] text-gray-500 mb-2">A IA analisará essas imagens para replicar o estilo visual.</p>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <div v-for="(preview, i) in regenReferencePreviews" :key="i" class="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-700 group">
+                                    <img :src="preview" class="w-full h-full object-cover" />
+                                    <button type="button" @click="removeRegenRef(i)" class="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                                        <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                                    </button>
+                                </div>
+                                <button v-if="regenReferencePreviews.length < 3" type="button" @click="regenInputRef?.click()"
+                                    class="w-16 h-16 rounded-lg border-2 border-dashed border-gray-700 flex items-center justify-center text-gray-500 hover:border-indigo-500 hover:text-indigo-400 transition">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                </button>
+                                <input ref="regenInputRef" type="file" accept="image/*" multiple class="hidden" @change="onRegenRefSelect" />
+                            </div>
+                        </div>
+
+                        <div v-if="regenError" class="rounded-xl bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-400">{{ regenError }}</div>
+
+                        <button @click="submitRegenerate" :disabled="regenLoading"
+                            class="w-full rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 py-3 text-sm font-semibold text-white hover:from-purple-700 hover:to-indigo-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+                            <svg v-if="regenLoading" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" /><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                            <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
+                            {{ regenLoading ? 'Gerando imagem...' : (regenMediaId ? 'Regenerar Imagem' : 'Gerar Nova Imagem') }}
+                        </button>
+
+                        <p v-if="regenLoading" class="text-xs text-gray-500 text-center">Isso pode levar até 30 segundos...</p>
                     </div>
                 </div>
             </div>
