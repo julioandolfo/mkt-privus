@@ -134,7 +134,8 @@ class AIGateway
      * @param User|null $user Usuário para log
      * @param string $size Tamanho: '1024x1024', '1536x1024', '1024x1536'
      * @param string $quality 'auto', 'high', 'medium', 'low'
-     * @return array{url: string, revised_prompt: string, size: string, model: string}
+     * @param array|null $referenceImages Imagens de referência [['base64' => string, 'mime' => string], ...]
+     * @return array{url: string, revised_prompt: string, size: string, model: string, stored_path: ?string}
      */
     public function generateImage(
         string $prompt,
@@ -142,6 +143,7 @@ class AIGateway
         ?User $user = null,
         string $size = '1024x1024',
         string $quality = 'auto',
+        ?array $referenceImages = null,
     ): array {
         $apiKey = $this->resolveApiKey(AIProvider::OpenAI);
 
@@ -172,19 +174,22 @@ class AIGateway
         $mappedQuality = $qualityMap[$quality] ?? $quality;
 
         $usedModel = 'gpt-image-1';
-        $dallePrompt = mb_substr($enhancedPrompt, 0, 4000);
+        $hasRefImages = !empty($referenceImages);
 
-        // Tentar gpt-image-1 primeiro, fallback para dall-e-3
-        $response = \Illuminate\Support\Facades\Http::withHeaders([
-            'Authorization' => "Bearer {$apiKey}",
-            'Content-Type' => 'application/json',
-        ])->timeout(180)->post('https://api.openai.com/v1/images/generations', [
-            'model' => 'gpt-image-1',
-            'prompt' => $enhancedPrompt,
-            'n' => 1,
-            'size' => $mappedSize,
-            'quality' => $mappedQuality,
-        ]);
+        if ($hasRefImages) {
+            $response = $this->callImageEditsApi($apiKey, $enhancedPrompt, $referenceImages, $mappedSize, $mappedQuality);
+        } else {
+            $response = \Illuminate\Support\Facades\Http::withHeaders([
+                'Authorization' => "Bearer {$apiKey}",
+                'Content-Type' => 'application/json',
+            ])->timeout(180)->post('https://api.openai.com/v1/images/generations', [
+                'model' => 'gpt-image-1',
+                'prompt' => $enhancedPrompt,
+                'n' => 1,
+                'size' => $mappedSize,
+                'quality' => $mappedQuality,
+            ]);
+        }
 
         if (!$response->successful()) {
             $gptError = $response->json()['error']['message'] ?? $response->body();
@@ -202,7 +207,7 @@ class AIGateway
                 'Content-Type' => 'application/json',
             ])->timeout(120)->post('https://api.openai.com/v1/images/generations', [
                 'model' => 'dall-e-3',
-                'prompt' => $dallePrompt,
+                'prompt' => mb_substr($enhancedPrompt, 0, 4000),
                 'n' => 1,
                 'size' => $dalleSize,
                 'quality' => 'standard',
@@ -239,7 +244,7 @@ class AIGateway
                     'brand_id' => $brand?->id,
                     'provider' => 'openai',
                     'model' => $usedModel,
-                    'feature' => 'image_generation',
+                    'feature' => $hasRefImages ? 'image_edit_with_reference' : 'image_generation',
                     'input_tokens' => mb_strlen($enhancedPrompt),
                     'output_tokens' => 0,
                     'estimated_cost' => $usedModel === 'gpt-image-1' ? 0.040 : 0.040,
@@ -256,6 +261,36 @@ class AIGateway
             'model' => $usedModel,
             'stored_path' => $tempPath,
         ];
+    }
+
+    /**
+     * Chama o endpoint /v1/images/edits com imagens de referência via base64 data URL
+     */
+    private function callImageEditsApi(
+        string $apiKey,
+        string $prompt,
+        array $referenceImages,
+        string $size,
+        string $quality,
+    ): \Illuminate\Http\Client\Response {
+        $images = [];
+        foreach ($referenceImages as $img) {
+            $images[] = [
+                'image_url' => "data:{$img['mime']};base64,{$img['base64']}",
+            ];
+        }
+
+        return \Illuminate\Support\Facades\Http::withHeaders([
+            'Authorization' => "Bearer {$apiKey}",
+            'Content-Type' => 'application/json',
+        ])->timeout(180)->post('https://api.openai.com/v1/images/edits', [
+            'model' => 'gpt-image-1',
+            'images' => $images,
+            'prompt' => $prompt,
+            'n' => 1,
+            'size' => $size,
+            'quality' => $quality,
+        ]);
     }
 
     /**
@@ -355,11 +390,17 @@ class AIGateway
                 $prompt .= "\n\nREFERENCE VISUAL STYLE (replicate this aesthetic): " . $refContext;
             }
 
+            $brandRefImages = $this->extractBrandReferenceImages($brand);
+            if (!empty($brandRefImages)) {
+                $prompt .= "\n\nIMPORTANT: Use the provided reference image(s) as the primary visual basis. The generated image MUST include the same products/objects shown in the reference photos.";
+            }
+
             $result = $this->generateImage(
                 prompt: $prompt,
                 brand: $brand,
                 size: $size,
                 quality: 'auto',
+                referenceImages: $brandRefImages ?: null,
             );
 
             if (!empty($result['stored_path'])) {
@@ -594,6 +635,27 @@ class AIGateway
      * Usa cache em memória por brand_id para evitar chamadas repetidas na mesma request.
      */
     private array $refCache = [];
+
+    /**
+     * Extrai imagens de referência dos brand assets como base64 para envio direto à API de imagem
+     * @return array<array{base64: string, mime: string}>
+     */
+    private function extractBrandReferenceImages(Brand $brand): array
+    {
+        $references = $brand->references()->limit(3)->get();
+        if ($references->isEmpty()) return [];
+
+        $images = [];
+        foreach ($references as $ref) {
+            $path = \Illuminate\Support\Facades\Storage::disk('public')->path($ref->file_path);
+            if (!file_exists($path)) continue;
+            $images[] = [
+                'base64' => base64_encode(file_get_contents($path)),
+                'mime' => $ref->mime_type ?? 'image/jpeg',
+            ];
+        }
+        return $images;
+    }
 
     private function analyzeReferenceAssets(Brand $brand): ?string
     {

@@ -924,6 +924,7 @@ class PostController extends Controller
             $imageData = null;
             if ($shouldGenerateImage) {
                 try {
+                    $refImages = $this->extractReferenceImages($request);
                     $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
 
                     $imagePrompt = $this->buildImagePrompt(
@@ -936,7 +937,11 @@ class PostController extends Controller
                     );
 
                     if ($referenceContext) {
-                        $imagePrompt .= "\n\nREFERENCE IMAGE CONTEXT (replicate this visual style/composition): " . $referenceContext;
+                        $imagePrompt .= "\n\nREFERENCE IMAGE DESCRIPTION: " . $referenceContext;
+                    }
+
+                    if (!empty($refImages)) {
+                        $imagePrompt .= "\n\nIMPORTANT: Use the provided reference image(s) as the primary visual basis. The generated image MUST include the same products/objects shown in the reference photos. Recreate a similar composition with the exact same items.";
                     }
 
                     $imageData = $aiGateway->generateImage(
@@ -945,6 +950,7 @@ class PostController extends Controller
                         user: $request->user(),
                         size: $validated['image_size'] ?? '1024x1024',
                         quality: 'auto',
+                        referenceImages: $refImages ?: null,
                     );
                 } catch (\Throwable $e) {
                     Log::warning("Image generation failed: {$e->getMessage()}");
@@ -1090,6 +1096,25 @@ class PostController extends Controller
     /**
      * Analisa imagens de referência via GPT-4o Vision e retorna descrição textual
      */
+    /**
+     * Extrai imagens de referência do request como base64 para envio direto à API de imagem
+     * @return array<array{base64: string, mime: string}>
+     */
+    private function extractReferenceImages(Request $request): array
+    {
+        $files = $request->file('reference_images');
+        if (!$files || empty($files)) return [];
+
+        $images = [];
+        foreach ($files as $file) {
+            $images[] = [
+                'base64' => base64_encode(file_get_contents($file->getRealPath())),
+                'mime' => $file->getMimeType(),
+            ];
+        }
+        return $images;
+    }
+
     private function analyzeReferenceImages(Request $request, AIGateway $aiGateway, \App\Models\Brand $brand): ?string
     {
         $files = $request->file('reference_images');
@@ -1148,6 +1173,7 @@ class PostController extends Controller
             ]);
             $aiGateway = app(AIGateway::class);
 
+            $refImages = $this->extractReferenceImages($request);
             $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
 
             $topic = $validated['prompt_context'] ?? $post->title ?? mb_substr($post->caption ?? '', 0, 200);
@@ -1168,7 +1194,11 @@ class PostController extends Controller
             }
 
             if ($referenceContext) {
-                $imagePrompt .= "\n\nREFERENCE IMAGE CONTEXT (replicate this visual style/composition): " . $referenceContext;
+                $imagePrompt .= "\n\nREFERENCE IMAGE DESCRIPTION: " . $referenceContext;
+            }
+
+            if (!empty($refImages)) {
+                $imagePrompt .= "\n\nIMPORTANT: Use the provided reference image(s) as the primary visual basis. The generated image MUST include the same products/objects shown in the reference photos. Recreate a similar composition with the exact same items.";
             }
 
             $imageData = $aiGateway->generateImage(
@@ -1177,6 +1207,7 @@ class PostController extends Controller
                 user: $request->user(),
                 size: $validated['image_size'] ?? '1024x1024',
                 quality: 'auto',
+                referenceImages: $refImages ?: null,
             );
 
             $storagePath = null;
