@@ -867,7 +867,7 @@ class PostController extends Controller
             // Opções de imagem
             'generate_image' => 'boolean',
             'image_style' => 'nullable|string|max:200',
-            'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792',
+            'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792,1536x1024,1024x1536',
             'reference_images' => 'nullable|array|max:3',
             'reference_images.*' => 'image|max:10240',
         ]);
@@ -945,7 +945,7 @@ class PostController extends Controller
                         brand: $brand,
                         user: $request->user(),
                         size: $validated['image_size'] ?? '1024x1024',
-                        quality: 'standard',
+                        quality: 'auto',
                     );
                 } catch (\Exception $e) {
                     Log::warning("Image generation failed: {$e->getMessage()}");
@@ -1135,7 +1135,7 @@ class PostController extends Controller
             'media_id' => 'nullable|integer|exists:post_media,id',
             'prompt_context' => 'nullable|string|max:1000',
             'image_style' => 'nullable|string|max:200',
-            'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792',
+            'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792,1536x1024,1024x1536',
             'reference_images' => 'nullable|array|max:3',
             'reference_images.*' => 'image|max:10240',
         ]);
@@ -1171,48 +1171,57 @@ class PostController extends Controller
                 brand: $brand,
                 user: $request->user(),
                 size: $validated['image_size'] ?? '1024x1024',
-                quality: 'standard',
+                quality: 'auto',
             );
 
-            if (!empty($imageData['url'])) {
-                $imageContent = file_get_contents($imageData['url']);
+            $storagePath = null;
+
+            if (!empty($imageData['stored_path'])) {
+                $finalPath = 'post-media/' . $brand->id . '/' . uniqid('ai-regen-') . '.png';
+                \Illuminate\Support\Facades\Storage::disk('public')->copy($imageData['stored_path'], $finalPath);
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($imageData['stored_path']);
+                $storagePath = $finalPath;
+            } elseif (!empty($imageData['url'])) {
+                $imageContent = @file_get_contents($imageData['url']);
                 if ($imageContent) {
-                    $filename = 'post-media/' . $brand->id . '/' . uniqid('ai-regen-') . '.png';
-                    \Illuminate\Support\Facades\Storage::disk('public')->put($filename, $imageContent);
-                    $storagePath = $filename;
-
-                    if (!empty($validated['media_id'])) {
-                        $media = \App\Models\PostMedia::where('id', $validated['media_id'])
-                            ->where('post_id', $post->id)
-                            ->first();
-                        if ($media) {
-                            if ($media->file_path) {
-                                \Illuminate\Support\Facades\Storage::disk('public')->delete($media->file_path);
-                            }
-                            $media->update([
-                                'file_path' => $storagePath,
-                                'file_name' => basename($filename),
-                            ]);
-                        }
-                    } else {
-                        \App\Models\PostMedia::create([
-                            'post_id' => $post->id,
-                            'type' => 'image',
-                            'file_path' => $storagePath,
-                            'file_name' => basename($filename),
-                            'order' => $post->media()->count(),
-                        ]);
-                    }
-
-                    return response()->json([
-                        'success' => true,
-                        'image_url' => \Illuminate\Support\Facades\Storage::url($storagePath),
-                        'message' => 'Imagem regenerada com sucesso!',
-                    ]);
+                    $finalPath = 'post-media/' . $brand->id . '/' . uniqid('ai-regen-') . '.png';
+                    \Illuminate\Support\Facades\Storage::disk('public')->put($finalPath, $imageContent);
+                    $storagePath = $finalPath;
                 }
             }
 
-            return response()->json(['error' => 'Falha ao gerar imagem.'], 500);
+            if (!$storagePath) {
+                return response()->json(['error' => 'Falha ao gerar imagem.'], 500);
+            }
+
+            if (!empty($validated['media_id'])) {
+                $media = \App\Models\PostMedia::where('id', $validated['media_id'])
+                    ->where('post_id', $post->id)
+                    ->first();
+                if ($media) {
+                    if ($media->file_path) {
+                        \Illuminate\Support\Facades\Storage::disk('public')->delete($media->file_path);
+                    }
+                    $media->update([
+                        'file_path' => $storagePath,
+                        'file_name' => basename($storagePath),
+                    ]);
+                }
+            } else {
+                \App\Models\PostMedia::create([
+                    'post_id' => $post->id,
+                    'type' => 'image',
+                    'file_path' => $storagePath,
+                    'file_name' => basename($storagePath),
+                    'order' => $post->media()->count(),
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'image_url' => \Illuminate\Support\Facades\Storage::url($storagePath),
+                'message' => 'Imagem regenerada com sucesso!',
+            ]);
         } catch (\Exception $e) {
             return response()->json(['error' => 'Erro: ' . $e->getMessage()], 500);
         }

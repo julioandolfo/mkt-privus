@@ -127,13 +127,13 @@ class AIGateway
     }
 
     /**
-     * Gera imagem com IA (DALL-E 3 via OpenAI)
+     * Gera imagem com IA (GPT Image via OpenAI)
      *
      * @param string $prompt Descrição da imagem a gerar
      * @param Brand|null $brand Marca para contexto visual
      * @param User|null $user Usuário para log
-     * @param string $size Tamanho: '1024x1024', '1792x1024', '1024x1792'
-     * @param string $quality 'standard' ou 'hd'
+     * @param string $size Tamanho: '1024x1024', '1536x1024', '1024x1536'
+     * @param string $quality 'auto', 'high', 'medium', 'low'
      * @return array{url: string, revised_prompt: string, size: string, model: string}
      */
     public function generateImage(
@@ -141,15 +141,14 @@ class AIGateway
         ?Brand $brand = null,
         ?User $user = null,
         string $size = '1024x1024',
-        string $quality = 'standard',
+        string $quality = 'auto',
     ): array {
         $apiKey = $this->resolveApiKey(AIProvider::OpenAI);
 
         if (!$apiKey) {
-            throw new \RuntimeException('OPENAI_API_KEY não configurada. Necessária para gerar imagens com DALL-E 3.');
+            throw new \RuntimeException('OPENAI_API_KEY não configurada.');
         }
 
-        // Enriquecer prompt com contexto visual da marca
         $enhancedPrompt = $prompt;
         if ($brand) {
             $brandHints = "Brand: '{$brand->name}'";
@@ -160,42 +159,62 @@ class AIGateway
             $enhancedPrompt = "{$brandHints}\n\n{$prompt}";
         }
 
-        // Limitar a 4000 chars (limite DALL-E 3)
-        $enhancedPrompt = mb_substr($enhancedPrompt, 0, 4000);
+        $sizeMap = [
+            '1792x1024' => '1536x1024',
+            '1024x1792' => '1024x1536',
+        ];
+        $mappedSize = $sizeMap[$size] ?? $size;
+
+        $qualityMap = [
+            'standard' => 'auto',
+            'hd' => 'high',
+        ];
+        $mappedQuality = $qualityMap[$quality] ?? $quality;
 
         $response = \Illuminate\Support\Facades\Http::withHeaders([
             'Authorization' => "Bearer {$apiKey}",
             'Content-Type' => 'application/json',
-        ])->timeout(120)->post('https://api.openai.com/v1/images/generations', [
-            'model' => 'dall-e-3',
+        ])->timeout(180)->post('https://api.openai.com/v1/images/generations', [
+            'model' => 'gpt-image-1',
             'prompt' => $enhancedPrompt,
             'n' => 1,
-            'size' => $size,
-            'quality' => $quality,
-            'response_format' => 'url',
+            'size' => $mappedSize,
+            'quality' => $mappedQuality,
         ]);
 
         if (!$response->successful()) {
             $errorBody = $response->json();
             $errorMsg = $errorBody['error']['message'] ?? $response->body();
-            throw new \RuntimeException("DALL-E 3 Error: {$errorMsg}");
+            throw new \RuntimeException("GPT Image Error: {$errorMsg}");
         }
 
         $data = $response->json();
         $imageData = $data['data'][0] ?? [];
 
-        // Log de uso
+        $imageUrl = '';
+        $tempPath = null;
+
+        if (!empty($imageData['b64_json'])) {
+            $imageBytes = base64_decode($imageData['b64_json']);
+            $tempFilename = 'ai-generated/' . uniqid('gptimg_') . '.png';
+            \Illuminate\Support\Facades\Storage::disk('public')->put($tempFilename, $imageBytes);
+            $imageUrl = \Illuminate\Support\Facades\Storage::disk('public')->url($tempFilename);
+            $tempPath = $tempFilename;
+        } elseif (!empty($imageData['url'])) {
+            $imageUrl = $imageData['url'];
+        }
+
         if ($user) {
             try {
                 AiUsageLog::create([
                     'user_id' => $user->id,
                     'brand_id' => $brand?->id,
                     'provider' => 'openai',
-                    'model' => 'dall-e-3',
+                    'model' => 'gpt-image-1',
                     'feature' => 'image_generation',
                     'input_tokens' => mb_strlen($enhancedPrompt),
                     'output_tokens' => 0,
-                    'estimated_cost' => $quality === 'hd' ? 0.080 : 0.040, // Custo por imagem DALL-E 3
+                    'estimated_cost' => $mappedQuality === 'high' ? 0.167 : 0.040,
                 ]);
             } catch (\Exception $e) {
                 Log::warning("Falha ao registrar log de geração de imagem: {$e->getMessage()}");
@@ -203,10 +222,11 @@ class AIGateway
         }
 
         return [
-            'url' => $imageData['url'] ?? '',
+            'url' => $imageUrl,
             'revised_prompt' => $imageData['revised_prompt'] ?? $enhancedPrompt,
-            'size' => $size,
-            'model' => 'dall-e-3',
+            'size' => $mappedSize,
+            'model' => 'gpt-image-1',
+            'stored_path' => $tempPath,
         ];
     }
 
@@ -311,22 +331,30 @@ class AIGateway
                 prompt: $prompt,
                 brand: $brand,
                 size: $size,
-                quality: 'standard',
+                quality: 'auto',
             );
 
+            if (!empty($result['stored_path'])) {
+                return [
+                    'path' => $result['stored_path'],
+                    'url' => \Illuminate\Support\Facades\Storage::disk('public')->url($result['stored_path']),
+                    'prompt' => $result['revised_prompt'] ?? $prompt,
+                    'size' => $result['size'],
+                    'model' => $result['model'],
+                ];
+            }
+
             if (!empty($result['url'])) {
-                // Baixar e salvar localmente
                 $imageContent = @file_get_contents($result['url']);
                 if ($imageContent) {
                     $filename = 'ai-generated/' . uniqid('img_') . '.png';
                     \Illuminate\Support\Facades\Storage::disk('public')->put($filename, $imageContent);
-
                     return [
                         'path' => $filename,
                         'url' => \Illuminate\Support\Facades\Storage::disk('public')->url($filename),
                         'prompt' => $result['revised_prompt'] ?? $prompt,
-                        'size' => $size,
-                        'model' => 'dall-e-3',
+                        'size' => $result['size'],
+                        'model' => $result['model'],
                     ];
                 }
             }
