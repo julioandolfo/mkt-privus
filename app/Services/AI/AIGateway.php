@@ -171,6 +171,10 @@ class AIGateway
         ];
         $mappedQuality = $qualityMap[$quality] ?? $quality;
 
+        $usedModel = 'gpt-image-1';
+        $dallePrompt = mb_substr($enhancedPrompt, 0, 4000);
+
+        // Tentar gpt-image-1 primeiro, fallback para dall-e-3
         $response = \Illuminate\Support\Facades\Http::withHeaders([
             'Authorization' => "Bearer {$apiKey}",
             'Content-Type' => 'application/json',
@@ -183,9 +187,33 @@ class AIGateway
         ]);
 
         if (!$response->successful()) {
-            $errorBody = $response->json();
-            $errorMsg = $errorBody['error']['message'] ?? $response->body();
-            throw new \RuntimeException("GPT Image Error: {$errorMsg}");
+            $gptError = $response->json()['error']['message'] ?? $response->body();
+            Log::warning("gpt-image-1 failed ({$response->status()}): {$gptError} — fallback to dall-e-3");
+
+            $usedModel = 'dall-e-3';
+            $dalleSize = match ($mappedSize) {
+                '1536x1024' => '1792x1024',
+                '1024x1536' => '1024x1792',
+                default => $mappedSize,
+            };
+
+            $response = \Illuminate\Support\Facades\Http::withHeaders([
+                'Authorization' => "Bearer {$apiKey}",
+                'Content-Type' => 'application/json',
+            ])->timeout(120)->post('https://api.openai.com/v1/images/generations', [
+                'model' => 'dall-e-3',
+                'prompt' => $dallePrompt,
+                'n' => 1,
+                'size' => $dalleSize,
+                'quality' => 'standard',
+                'response_format' => 'b64_json',
+            ]);
+
+            if (!$response->successful()) {
+                $errorBody = $response->json();
+                $errorMsg = $errorBody['error']['message'] ?? $response->body();
+                throw new \RuntimeException("Erro na geração de imagem: {$errorMsg}");
+            }
         }
 
         $data = $response->json();
@@ -210,11 +238,11 @@ class AIGateway
                     'user_id' => $user->id,
                     'brand_id' => $brand?->id,
                     'provider' => 'openai',
-                    'model' => 'gpt-image-1',
+                    'model' => $usedModel,
                     'feature' => 'image_generation',
                     'input_tokens' => mb_strlen($enhancedPrompt),
                     'output_tokens' => 0,
-                    'estimated_cost' => $mappedQuality === 'high' ? 0.167 : 0.040,
+                    'estimated_cost' => $usedModel === 'gpt-image-1' ? 0.040 : 0.040,
                 ]);
             } catch (\Exception $e) {
                 Log::warning("Falha ao registrar log de geração de imagem: {$e->getMessage()}");
@@ -225,7 +253,7 @@ class AIGateway
             'url' => $imageUrl,
             'revised_prompt' => $imageData['revised_prompt'] ?? $enhancedPrompt,
             'size' => $mappedSize,
-            'model' => 'gpt-image-1',
+            'model' => $usedModel,
             'stored_path' => $tempPath,
         ];
     }

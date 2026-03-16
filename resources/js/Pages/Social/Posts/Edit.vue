@@ -173,7 +173,15 @@ async function submitRegenerate() {
             showRegenModal.value = false;
         }
     } catch (e: any) {
-        regenError.value = e.response?.data?.error || 'Erro ao regenerar imagem.';
+        const data = e.response?.data;
+        if (data?.error) {
+            regenError.value = data.error;
+        } else if (data?.message) {
+            const fieldErrors = data.errors ? Object.values(data.errors).flat().join(', ') : '';
+            regenError.value = fieldErrors || data.message;
+        } else {
+            regenError.value = `Erro ao regenerar imagem (${e.response?.status || 'rede'}). Verifique os logs.`;
+        }
     } finally {
         regenLoading.value = false;
     }
@@ -621,7 +629,7 @@ const statusOptions = [
                                 </div>
                                 <div>
                                     <h3 class="text-lg font-semibold text-white">{{ regenMediaId ? 'Regenerar Imagem' : 'Gerar Nova Imagem' }}</h3>
-                                    <p class="text-xs text-gray-500">DALL-E 3 com contexto da marca</p>
+                                    <p class="text-xs text-gray-500">GPT Image com contexto da marca</p>
                                 </div>
                             </div>
                             <button @click="showRegenModal = false" class="text-gray-500 hover:text-white transition">

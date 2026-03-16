@@ -1131,16 +1131,15 @@ class PostController extends Controller
             return response()->json(['error' => 'Acesso negado.'], 403);
         }
 
-        $validated = $request->validate([
-            'media_id' => 'nullable|integer|exists:post_media,id',
-            'prompt_context' => 'nullable|string|max:1000',
-            'image_style' => 'nullable|string|max:200',
-            'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792,1536x1024,1024x1536',
-            'reference_images' => 'nullable|array|max:3',
-            'reference_images.*' => 'image|max:10240',
-        ]);
-
         try {
+            $validated = $request->validate([
+                'media_id' => 'nullable|integer|exists:post_media,id',
+                'prompt_context' => 'nullable|string|max:2000',
+                'image_style' => 'nullable|string|max:200',
+                'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792,1536x1024,1024x1536',
+                'reference_images' => 'nullable|array|max:3',
+                'reference_images.*' => 'image|max:10240',
+            ]);
             $aiGateway = app(AIGateway::class);
 
             $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
@@ -1222,8 +1221,12 @@ class PostController extends Controller
                 'image_url' => \Illuminate\Support\Facades\Storage::url($storagePath),
                 'message' => 'Imagem regenerada com sucesso!',
             ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $msgs = collect($e->errors())->flatten()->implode(' ');
+            return response()->json(['error' => $msgs], 422);
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Erro: ' . $e->getMessage()], 500);
+            Log::error("regenerateImage error: {$e->getMessage()}", ['post_id' => $post->id, 'trace' => $e->getTraceAsString()]);
+            return response()->json(['error' => $e->getMessage()], 500);
         }
     }
 
