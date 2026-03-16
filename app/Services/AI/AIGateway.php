@@ -593,17 +593,17 @@ class AIGateway
      * Analisa imagens de referência da marca via GPT-4o Vision para enriquecer prompts de geração.
      * Usa cache em memória por brand_id para evitar chamadas repetidas na mesma request.
      */
-    private static array $refCache = [];
+    private array $refCache = [];
 
     private function analyzeReferenceAssets(Brand $brand): ?string
     {
-        if (isset(self::$refCache[$brand->id])) {
-            return self::$refCache[$brand->id];
+        if (isset($this->refCache[$brand->id])) {
+            return $this->refCache[$brand->id];
         }
 
         $references = $brand->references()->limit(3)->get();
         if ($references->isEmpty()) {
-            self::$refCache[$brand->id] = null;
+            $this->refCache[$brand->id] = null;
             return null;
         }
 
@@ -620,7 +620,7 @@ class AIGateway
         }
 
         if (empty($imageContents)) {
-            self::$refCache[$brand->id] = null;
+            $this->refCache[$brand->id] = null;
             return null;
         }
 
@@ -638,11 +638,11 @@ class AIGateway
                 feature: 'brand_reference_analysis',
             );
             $desc = $result['content'] ?? null;
-            self::$refCache[$brand->id] = $desc;
+            $this->refCache[$brand->id] = $desc;
             return $desc;
         } catch (\Exception $e) {
             Log::warning("Brand reference analysis failed: {$e->getMessage()}");
-            self::$refCache[$brand->id] = null;
+            $this->refCache[$brand->id] = null;
             return null;
         }
     }

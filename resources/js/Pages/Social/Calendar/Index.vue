@@ -296,9 +296,7 @@ async function submitGenerate() {
         generateForm.value.post_types.forEach((pt, i) => formData.append(`post_types[${i}]`, pt));
         referenceImages.value.forEach((file, i) => formData.append(`reference_images[${i}]`, file));
 
-        const res = await axios.post(route('social.calendar.content.generate'), formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-        });
+        const res = await axios.post(route('social.calendar.content.generate'), formData);
         generateResult.value = res.data.message;
         await fetchCalendarData();
     } catch (e: any) {

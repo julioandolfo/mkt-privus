@@ -244,9 +244,7 @@ async function generateCompletePost() {
         formData.append('image_size', imageSize.value);
         referenceImages.value.forEach((file, i) => formData.append(`reference_images[${i}]`, file));
 
-        const response = await axios.post(route('social.generate-complete'), formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-        });
+        const response = await axios.post(route('social.generate-complete'), formData);
 
         aiCompleteResult.value = response.data;
         aiCompleteStep.value = 'result';

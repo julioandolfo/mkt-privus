@@ -152,9 +152,7 @@ async function submitRegenerate() {
         fd.append('image_size', regenImageSize.value);
         regenReferenceImages.value.forEach((file, i) => fd.append(`reference_images[${i}]`, file));
 
-        const resp = await axios.post(route('social.regenerate-image', props.post.id), fd, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-        });
+        const resp = await axios.post(route('social.regenerate-image', props.post.id), fd);
 
         if (resp.data.success) {
             if (regenMediaId.value) {
