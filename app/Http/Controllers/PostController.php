@@ -853,45 +853,46 @@ class PostController extends Controller
      */
     public function generateCompletePost(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'topic' => 'required|string|max:500',
-            'platform' => 'required|string',
-            'type' => 'nullable|string',
-            'tone' => 'nullable|string|max:100',
-            'instructions' => 'nullable|string|max:2000',
-            'model' => 'nullable|string',
-            // Opções de análise
-            'analyze_history' => 'boolean',
-            'analyze_website' => 'boolean',
-            'analyze_social' => 'boolean',
-            // Opções de imagem
-            'generate_image' => 'boolean',
-            'image_style' => 'nullable|string|max:200',
-            'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792,1536x1024,1024x1536',
-            'reference_images' => 'nullable|array|max:3',
-            'reference_images.*' => 'image|max:10240',
-        ]);
-
-        $brand = $request->user()->getActiveBrand();
-        if (!$brand) {
-            return response()->json(['error' => 'Nenhuma marca ativa selecionada.'], 422);
-        }
-
-        $platform = SocialPlatform::from($validated['platform']);
-        $postType = isset($validated['type']) ? PostType::from($validated['type']) : PostType::Feed;
-        $aiModel = isset($validated['model']) ? AIModel::from($validated['model']) : AIModel::GPT4oMini;
-
         try {
-            // ===== FASE 1: Coletar contexto enriquecido =====
+            $validated = $request->validate([
+                'topic' => 'required|string|max:500',
+                'platform' => 'required|string',
+                'type' => 'nullable|string',
+                'tone' => 'nullable|string|max:100',
+                'instructions' => 'nullable|string|max:2000',
+                'model' => 'nullable|string',
+                'analyze_history' => 'nullable',
+                'analyze_website' => 'nullable',
+                'analyze_social' => 'nullable',
+                'generate_image' => 'nullable',
+                'image_style' => 'nullable|string|max:200',
+                'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792,1536x1024,1024x1536',
+                'reference_images' => 'nullable|array|max:3',
+                'reference_images.*' => 'image|max:10240',
+            ]);
+
+            $brand = $request->user()->getActiveBrand();
+            if (!$brand) {
+                return response()->json(['error' => 'Nenhuma marca ativa selecionada.'], 422);
+            }
+
+            $analyzeHistory = filter_var($validated['analyze_history'] ?? true, FILTER_VALIDATE_BOOLEAN);
+            $analyzeWebsite = filter_var($validated['analyze_website'] ?? true, FILTER_VALIDATE_BOOLEAN);
+            $analyzeSocial = filter_var($validated['analyze_social'] ?? true, FILTER_VALIDATE_BOOLEAN);
+            $shouldGenerateImage = filter_var($validated['generate_image'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+            $platform = SocialPlatform::from($validated['platform']);
+            $postType = isset($validated['type']) ? PostType::from($validated['type']) : PostType::Feed;
+            $aiModel = isset($validated['model']) ? AIModel::from($validated['model']) : AIModel::GPT4oMini;
+
             $extraContext = $this->buildEnrichedContext(
                 $brand,
                 $platform,
-                analyzeHistory: $validated['analyze_history'] ?? true,
-                analyzeWebsite: $validated['analyze_website'] ?? true,
-                analyzeSocial: $validated['analyze_social'] ?? true,
+                analyzeHistory: $analyzeHistory,
+                analyzeWebsite: $analyzeWebsite,
+                analyzeSocial: $analyzeSocial,
             );
 
-            // ===== FASE 2: Gerar texto completo (título + legenda + hashtags) =====
             $enrichedInstructions = trim(
                 ($validated['instructions'] ?? '') . "\n\n" . $extraContext
             );
@@ -907,7 +908,6 @@ class PostController extends Controller
                 model: $aiModel,
             );
 
-            // Gerar título
             $aiGateway = app(AIGateway::class);
             $titleResult = $aiGateway->chat(
                 model: $aiModel,
@@ -921,9 +921,8 @@ class PostController extends Controller
             );
             $title = trim($titleResult['content'] ?? '');
 
-            // ===== FASE 3: Gerar imagem (se solicitado) =====
             $imageData = null;
-            if ($validated['generate_image'] ?? false) {
+            if ($shouldGenerateImage) {
                 try {
                     $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
 
@@ -947,7 +946,7 @@ class PostController extends Controller
                         size: $validated['image_size'] ?? '1024x1024',
                         quality: 'auto',
                     );
-                } catch (\Exception $e) {
+                } catch (\Throwable $e) {
                     Log::warning("Image generation failed: {$e->getMessage()}");
                     $imageData = [
                         'error' => $e->getMessage(),
@@ -963,12 +962,20 @@ class PostController extends Controller
                 'image' => $imageData,
                 'model' => $textResult['model'] ?? $aiModel->value,
                 'context_used' => [
-                    'history' => $validated['analyze_history'] ?? true,
-                    'website' => $validated['analyze_website'] ?? true,
-                    'social' => $validated['analyze_social'] ?? true,
+                    'history' => $analyzeHistory,
+                    'website' => $analyzeWebsite,
+                    'social' => $analyzeSocial,
                 ],
             ]);
-        } catch (\Exception $e) {
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $msgs = collect($e->errors())->flatten()->implode(' ');
+            return response()->json(['error' => $msgs], 422);
+        } catch (\Throwable $e) {
+            Log::error("generateCompletePost error: {$e->getMessage()}", [
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => mb_substr($e->getTraceAsString(), 0, 2000),
+            ]);
             return response()->json([
                 'error' => 'Erro ao gerar post completo: ' . $e->getMessage(),
             ], 500);
@@ -1126,12 +1133,11 @@ class PostController extends Controller
      */
     public function regenerateImage(Request $request, Post $post): JsonResponse
     {
-        $brand = $request->user()->getActiveBrand();
-        if (!$brand || $post->brand_id !== $brand->id) {
-            return response()->json(['error' => 'Acesso negado.'], 403);
-        }
-
         try {
+            $brand = $request->user()->getActiveBrand();
+            if (!$brand || $post->brand_id !== $brand->id) {
+                return response()->json(['error' => 'Acesso negado.'], 403);
+            }
             $validated = $request->validate([
                 'media_id' => 'nullable|integer|exists:post_media,id',
                 'prompt_context' => 'nullable|string|max:2000',
@@ -1174,23 +1180,26 @@ class PostController extends Controller
             );
 
             $storagePath = null;
+            $finalPath = 'post-media/' . $brand->id . '/' . uniqid('ai-regen-') . '.png';
 
             if (!empty($imageData['stored_path'])) {
-                $finalPath = 'post-media/' . $brand->id . '/' . uniqid('ai-regen-') . '.png';
-                \Illuminate\Support\Facades\Storage::disk('public')->copy($imageData['stored_path'], $finalPath);
-                \Illuminate\Support\Facades\Storage::disk('public')->delete($imageData['stored_path']);
+                Storage::disk('public')->copy($imageData['stored_path'], $finalPath);
+                Storage::disk('public')->delete($imageData['stored_path']);
                 $storagePath = $finalPath;
             } elseif (!empty($imageData['url'])) {
-                $imageContent = @file_get_contents($imageData['url']);
-                if ($imageContent) {
-                    $finalPath = 'post-media/' . $brand->id . '/' . uniqid('ai-regen-') . '.png';
-                    \Illuminate\Support\Facades\Storage::disk('public')->put($finalPath, $imageContent);
-                    $storagePath = $finalPath;
+                try {
+                    $dlResponse = \Illuminate\Support\Facades\Http::timeout(60)->get($imageData['url']);
+                    if ($dlResponse->successful()) {
+                        Storage::disk('public')->put($finalPath, $dlResponse->body());
+                        $storagePath = $finalPath;
+                    }
+                } catch (\Throwable $dlErr) {
+                    Log::warning("Image download failed: {$dlErr->getMessage()}");
                 }
             }
 
             if (!$storagePath) {
-                return response()->json(['error' => 'Falha ao gerar imagem.'], 500);
+                return response()->json(['error' => 'Falha ao salvar imagem gerada. Tente novamente.'], 500);
             }
 
             if (!empty($validated['media_id'])) {
@@ -1224,9 +1233,14 @@ class PostController extends Controller
         } catch (\Illuminate\Validation\ValidationException $e) {
             $msgs = collect($e->errors())->flatten()->implode(' ');
             return response()->json(['error' => $msgs], 422);
-        } catch (\Exception $e) {
-            Log::error("regenerateImage error: {$e->getMessage()}", ['post_id' => $post->id, 'trace' => $e->getTraceAsString()]);
-            return response()->json(['error' => $e->getMessage()], 500);
+        } catch (\Throwable $e) {
+            Log::error("regenerateImage error: {$e->getMessage()}", [
+                'post_id' => $post->id ?? null,
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => mb_substr($e->getTraceAsString(), 0, 2000),
+            ]);
+            return response()->json(['error' => 'Erro ao regenerar imagem: ' . $e->getMessage()], 500);
         }
     }
 

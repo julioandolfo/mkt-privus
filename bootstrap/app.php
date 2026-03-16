@@ -33,5 +33,17 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
+            if ($request->expectsJson() || $request->ajax()) {
+                $status = method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 500;
+                \Illuminate\Support\Facades\Log::error("Unhandled exception on {$request->method()} {$request->path()}: {$e->getMessage()}", [
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ]);
+                return response()->json([
+                    'error' => $e->getMessage() ?: 'Erro interno do servidor.',
+                    'message' => $e->getMessage() ?: 'Erro interno do servidor.',
+                ], $status);
+            }
+        });
     })->create();

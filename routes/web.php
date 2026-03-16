@@ -151,13 +151,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{post}/cancel-publish', [PostController::class, 'cancelPublish'])->name('cancel-publish');
             Route::post('/{post}/republish', [PostController::class, 'republish'])->name('republish');
             Route::get('/{post}/analyze-media', [PostController::class, 'analyzeMedia'])->name('analyze-media');
+            Route::post('/{post}/regenerate-image', [PostController::class, 'regenerateImage'])->name('regenerate-image');
             Route::post('/sync-metrics', [PostController::class, 'syncMetrics'])->name('sync-metrics');
         });
 
         // Geracao de conteudo com IA
         Route::post('/generate', [PostController::class, 'generateContent'])->name('generate');
         Route::post('/generate-complete', [PostController::class, 'generateCompletePost'])->name('generate-complete');
-        Route::post('/{post}/regenerate-image', [PostController::class, 'regenerateImage'])->name('regenerate-image');
 
         // Calendario
         Route::get('/calendar', [PostController::class, 'calendar'])->name('calendar.index');
