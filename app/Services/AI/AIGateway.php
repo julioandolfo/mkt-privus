@@ -387,12 +387,12 @@ class AIGateway
 
             $refContext = $this->analyzeReferenceAssets($brand);
             if ($refContext) {
-                $prompt .= "\n\nREFERENCE VISUAL STYLE (replicate this aesthetic): " . $refContext;
+                $prompt .= "\n\nBRAND VISUAL IDENTITY (MUST follow this style exactly): " . $refContext;
             }
 
             $brandRefImages = $this->extractBrandReferenceImages($brand);
             if (!empty($brandRefImages)) {
-                $prompt .= "\n\nIMPORTANT: Use the provided reference image(s) as the primary visual basis. The generated image MUST include the same products/objects shown in the reference photos.";
+                $prompt .= "\n\nCRITICAL: Reference images from the brand's actual feed are provided. You MUST match the exact same visual style, color scheme, product presentation, and aesthetic. The generated image should look like it belongs in the same Instagram feed as these references. Use the same types of products, colors, layouts, and branding elements visible in the references.";
             }
 
             $result = $this->generateImage(
@@ -637,15 +637,15 @@ class AIGateway
     private array $refCache = [];
 
     /**
-     * Extrai imagens de referência dos brand assets como base64 para envio direto à API de imagem
+     * Extrai imagens de referência dos brand assets como base64 para envio direto à API de imagem.
+     * Fallback: usa imagens de posts publicados recentes se não houver brand assets.
      * @return array<array{base64: string, mime: string}>
      */
     private function extractBrandReferenceImages(Brand $brand): array
     {
-        $references = $brand->references()->limit(3)->get();
-        if ($references->isEmpty()) return [];
-
         $images = [];
+
+        $references = $brand->references()->limit(3)->get();
         foreach ($references as $ref) {
             $path = \Illuminate\Support\Facades\Storage::disk('public')->path($ref->file_path);
             if (!file_exists($path)) continue;
@@ -654,32 +654,57 @@ class AIGateway
                 'mime' => $ref->mime_type ?? 'image/jpeg',
             ];
         }
+
+        if (!empty($images)) return $images;
+
+        return $this->extractRecentPostImages($brand);
+    }
+
+    /**
+     * Busca imagens dos posts publicados mais recentes da marca para usar como referência visual.
+     * @return array<array{base64: string, mime: string}>
+     */
+    private function extractRecentPostImages(Brand $brand): array
+    {
+        $recentMedia = \App\Models\PostMedia::whereHas('post', function ($q) use ($brand) {
+            $q->where('brand_id', $brand->id)
+              ->where('status', \App\Enums\PostStatus::Published);
+        })
+        ->where('type', 'image')
+        ->whereNotNull('file_path')
+        ->latest('id')
+        ->limit(3)
+        ->get();
+
+        if ($recentMedia->isEmpty()) return [];
+
+        $images = [];
+        foreach ($recentMedia as $media) {
+            $path = \Illuminate\Support\Facades\Storage::disk('public')->path($media->file_path);
+            if (!file_exists($path)) continue;
+
+            $fileSize = filesize($path);
+            if ($fileSize > 5 * 1024 * 1024) continue;
+
+            $images[] = [
+                'base64' => base64_encode(file_get_contents($path)),
+                'mime' => $media->mime_type ?? 'image/jpeg',
+            ];
+        }
+
         return $images;
     }
 
+    /**
+     * Analisa imagens de referência da marca (brand assets ou posts recentes) via GPT-4o Vision.
+     */
     private function analyzeReferenceAssets(Brand $brand): ?string
     {
         if (isset($this->refCache[$brand->id])) {
             return $this->refCache[$brand->id];
         }
 
-        $references = $brand->references()->limit(3)->get();
-        if ($references->isEmpty()) {
-            $this->refCache[$brand->id] = null;
-            return null;
-        }
-
-        $imageContents = [];
-        foreach ($references as $ref) {
-            $path = \Illuminate\Support\Facades\Storage::disk('public')->path($ref->file_path);
-            if (!file_exists($path)) continue;
-            $base64 = base64_encode(file_get_contents($path));
-            $mime = $ref->mime_type ?? 'image/jpeg';
-            $imageContents[] = [
-                'type' => 'image_url',
-                'image_url' => ['url' => "data:{$mime};base64,{$base64}", 'detail' => 'low'],
-            ];
-        }
+        $imageContents = $this->collectReferenceImageContents($brand);
 
         if (empty($imageContents)) {
             $this->refCache[$brand->id] = null;
@@ -690,9 +715,9 @@ class AIGateway
             $result = $this->chat(
                 model: AIModel::GPT4o,
                 messages: [
-                    ['role' => 'system', 'content' => 'You analyze brand reference images. Describe the visual style, color palette, composition, textures, mood, and aesthetic in a concise paragraph (max 150 words). Output in English.'],
+                    ['role' => 'system', 'content' => 'You analyze brand reference images from their social media feed. Describe the visual style, color palette, composition, textures, mood, product types, and aesthetic in detail (max 200 words). Focus on recurring visual patterns, brand colors, typography style, and product presentation. Output in English.'],
                     ['role' => 'user', 'content' => array_merge(
-                        [['type' => 'text', 'text' => "Describe the visual style of these brand reference images:"]],
+                        [['type' => 'text', 'text' => "Analyze these brand images from their social media feed. Describe the visual identity, style patterns, and aesthetic so I can generate new images that match this brand perfectly:"]],
                         $imageContents,
                     )],
                 ],
@@ -707,5 +732,52 @@ class AIGateway
             $this->refCache[$brand->id] = null;
             return null;
         }
+    }
+
+    /**
+     * Coleta imagens de referência (brand assets + fallback para posts recentes) como conteúdo para Vision API
+     */
+    private function collectReferenceImageContents(Brand $brand): array
+    {
+        $imageContents = [];
+
+        $references = $brand->references()->limit(3)->get();
+        foreach ($references as $ref) {
+            $path = \Illuminate\Support\Facades\Storage::disk('public')->path($ref->file_path);
+            if (!file_exists($path)) continue;
+            $base64 = base64_encode(file_get_contents($path));
+            $mime = $ref->mime_type ?? 'image/jpeg';
+            $imageContents[] = [
+                'type' => 'image_url',
+                'image_url' => ['url' => "data:{$mime};base64,{$base64}", 'detail' => 'low'],
+            ];
+        }
+
+        if (!empty($imageContents)) return $imageContents;
+
+        $recentMedia = \App\Models\PostMedia::whereHas('post', function ($q) use ($brand) {
+            $q->where('brand_id', $brand->id)
+              ->where('status', \App\Enums\PostStatus::Published);
+        })
+        ->where('type', 'image')
+        ->whereNotNull('file_path')
+        ->latest('id')
+        ->limit(4)
+        ->get();
+
+        foreach ($recentMedia as $media) {
+            $path = \Illuminate\Support\Facades\Storage::disk('public')->path($media->file_path);
+            if (!file_exists($path)) continue;
+            $fileSize = filesize($path);
+            if ($fileSize > 5 * 1024 * 1024) continue;
+            $base64 = base64_encode(file_get_contents($path));
+            $mime = $media->mime_type ?? 'image/jpeg';
+            $imageContents[] = [
+                'type' => 'image_url',
+                'image_url' => ['url' => "data:{$mime};base64,{$base64}", 'detail' => 'low'],
+            ];
+        }
+
+        return $imageContents;
     }
 }

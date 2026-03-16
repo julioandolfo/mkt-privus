@@ -232,7 +232,7 @@ onMounted(() => {
 
                         <!-- Badges top-right -->
                         <div class="absolute top-2.5 right-2.5 flex items-center gap-1.5">
-                            <span v-if="s.has_generated_image" class="rounded-md bg-purple-600/90 px-1.5 py-0.5 text-[9px] font-bold text-white backdrop-blur-sm">DALL-E</span>
+                            <span v-if="s.has_generated_image" class="rounded-md bg-purple-600/90 px-1.5 py-0.5 text-[9px] font-bold text-white backdrop-blur-sm">IA</span>
                             <span v-if="s.is_from_rule" class="rounded-md bg-amber-600/90 px-1.5 py-0.5 text-[9px] font-bold text-white backdrop-blur-sm">PAUTA</span>
                         </div>
 
@@ -310,7 +310,7 @@ onMounted(() => {
                 ]"
                 :tips="[
                     'Use os checkboxes para aprovar várias sugestões de uma vez.',
-                    'Sugestões com imagem DALL-E são marcadas com badge roxo.',
+                    'Sugestões com imagem gerada por IA são marcadas com badge roxo.',
                     'Pautas geram sugestões automaticamente conforme a frequência definida.',
                 ]"
                 color="purple"
@@ -327,7 +327,7 @@ onMounted(() => {
                     <div v-if="selectedSuggestion.has_generated_image && selectedSuggestion.generated_image_url" class="relative">
                         <img :src="selectedSuggestion.generated_image_url" :alt="selectedSuggestion.title || ''"
                             class="w-full max-h-[400px] object-cover" />
-                        <span class="absolute top-3 left-3 rounded-lg bg-purple-600/90 px-2 py-0.5 text-[10px] font-bold text-white backdrop-blur-sm">DALL-E 3</span>
+                        <span class="absolute top-3 left-3 rounded-lg bg-purple-600/90 px-2 py-0.5 text-[10px] font-bold text-white backdrop-blur-sm">Imagem IA</span>
                         <button @click="closeDetail" class="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/50 flex items-center justify-center text-white hover:bg-black/70 transition backdrop-blur-sm">&times;</button>
                     </div>
                     <div v-else class="flex items-center justify-between px-6 pt-5">
