@@ -133,11 +133,25 @@ class BrandDNAAnalyzerService
     }
 
     /**
-     * Retorna análise cacheada ou null
+     * Retorna análise cacheada ou do banco
      */
     public function getCachedAnalysis(Brand $brand): ?array
     {
-        return Cache::get("brand_dna:{$brand->id}");
+        // Primeiro tenta o cache
+        $cached = Cache::get("brand_dna:{$brand->id}");
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        // Se não estiver no cache, busca no banco (ai_context)
+        $aiContext = $brand->ai_context;
+        if (is_array($aiContext) && isset($aiContext['brand_dna_analysis'])) {
+            // Recria o cache
+            Cache::put("brand_dna:{$brand->id}", $aiContext['brand_dna_analysis'], self::CACHE_TTL);
+            return $aiContext['brand_dna_analysis'];
+        }
+
+        return null;
     }
 
     /**
