@@ -1152,7 +1152,7 @@ class PostController extends Controller
 
             $topic = $validated['prompt_context'] ?? $post->title ?? mb_substr($post->caption ?? '', 0, 200);
             $platform = SocialPlatform::tryFrom($post->platforms[0] ?? 'instagram') ?? SocialPlatform::Instagram;
-            $postType = PostType::tryFrom($post->type ?? 'feed') ?? PostType::Feed;
+            $postType = $post->type instanceof PostType ? $post->type : (PostType::tryFrom($post->type ?? 'feed') ?? PostType::Feed);
 
             $imagePrompt = $this->buildImagePrompt(
                 $brand,
