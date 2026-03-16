@@ -95,7 +95,24 @@ class ContentCalendarController extends Controller
             'format_mode' => 'nullable|string|in:auto,manual',
             'post_types' => 'nullable|array',
             'post_types.*' => 'string|in:feed,carousel,story,reel,video,pin',
+            'reference_images' => 'nullable|array|max:3',
+            'reference_images.*' => 'image|max:10240',
         ]);
+
+        if ($request->hasFile('reference_images')) {
+            foreach ($request->file('reference_images') as $file) {
+                $path = $file->store("brand-assets/{$brand->id}/reference", 'public');
+                \App\Models\BrandAsset::create([
+                    'brand_id' => $brand->id,
+                    'category' => 'reference',
+                    'label' => 'Referência Visual',
+                    'file_path' => $path,
+                    'file_name' => $file->getClientOriginalName(),
+                    'mime_type' => $file->getMimeType(),
+                    'file_size' => $file->getSize(),
+                ]);
+            }
+        }
 
         $result = $this->calendarService->generateCalendar(
             brand: $brand,

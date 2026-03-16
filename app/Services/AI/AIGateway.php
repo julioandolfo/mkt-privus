@@ -302,6 +302,11 @@ class AIGateway
 
             $prompt = self::buildSocialImagePrompt($brand, $topic, $caption, $platform, $postType);
 
+            $refContext = $this->analyzeReferenceAssets($brand);
+            if ($refContext) {
+                $prompt .= "\n\nREFERENCE VISUAL STYLE (replicate this aesthetic): " . $refContext;
+            }
+
             $result = $this->generateImage(
                 prompt: $prompt,
                 brand: $brand,
@@ -526,5 +531,63 @@ class AIGateway
         };
 
         return ($inputTokens / 1_000_000 * $costs['input']) + ($outputTokens / 1_000_000 * $costs['output']);
+    }
+
+    /**
+     * Analisa imagens de referência da marca via GPT-4o Vision para enriquecer prompts de geração.
+     * Usa cache em memória por brand_id para evitar chamadas repetidas na mesma request.
+     */
+    private static array $refCache = [];
+
+    private function analyzeReferenceAssets(Brand $brand): ?string
+    {
+        if (isset(self::$refCache[$brand->id])) {
+            return self::$refCache[$brand->id];
+        }
+
+        $references = $brand->references()->limit(3)->get();
+        if ($references->isEmpty()) {
+            self::$refCache[$brand->id] = null;
+            return null;
+        }
+
+        $imageContents = [];
+        foreach ($references as $ref) {
+            $path = \Illuminate\Support\Facades\Storage::disk('public')->path($ref->file_path);
+            if (!file_exists($path)) continue;
+            $base64 = base64_encode(file_get_contents($path));
+            $mime = $ref->mime_type ?? 'image/jpeg';
+            $imageContents[] = [
+                'type' => 'image_url',
+                'image_url' => ['url' => "data:{$mime};base64,{$base64}", 'detail' => 'low'],
+            ];
+        }
+
+        if (empty($imageContents)) {
+            self::$refCache[$brand->id] = null;
+            return null;
+        }
+
+        try {
+            $result = $this->chat(
+                model: AIModel::GPT4o,
+                messages: [
+                    ['role' => 'system', 'content' => 'You analyze brand reference images. Describe the visual style, color palette, composition, textures, mood, and aesthetic in a concise paragraph (max 150 words). Output in English.'],
+                    ['role' => 'user', 'content' => array_merge(
+                        [['type' => 'text', 'text' => "Describe the visual style of these brand reference images:"]],
+                        $imageContents,
+                    )],
+                ],
+                brand: $brand,
+                feature: 'brand_reference_analysis',
+            );
+            $desc = $result['content'] ?? null;
+            self::$refCache[$brand->id] = $desc;
+            return $desc;
+        } catch (\Exception $e) {
+            Log::warning("Brand reference analysis failed: {$e->getMessage()}");
+            self::$refCache[$brand->id] = null;
+            return null;
+        }
     }
 }

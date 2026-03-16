@@ -84,9 +84,33 @@ const generateForm = ref({
     tone: '',
     ai_model: props.aiModels.find(m => m.value === 'gpt-4o')?.value || props.aiModels[0]?.value || 'gpt-4o',
     instructions: '',
-    format_mode: 'auto' as 'auto' | 'manual',
+    format_mode: 'manual' as 'auto' | 'manual',
     post_types: ['feed'] as string[],
 });
+
+// Imagens de referência
+const referenceImages = ref<File[]>([]);
+const referenceImagePreviews = ref<string[]>([]);
+const referenceInput = ref<HTMLInputElement | null>(null);
+
+function triggerReferenceInput() { referenceInput.value?.click(); }
+
+function onReferenceSelect(event: Event) {
+    const target = event.target as HTMLInputElement;
+    if (!target.files) return;
+    for (const file of Array.from(target.files)) {
+        if (!file.type.startsWith('image/') || referenceImages.value.length >= 3) continue;
+        referenceImages.value.push(file);
+        referenceImagePreviews.value.push(URL.createObjectURL(file));
+    }
+    target.value = '';
+}
+
+function removeReference(index: number) {
+    URL.revokeObjectURL(referenceImagePreviews.value[index]);
+    referenceImages.value.splice(index, 1);
+    referenceImagePreviews.value.splice(index, 1);
+}
 
 // Selected item for edit
 const selectedItem = ref<CalendarItem | null>(null);
@@ -247,8 +271,10 @@ function openGenerateModal() {
     generateForm.value.tone = '';
     generateForm.value.instructions = '';
     generateForm.value.categories = [];
-    generateForm.value.format_mode = 'auto';
+    generateForm.value.format_mode = 'manual';
     generateForm.value.post_types = ['feed'];
+    referenceImages.value = [];
+    referenceImagePreviews.value = [];
     generateResult.value = null;
     showGenerateModal.value = true;
 }
@@ -257,7 +283,22 @@ async function submitGenerate() {
     generating.value = true;
     generateResult.value = null;
     try {
-        const res = await axios.post(route('social.calendar.content.generate'), generateForm.value);
+        const formData = new FormData();
+        formData.append('start_date', generateForm.value.start_date);
+        formData.append('end_date', generateForm.value.end_date);
+        formData.append('posts_per_week', String(generateForm.value.posts_per_week));
+        generateForm.value.platforms.forEach((p, i) => formData.append(`platforms[${i}]`, p));
+        generateForm.value.categories.forEach((c, i) => formData.append(`categories[${i}]`, c));
+        if (generateForm.value.tone) formData.append('tone', generateForm.value.tone);
+        formData.append('ai_model', generateForm.value.ai_model);
+        if (generateForm.value.instructions) formData.append('instructions', generateForm.value.instructions);
+        formData.append('format_mode', generateForm.value.format_mode);
+        generateForm.value.post_types.forEach((pt, i) => formData.append(`post_types[${i}]`, pt));
+        referenceImages.value.forEach((file, i) => formData.append(`reference_images[${i}]`, file));
+
+        const res = await axios.post(route('social.calendar.content.generate'), formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
         generateResult.value = res.data.message;
         await fetchCalendarData();
     } catch (e: any) {
@@ -827,6 +868,25 @@ onMounted(fetchCalendarData);
                         <div>
                             <label class="text-xs text-gray-400 mb-1 block">Instrucoes extras (opcional)</label>
                             <textarea v-model="generateForm.instructions" rows="3" placeholder="Ex: Foque em datas comemorativas, inclua CTA de vendas..." class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 resize-none" />
+                        </div>
+
+                        <!-- Imagens de Referência -->
+                        <div>
+                            <label class="text-xs text-gray-400 mb-1.5 block">Imagens de Referência (opcional, max 3)</label>
+                            <p class="text-[10px] text-gray-500 mb-2">A IA usará essas imagens como referência visual para criar imagens nos posts gerados.</p>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <div v-for="(preview, i) in referenceImagePreviews" :key="i" class="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-700 group">
+                                    <img :src="preview" class="w-full h-full object-cover" />
+                                    <button type="button" @click="removeReference(i)" class="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                                        <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                                    </button>
+                                </div>
+                                <button v-if="referenceImagePreviews.length < 3" type="button" @click="triggerReferenceInput"
+                                    class="w-16 h-16 rounded-lg border-2 border-dashed border-gray-700 flex items-center justify-center text-gray-500 hover:border-violet-500 hover:text-violet-400 transition">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                </button>
+                                <input ref="referenceInput" type="file" accept="image/*" multiple class="hidden" @change="onReferenceSelect" />
+                            </div>
                         </div>
 
                         <!-- Result -->
