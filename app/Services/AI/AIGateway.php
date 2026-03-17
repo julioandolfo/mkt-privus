@@ -155,9 +155,12 @@ class AIGateway
         if ($brand) {
             $brandHints = "Brand: '{$brand->name}'";
             if ($brand->segment) $brandHints .= " ({$brand->segment})";
-            if ($brand->primary_color) $brandHints .= ". Colors: {$brand->primary_color}";
+            if ($brand->primary_color) $brandHints .= ". Brand colors: {$brand->primary_color}";
             if ($brand->secondary_color) $brandHints .= ", {$brand->secondary_color}";
-            $brandHints .= ". IMPORTANT: Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art.";
+            $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art.";
+            if (!empty($referenceImages)) {
+                $brandHints .= " CRITICAL: The reference images show REAL products from this brand. You MUST preserve these products EXACTLY as they appear — same logos, text, labels, shapes, colors. Do NOT alter, replace, or reimagine the products. Place them in the requested context/composition while keeping them pixel-accurate.";
+            }
             $enhancedPrompt = "{$brandHints}\n\n{$prompt}";
         }
 
@@ -173,62 +176,160 @@ class AIGateway
         ];
         $mappedQuality = $qualityMap[$quality] ?? $quality;
 
-        $usedModel = 'gpt-image-1.5';
         $hasRefImages = !empty($referenceImages);
+        $usedModel = 'gpt-5.4';
 
-        Log::info("generateImage called", [
+        Log::info("generateImage via Responses API", [
             'has_ref_images' => $hasRefImages,
             'ref_images_count' => $hasRefImages ? count($referenceImages) : 0,
-            'endpoint' => $hasRefImages ? '/v1/images/edits' : '/v1/images/generations',
             'size' => $mappedSize,
             'quality' => $mappedQuality,
             'prompt_length' => mb_strlen($enhancedPrompt),
         ]);
 
+        $inputContent = [];
+
         if ($hasRefImages) {
-            $response = $this->callImageEditsApi($apiKey, $enhancedPrompt, $referenceImages, $mappedSize, $mappedQuality);
+            foreach ($referenceImages as $img) {
+                $inputContent[] = [
+                    'type' => 'input_image',
+                    'image_url' => "data:{$img['mime']};base64,{$img['base64']}",
+                ];
+            }
+        }
+
+        $inputContent[] = [
+            'type' => 'input_text',
+            'text' => $enhancedPrompt,
+        ];
+
+        $payload = [
+            'model' => 'gpt-5.4',
+            'input' => [
+                [
+                    'role' => 'user',
+                    'content' => $inputContent,
+                ],
+            ],
+            'tools' => [
+                [
+                    'type' => 'image_generation',
+                    'quality' => $mappedQuality,
+                    'size' => $mappedSize,
+                ],
+            ],
+            'tool_choice' => ['type' => 'image_generation'],
+        ];
+
+        $response = \Illuminate\Support\Facades\Http::withHeaders([
+            'Authorization' => "Bearer {$apiKey}",
+            'Content-Type' => 'application/json',
+        ])->timeout(180)->post('https://api.openai.com/v1/responses', $payload);
+
+        if (!$response->successful()) {
+            $errorMsg = $response->json()['error']['message'] ?? $response->body();
+            Log::warning("Responses API failed ({$response->status()}): {$errorMsg} — fallback to Images API");
+
+            return $this->generateImageFallback($apiKey, $enhancedPrompt, $referenceImages, $mappedSize, $mappedQuality, $brand, $user);
+        }
+
+        $data = $response->json();
+        $imageBase64 = null;
+        $revisedPrompt = $enhancedPrompt;
+
+        foreach ($data['output'] ?? [] as $output) {
+            if (($output['type'] ?? '') === 'image_generation_call') {
+                $imageBase64 = $output['result'] ?? null;
+                $revisedPrompt = $output['revised_prompt'] ?? $revisedPrompt;
+                break;
+            }
+        }
+
+        $imageUrl = '';
+        $tempPath = null;
+
+        if ($imageBase64) {
+            $imageBytes = base64_decode($imageBase64);
+            $tempFilename = 'ai-generated/' . uniqid('gptimg_') . '.png';
+            \Illuminate\Support\Facades\Storage::disk('public')->put($tempFilename, $imageBytes);
+            $imageUrl = \Illuminate\Support\Facades\Storage::disk('public')->url($tempFilename);
+            $tempPath = $tempFilename;
+        }
+
+        if ($user) {
+            try {
+                $usage = $data['usage'] ?? [];
+                AiUsageLog::create([
+                    'user_id' => $user->id,
+                    'brand_id' => $brand?->id,
+                    'provider' => 'openai',
+                    'model' => $usedModel,
+                    'feature' => $hasRefImages ? 'image_generation_with_reference' : 'image_generation',
+                    'input_tokens' => $usage['input_tokens'] ?? mb_strlen($enhancedPrompt),
+                    'output_tokens' => $usage['output_tokens'] ?? 0,
+                    'estimated_cost' => 0.040,
+                ]);
+            } catch (\Exception $e) {
+                Log::warning("Falha ao registrar log de geração de imagem: {$e->getMessage()}");
+            }
+        }
+
+        return [
+            'url' => $imageUrl,
+            'revised_prompt' => $revisedPrompt,
+            'size' => $mappedSize,
+            'model' => $usedModel,
+            'stored_path' => $tempPath,
+        ];
+    }
+
+    /**
+     * Fallback: usa Images API diretamente caso Responses API falhe
+     */
+    private function generateImageFallback(
+        string $apiKey,
+        string $prompt,
+        ?array $referenceImages,
+        string $size,
+        string $quality,
+        ?Brand $brand,
+        ?User $user,
+    ): array {
+        $hasRefImages = !empty($referenceImages);
+
+        if ($hasRefImages) {
+            $imagesPayload = [];
+            foreach ($referenceImages as $img) {
+                $imagesPayload[] = ['image_url' => "data:{$img['mime']};base64,{$img['base64']}"];
+            }
+
+            $response = \Illuminate\Support\Facades\Http::withHeaders([
+                'Authorization' => "Bearer {$apiKey}",
+                'Content-Type' => 'application/json',
+            ])->timeout(180)->post('https://api.openai.com/v1/images/edits', [
+                'model' => 'gpt-image-1.5',
+                'images' => $imagesPayload,
+                'prompt' => $prompt,
+                'n' => 1,
+                'size' => $size,
+                'quality' => $quality,
+            ]);
         } else {
             $response = \Illuminate\Support\Facades\Http::withHeaders([
                 'Authorization' => "Bearer {$apiKey}",
                 'Content-Type' => 'application/json',
             ])->timeout(180)->post('https://api.openai.com/v1/images/generations', [
                 'model' => 'gpt-image-1.5',
-                'prompt' => $enhancedPrompt,
+                'prompt' => $prompt,
                 'n' => 1,
-                'size' => $mappedSize,
-                'quality' => $mappedQuality,
+                'size' => $size,
+                'quality' => $quality,
             ]);
         }
 
         if (!$response->successful()) {
-            $gptError = $response->json()['error']['message'] ?? $response->body();
-            Log::warning("gpt-image-1.5 failed ({$response->status()}): {$gptError} — fallback to dall-e-3 (had_ref_images={$hasRefImages})");
-            Log::warning("NOTE: DALL-E 3 fallback does NOT support reference images");
-
-            $usedModel = 'dall-e-3';
-            $dalleSize = match ($mappedSize) {
-                '1536x1024' => '1792x1024',
-                '1024x1536' => '1024x1792',
-                default => $mappedSize,
-            };
-
-            $response = \Illuminate\Support\Facades\Http::withHeaders([
-                'Authorization' => "Bearer {$apiKey}",
-                'Content-Type' => 'application/json',
-            ])->timeout(120)->post('https://api.openai.com/v1/images/generations', [
-                'model' => 'dall-e-3',
-                'prompt' => mb_substr($enhancedPrompt, 0, 4000),
-                'n' => 1,
-                'size' => $dalleSize,
-                'quality' => 'standard',
-                'response_format' => 'b64_json',
-            ]);
-
-            if (!$response->successful()) {
-                $errorBody = $response->json();
-                $errorMsg = $errorBody['error']['message'] ?? $response->body();
-                throw new \RuntimeException("Erro na geração de imagem: {$errorMsg}");
-            }
+            $errorMsg = $response->json()['error']['message'] ?? $response->body();
+            throw new \RuntimeException("Erro na geração de imagem: {$errorMsg}");
         }
 
         $data = $response->json();
@@ -243,8 +344,6 @@ class AIGateway
             \Illuminate\Support\Facades\Storage::disk('public')->put($tempFilename, $imageBytes);
             $imageUrl = \Illuminate\Support\Facades\Storage::disk('public')->url($tempFilename);
             $tempPath = $tempFilename;
-        } elseif (!empty($imageData['url'])) {
-            $imageUrl = $imageData['url'];
         }
 
         if ($user) {
@@ -253,11 +352,11 @@ class AIGateway
                     'user_id' => $user->id,
                     'brand_id' => $brand?->id,
                     'provider' => 'openai',
-                    'model' => $usedModel,
-                    'feature' => $hasRefImages ? 'image_edit_with_reference' : 'image_generation',
-                    'input_tokens' => mb_strlen($enhancedPrompt),
+                    'model' => 'gpt-image-1.5',
+                    'feature' => 'image_generation_fallback',
+                    'input_tokens' => mb_strlen($prompt),
                     'output_tokens' => 0,
-                    'estimated_cost' => $usedModel === 'gpt-image-1.5' ? 0.032 : 0.040,
+                    'estimated_cost' => 0.032,
                 ]);
             } catch (\Exception $e) {
                 Log::warning("Falha ao registrar log de geração de imagem: {$e->getMessage()}");
@@ -266,58 +365,11 @@ class AIGateway
 
         return [
             'url' => $imageUrl,
-            'revised_prompt' => $imageData['revised_prompt'] ?? $enhancedPrompt,
-            'size' => $mappedSize,
-            'model' => $usedModel,
+            'revised_prompt' => $imageData['revised_prompt'] ?? $prompt,
+            'size' => $size,
+            'model' => 'gpt-image-1.5',
             'stored_path' => $tempPath,
         ];
-    }
-
-    /**
-     * Chama o endpoint /v1/images/edits com imagens de referência via base64 data URL
-     */
-    private function callImageEditsApi(
-        string $apiKey,
-        string $prompt,
-        array $referenceImages,
-        string $size,
-        string $quality,
-    ): \Illuminate\Http\Client\Response {
-        $images = [];
-        foreach ($referenceImages as $img) {
-            $images[] = [
-                'image_url' => "data:{$img['mime']};base64," . mb_substr($img['base64'], 0, 50) . '...',
-            ];
-        }
-
-        Log::info("callImageEditsApi: sending {$size} with " . count($referenceImages) . " reference images, prompt length: " . mb_strlen($prompt));
-
-        $imagesPayload = [];
-        foreach ($referenceImages as $img) {
-            $imagesPayload[] = [
-                'image_url' => "data:{$img['mime']};base64,{$img['base64']}",
-            ];
-        }
-
-        $response = \Illuminate\Support\Facades\Http::withHeaders([
-            'Authorization' => "Bearer {$apiKey}",
-            'Content-Type' => 'application/json',
-        ])->timeout(180)->post('https://api.openai.com/v1/images/edits', [
-            'model' => 'gpt-image-1.5',
-            'images' => $imagesPayload,
-            'prompt' => $prompt,
-            'n' => 1,
-            'size' => $size,
-            'quality' => $quality,
-        ]);
-
-        Log::info("callImageEditsApi response: status={$response->status()}, success=" . ($response->successful() ? 'true' : 'false'));
-
-        if (!$response->successful()) {
-            Log::warning("callImageEditsApi failed: " . mb_substr($response->body(), 0, 500));
-        }
-
-        return $response;
     }
 
     /**

@@ -627,7 +627,7 @@ const statusOptions = [
                                 </div>
                                 <div>
                                     <h3 class="text-lg font-semibold text-white">{{ regenMediaId ? 'Regenerar Imagem' : 'Gerar Nova Imagem' }}</h3>
-                                    <p class="text-xs text-gray-500">GPT Image com contexto da marca</p>
+                                    <p class="text-xs text-gray-500">GPT-5.4 Responses API — preserva produtos reais</p>
                                 </div>
                             </div>
                             <button @click="showRegenModal = false" class="text-gray-500 hover:text-white transition">
@@ -660,8 +660,8 @@ const statusOptions = [
                         </div>
 
                         <div>
-                            <label class="text-xs text-gray-400 mb-1.5 block">Imagens de Referência (opcional, max 3)</label>
-                            <p class="text-[10px] text-gray-500 mb-2">A IA analisará essas imagens para replicar o estilo visual.</p>
+                            <label class="text-xs text-gray-400 mb-1.5 block">Fotos de Produto / Referência (opcional, max 3)</label>
+                            <p class="text-[10px] text-gray-500 mb-2">Envie fotos reais dos seus produtos — a IA vai preservar logos, textos e detalhes fielmente na imagem gerada.</p>
                             <div class="flex items-center gap-2 flex-wrap">
                                 <div v-for="(preview, i) in regenReferencePreviews" :key="i" class="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-700 group">
                                     <img :src="preview" class="w-full h-full object-cover" />

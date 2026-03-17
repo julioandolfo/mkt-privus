@@ -870,8 +870,8 @@ onMounted(fetchCalendarData);
 
                         <!-- Imagens de Referência -->
                         <div>
-                            <label class="text-xs text-gray-400 mb-1.5 block">Imagens de Referência (opcional, max 3)</label>
-                            <p class="text-[10px] text-gray-500 mb-2">A IA usará essas imagens como referência visual para criar imagens nos posts gerados.</p>
+                            <label class="text-xs text-gray-400 mb-1.5 block">Fotos de Produto / Referência (opcional, max 3)</label>
+                            <p class="text-[10px] text-gray-500 mb-2">Envie fotos reais dos seus produtos — a IA vai preservar logos, textos e detalhes fielmente na imagem gerada.</p>
                             <div class="flex items-center gap-2 flex-wrap">
                                 <div v-for="(preview, i) in referenceImagePreviews" :key="i" class="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-700 group">
                                     <img :src="preview" class="w-full h-full object-cover" />

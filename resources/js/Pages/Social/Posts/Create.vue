@@ -861,7 +861,7 @@ const toneOptions = [
                                 <input type="checkbox" v-model="generateImage" class="rounded border-gray-600 text-indigo-600 focus:ring-indigo-500" />
                                 <div>
                                     <span class="text-sm font-medium text-white">Gerar Imagem com IA</span>
-                                    <span class="text-[10px] text-gray-500 ml-2">(GPT Image — requer chave OpenAI)</span>
+                                    <span class="text-[10px] text-gray-500 ml-2">(GPT-5.4 Responses API — preserva produtos reais)</span>
                                 </div>
                             </label>
                             <div v-if="generateImage" class="space-y-3 pl-7">
@@ -880,8 +880,8 @@ const toneOptions = [
                                     </div>
                                 </div>
                                 <div>
-                                    <label class="text-xs text-gray-400 mb-1.5 block">Imagens de Referência (opcional, max 3)</label>
-                                    <p class="text-[10px] text-gray-500 mb-2">A IA analisará essas imagens para replicar o estilo visual na imagem gerada.</p>
+                                    <label class="text-xs text-gray-400 mb-1.5 block">Fotos de Produto / Referência (opcional, max 3)</label>
+                                    <p class="text-[10px] text-gray-500 mb-2">Envie fotos reais dos seus produtos — a IA vai preservar logos, textos e detalhes fielmente na imagem gerada.</p>
                                     <div class="flex items-center gap-2 flex-wrap">
                                         <div v-for="(preview, i) in referenceImagePreviews" :key="i" class="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-700 group">
                                             <img :src="preview" class="w-full h-full object-cover" />
@@ -935,7 +935,7 @@ const toneOptions = [
                             <p v-if="analyzeWebsite">Analisando sites e links da marca...</p>
                             <p v-if="analyzeSocial">Analisando redes sociais conectadas...</p>
                             <p>Gerando título, legenda e hashtags...</p>
-                            <p v-if="generateImage">Gerando imagem com GPT Image...</p>
+                            <p v-if="generateImage">Gerando imagem com GPT-5.4...</p>
                         </div>
                     </div>
 
