@@ -173,7 +173,7 @@ class AIGateway
         ];
         $mappedQuality = $qualityMap[$quality] ?? $quality;
 
-        $usedModel = 'gpt-image-1';
+        $usedModel = 'gpt-image-1.5';
         $hasRefImages = !empty($referenceImages);
 
         Log::info("generateImage called", [
@@ -192,7 +192,7 @@ class AIGateway
                 'Authorization' => "Bearer {$apiKey}",
                 'Content-Type' => 'application/json',
             ])->timeout(180)->post('https://api.openai.com/v1/images/generations', [
-                'model' => 'gpt-image-1',
+                'model' => 'gpt-image-1.5',
                 'prompt' => $enhancedPrompt,
                 'n' => 1,
                 'size' => $mappedSize,
@@ -202,7 +202,7 @@ class AIGateway
 
         if (!$response->successful()) {
             $gptError = $response->json()['error']['message'] ?? $response->body();
-            Log::warning("gpt-image-1 failed ({$response->status()}): {$gptError} — fallback to dall-e-3 (had_ref_images={$hasRefImages})");
+            Log::warning("gpt-image-1.5 failed ({$response->status()}): {$gptError} — fallback to dall-e-3 (had_ref_images={$hasRefImages})");
             Log::warning("NOTE: DALL-E 3 fallback does NOT support reference images");
 
             $usedModel = 'dall-e-3';
@@ -257,7 +257,7 @@ class AIGateway
                     'feature' => $hasRefImages ? 'image_edit_with_reference' : 'image_generation',
                     'input_tokens' => mb_strlen($enhancedPrompt),
                     'output_tokens' => 0,
-                    'estimated_cost' => $usedModel === 'gpt-image-1' ? 0.040 : 0.040,
+                    'estimated_cost' => $usedModel === 'gpt-image-1.5' ? 0.032 : 0.040,
                 ]);
             } catch (\Exception $e) {
                 Log::warning("Falha ao registrar log de geração de imagem: {$e->getMessage()}");
@@ -303,7 +303,7 @@ class AIGateway
             'Authorization' => "Bearer {$apiKey}",
             'Content-Type' => 'application/json',
         ])->timeout(180)->post('https://api.openai.com/v1/images/edits', [
-            'model' => 'gpt-image-1',
+            'model' => 'gpt-image-1.5',
             'images' => $imagesPayload,
             'prompt' => $prompt,
             'n' => 1,
