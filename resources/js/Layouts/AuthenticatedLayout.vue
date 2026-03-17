@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Link, router, usePage } from '@inertiajs/vue3';
 import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
@@ -27,6 +27,29 @@ const mobileMenuOpen = ref(false);
 const user = computed(() => page.props.auth?.user);
 const currentBrand = computed(() => page.props.currentBrand);
 const brands = computed(() => page.props.brands || []);
+
+const serverClock = ref('');
+const serverTz = computed(() => (page.props as any).serverTimezone || 'UTC');
+let clockInterval: ReturnType<typeof setInterval> | null = null;
+
+function initClock() {
+    const initial = (page.props as any).serverTime as string | undefined;
+    if (!initial) return;
+    const [h, m] = initial.split(':').map(Number);
+    const now = new Date();
+    const serverDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
+    const offset = serverDate.getTime() - now.getTime();
+
+    const tick = () => {
+        const d = new Date(Date.now() + offset);
+        serverClock.value = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    };
+    tick();
+    clockInterval = setInterval(tick, 1000);
+}
+
+onMounted(initClock);
+onUnmounted(() => { if (clockInterval) clearInterval(clockInterval); });
 
 const navigation: NavItem[] = [
     { name: 'Dashboard', href: 'dashboard', icon: 'home', routeMatch: 'dashboard', enabled: true },
@@ -425,6 +448,15 @@ function toggleSidebar() {
 
                 <!-- Right side actions -->
                 <div class="flex items-center gap-3">
+                    <!-- Server clock -->
+                    <div v-if="serverClock" class="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800/60 border border-gray-700/50">
+                        <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+                        </svg>
+                        <span class="text-xs font-mono text-gray-300 tabular-nums">{{ serverClock }}</span>
+                        <span class="text-[10px] text-gray-500">{{ serverTz }}</span>
+                    </div>
+
                     <!-- Notifications placeholder -->
                     <button class="flex items-center justify-center h-10 w-10 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition relative">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
