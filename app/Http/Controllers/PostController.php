@@ -1053,7 +1053,8 @@ class PostController extends Controller
             if ($accounts->isNotEmpty()) {
                 $context[] = "\nREDES SOCIAIS CONECTADAS:";
                 foreach ($accounts as $acc) {
-                    $context[] = "  - {$acc->platform}: @{$acc->username} ({$acc->display_name})";
+                    $platformName = $acc->platform instanceof \App\Enums\SocialPlatform ? $acc->platform->value : (string) $acc->platform;
+                    $context[] = "  - {$platformName}: @{$acc->username} ({$acc->display_name})";
                 }
                 $context[] = "Considere fazer cross-referência entre as redes quando relevante.";
             }
