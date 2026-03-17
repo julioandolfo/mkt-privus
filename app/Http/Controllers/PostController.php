@@ -927,6 +927,14 @@ class PostController extends Controller
                     $refImages = $this->extractReferenceImages($request);
                     $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
 
+                    Log::info("generateCompletePost image generation", [
+                        'has_reference_files' => $request->hasFile('reference_images'),
+                        'reference_files_count' => count($request->file('reference_images') ?? []),
+                        'extracted_ref_images' => count($refImages),
+                        'reference_context_length' => mb_strlen($referenceContext ?? ''),
+                        'generate_image' => $shouldGenerateImage,
+                    ]);
+
                     $imagePrompt = $this->buildImagePrompt(
                         $brand,
                         $validated['topic'],
