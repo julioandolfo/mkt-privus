@@ -155,6 +155,9 @@ async function submitRegenerate() {
         const resp = await axios.post(route('social.posts.regenerate-image', props.post.id), fd);
 
         if (resp.data.success) {
+            const modelUsed = resp.data.model || 'unknown';
+            console.log(`[Image Generated] model=${modelUsed}, revised_prompt=${resp.data.revised_prompt?.substring(0, 100) || 'N/A'}`);
+
             if (regenMediaId.value) {
                 const media = existingMedia.value.find(m => m.id === regenMediaId.value);
                 if (media) media.file_path = resp.data.image_url;
@@ -168,7 +171,8 @@ async function submitRegenerate() {
                     order: existingMedia.value.length,
                 });
             }
-            showRegenModal.value = false;
+            regenError.value = `Imagem gerada com ${modelUsed}`;
+            setTimeout(() => { showRegenModal.value = false; regenError.value = ''; }, 1500);
         }
     } catch (e: any) {
         const data = e.response?.data;

@@ -1268,6 +1268,8 @@ class PostController extends Controller
             return response()->json([
                 'success' => true,
                 'image_url' => \Illuminate\Support\Facades\Storage::url($storagePath),
+                'model' => $imageData['model'] ?? 'unknown',
+                'revised_prompt' => mb_substr($imageData['revised_prompt'] ?? '', 0, 200),
                 'message' => 'Imagem regenerada com sucesso!',
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {

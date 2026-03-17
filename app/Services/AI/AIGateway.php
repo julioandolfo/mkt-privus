@@ -179,12 +179,14 @@ class AIGateway
         $hasRefImages = !empty($referenceImages);
         $usedModel = 'gpt-5.4';
 
-        Log::info("generateImage via Responses API", [
+        Log::info("generateImage: using Responses API with model={$usedModel}", [
+            'model' => $usedModel,
             'has_ref_images' => $hasRefImages,
             'ref_images_count' => $hasRefImages ? count($referenceImages) : 0,
             'size' => $mappedSize,
             'quality' => $mappedQuality,
             'prompt_length' => mb_strlen($enhancedPrompt),
+            'endpoint' => 'POST /v1/responses',
         ]);
 
         $inputContent = [];
@@ -228,12 +230,16 @@ class AIGateway
 
         if (!$response->successful()) {
             $errorMsg = $response->json()['error']['message'] ?? $response->body();
-            Log::warning("Responses API failed ({$response->status()}): {$errorMsg} — fallback to Images API");
+            Log::warning("Responses API FAILED with model={$usedModel}, status={$response->status()}: {$errorMsg}");
+            Log::warning("FALLING BACK to Images API (gpt-image-1.5) — image quality will be lower");
 
             return $this->generateImageFallback($apiKey, $enhancedPrompt, $referenceImages, $mappedSize, $mappedQuality, $brand, $user);
         }
 
         $data = $response->json();
+        $responseModel = $data['model'] ?? 'unknown';
+        Log::info("Responses API SUCCESS: response_model={$responseModel}, requested_model={$usedModel}");
+
         $imageBase64 = null;
         $revisedPrompt = $enhancedPrompt;
 

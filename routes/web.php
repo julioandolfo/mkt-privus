@@ -155,6 +155,41 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/sync-metrics', [PostController::class, 'syncMetrics'])->name('sync-metrics');
         });
 
+        // Diagnóstico da API de imagem
+        Route::get('/test-image-api', function () {
+            $apiKey = config('services.openai.api_key') ?: env('OPENAI_API_KEY');
+            if (!$apiKey) return response()->json(['error' => 'OPENAI_API_KEY não configurada'], 500);
+
+            $model = 'gpt-5.4';
+            $payload = [
+                'model' => $model,
+                'input' => [['role' => 'user', 'content' => [['type' => 'input_text', 'text' => 'Draw a simple red circle on white background']]]],
+                'tools' => [['type' => 'image_generation', 'quality' => 'low', 'size' => '1024x1024']],
+                'tool_choice' => ['type' => 'image_generation'],
+            ];
+
+            $response = \Illuminate\Support\Facades\Http::withHeaders([
+                'Authorization' => "Bearer {$apiKey}",
+                'Content-Type' => 'application/json',
+            ])->timeout(120)->post('https://api.openai.com/v1/responses', $payload);
+
+            $data = $response->json();
+            $hasImage = false;
+            foreach ($data['output'] ?? [] as $o) {
+                if (($o['type'] ?? '') === 'image_generation_call') $hasImage = true;
+            }
+
+            return response()->json([
+                'requested_model' => $model,
+                'response_model' => $data['model'] ?? 'N/A',
+                'status' => $response->status(),
+                'success' => $response->successful(),
+                'has_image' => $hasImage,
+                'error' => $data['error'] ?? null,
+                'usage' => $data['usage'] ?? null,
+            ]);
+        })->name('test-image-api');
+
         // Geracao de conteudo com IA
         Route::post('/generate', [PostController::class, 'generateContent'])->name('generate');
         Route::post('/generate-complete', [PostController::class, 'generateCompletePost'])->name('generate-complete');
