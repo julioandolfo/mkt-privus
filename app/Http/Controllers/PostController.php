@@ -298,15 +298,15 @@ class PostController extends Controller
         }
 
         // Criar PostSchedules para cada conta conectada (necessario para autopilot)
-        if ($validated['scheduled_at'] && $brand) {
+        if (!empty($validated['scheduled_at']) && $brand) {
             $this->syncPostSchedules($post, $brand->id);
         }
 
         $scheduledCount = $post->schedules()->count();
         $msg = 'Post criado com sucesso!';
-        if ($validated['scheduled_at'] && $scheduledCount === 0) {
+        if (!empty($validated['scheduled_at']) && $scheduledCount === 0) {
             $msg .= ' Atenção: nenhuma conta social conectada encontrada para publicação automática. Conecte contas em Social > Contas.';
-        } elseif ($validated['scheduled_at'] && $scheduledCount > 0) {
+        } elseif (!empty($validated['scheduled_at']) && $scheduledCount > 0) {
             $msg .= " Agendado para {$scheduledCount} conta(s).";
         }
 
@@ -455,7 +455,7 @@ class PostController extends Controller
         }
 
         // Sincronizar PostSchedules se há agendamento
-        if ($validated['scheduled_at']) {
+        if (!empty($validated['scheduled_at'])) {
             $brand = $request->user()->getActiveBrand();
             if ($brand) {
                 $this->syncPostSchedules($post, $brand->id);
