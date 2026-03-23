@@ -949,7 +949,7 @@ class PostController extends Controller
                     }
 
                     if (!empty($refImages)) {
-                        $imagePrompt .= "\n\nIMPORTANT: Use the provided reference image(s) as the primary visual basis. The generated image MUST include the same products/objects shown in the reference photos. Recreate a similar composition with the exact same items.";
+                        $imagePrompt .= "\n\nEDIT MODE: You are editing the provided image(s). Keep ALL product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect. Only add or change what is explicitly requested. Do NOT regenerate, reimagine, or artistically reinterpret the products.";
                     }
 
                     $imageData = $aiGateway->generateImage(
@@ -1207,7 +1207,7 @@ class PostController extends Controller
             }
 
             if (!empty($refImages)) {
-                $imagePrompt .= "\n\nIMPORTANT: Use the provided reference image(s) as the primary visual basis. The generated image MUST include the same products/objects shown in the reference photos. Recreate a similar composition with the exact same items.";
+                $imagePrompt .= "\n\nEDIT MODE: You are editing the provided image(s). Keep ALL product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect. Only add or change what is explicitly requested. Do NOT regenerate, reimagine, or artistically reinterpret the products.";
             }
 
             $imageData = $aiGateway->generateImage(

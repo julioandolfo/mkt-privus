@@ -159,7 +159,7 @@ class AIGateway
             if ($brand->secondary_color) $brandHints .= ", {$brand->secondary_color}";
             $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art.";
             if (!empty($referenceImages)) {
-                $brandHints .= " CRITICAL: The reference images show REAL products from this brand. You MUST preserve these products EXACTLY as they appear — same logos, text, labels, shapes, colors. Do NOT alter, replace, or reimagine the products. Place them in the requested context/composition while keeping them pixel-accurate.";
+                $brandHints .= " CRITICAL EDITING RULES: You are EDITING the provided image(s), NOT generating new ones. You MUST preserve ALL existing elements EXACTLY as they are — every logo, text, label, barcode, shape, color, texture, shadow, and reflection MUST remain pixel-perfect and unchanged. Only modify what the user explicitly asks to change. Everything else MUST stay identical to the original image. Treat this as a photo retouching job, not a creative generation task.";
             }
             $enhancedPrompt = "{$brandHints}\n\n{$prompt}";
         }
@@ -205,6 +205,16 @@ class AIGateway
             'text' => $enhancedPrompt,
         ];
 
+        $imageGenTool = [
+            'type' => 'image_generation',
+            'quality' => $mappedQuality,
+            'size' => $mappedSize,
+        ];
+
+        if ($hasRefImages) {
+            $imageGenTool['action'] = 'edit';
+        }
+
         $payload = [
             'model' => 'gpt-5.4',
             'input' => [
@@ -213,13 +223,7 @@ class AIGateway
                     'content' => $inputContent,
                 ],
             ],
-            'tools' => [
-                [
-                    'type' => 'image_generation',
-                    'quality' => $mappedQuality,
-                    'size' => $mappedSize,
-                ],
-            ],
+            'tools' => [$imageGenTool],
             'tool_choice' => ['type' => 'image_generation'],
         ];
 
