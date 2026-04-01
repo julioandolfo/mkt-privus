@@ -869,6 +869,8 @@ class PostController extends Controller
                 'image_size' => 'nullable|string|in:1024x1024,1792x1024,1024x1792,1536x1024,1024x1536',
                 'reference_images' => 'nullable|array|max:3',
                 'reference_images.*' => 'image|max:10240',
+                'context_urls' => 'nullable|array|max:5',
+                'context_urls.*' => 'nullable|url|max:500',
             ]);
 
             $brand = $request->user()->getActiveBrand();
@@ -893,8 +895,24 @@ class PostController extends Controller
                 analyzeSocial: $analyzeSocial,
             );
 
+            // Buscar conteúdo de URLs customizadas enviadas pelo usuário
+            $contextUrls = array_filter($validated['context_urls'] ?? []);
+            $urlContext = '';
+            if (!empty($contextUrls)) {
+                $urlParts = [];
+                foreach ($contextUrls as $ctxUrl) {
+                    $fetched = $this->fetchUrlContent($ctxUrl);
+                    if ($fetched) {
+                        $urlParts[] = "CONTEÚDO DE {$ctxUrl}:\n{$fetched}";
+                    }
+                }
+                if (!empty($urlParts)) {
+                    $urlContext = "\n\nCONTEXTO EXTRAÍDO DOS LINKS FORNECIDOS (use estas informações para criar o post):\n" . implode("\n\n", $urlParts);
+                }
+            }
+
             $enrichedInstructions = trim(
-                ($validated['instructions'] ?? '') . "\n\n" . $extraContext
+                ($validated['instructions'] ?? '') . "\n\n" . $extraContext . $urlContext
             );
 
             $textResult = $this->contentGenerator->generateCaption(
@@ -948,8 +966,14 @@ class PostController extends Controller
                         $imagePrompt .= "\n\nREFERENCE IMAGE DESCRIPTION: " . $referenceContext;
                     }
 
-                    if (!empty($refImages)) {
-                        $imagePrompt .= "\n\nEDIT MODE: You are editing the provided image(s). Keep ALL product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect. Only add or change what is explicitly requested. Do NOT regenerate, reimagine, or artistically reinterpret the products.";
+                    $refCount = count($refImages);
+                    if ($refCount === 1) {
+                        $imagePrompt .= "\n\nEDIT MODE: You are editing the provided image. Keep ALL product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect. Only add or change what is explicitly requested. Do NOT regenerate, reimagine, or artistically reinterpret the product.";
+                    } elseif ($refCount > 1) {
+                        $imagePrompt .= "\n\nIMPORTANT: Multiple reference images were provided, each showing a DIFFERENT product. "
+                            . "Generate an image for the FIRST product only (image 1). Each product should get its own separate post image. "
+                            . "Focus EXCLUSIVELY on the product from image 1 — do NOT combine all products into a single image. "
+                            . "Keep the product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect.";
                     }
 
                     $imageData = $aiGateway->generateImage(
@@ -1043,7 +1067,7 @@ class PostController extends Controller
             }
         }
 
-        // Analisar website
+        // Analisar website — buscar conteúdo real dos links
         if ($analyzeWebsite) {
             $urls = $brand->getAllUrls();
             if (!empty($urls)) {
@@ -1051,6 +1075,17 @@ class PostController extends Controller
                 foreach ($urls as $url) {
                     $label = $url['label'] ?? $url['type'] ?? 'Link';
                     $context[] = "  - {$label}: {$url['url']}";
+                }
+
+                // Buscar conteúdo real dos links para contexto (max 3 URLs)
+                $urlsToFetch = array_slice($urls, 0, 3);
+                foreach ($urlsToFetch as $urlEntry) {
+                    $fetchedContent = $this->fetchUrlContent($urlEntry['url'] ?? '');
+                    if ($fetchedContent) {
+                        $label = $urlEntry['label'] ?? $urlEntry['type'] ?? 'Site';
+                        $context[] = "\n  CONTEÚDO EXTRAÍDO DE [{$label}] ({$urlEntry['url']}):";
+                        $context[] = "  " . $fetchedContent;
+                    }
                 }
             }
         }
@@ -1084,6 +1119,76 @@ class PostController extends Controller
         }
 
         return implode("\n", $context);
+    }
+
+    /**
+     * Busca e extrai conteúdo textual relevante de uma URL para enriquecer o contexto da IA.
+     * Retorna texto resumido (max 800 chars) ou null em caso de falha.
+     */
+    private function fetchUrlContent(string $url): ?string
+    {
+        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+            return null;
+        }
+
+        try {
+            $response = \Illuminate\Support\Facades\Http::timeout(10)
+                ->withHeaders([
+                    'User-Agent' => 'Mozilla/5.0 (compatible; PrivusBot/1.0)',
+                    'Accept' => 'text/html',
+                ])
+                ->get($url);
+
+            if (!$response->successful()) {
+                return null;
+            }
+
+            $html = $response->body();
+
+            // Extrair título
+            $title = '';
+            if (preg_match('/<title[^>]*>(.*?)<\/title>/si', $html, $m)) {
+                $title = html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+            }
+
+            // Extrair meta description
+            $description = '';
+            if (preg_match('/<meta[^>]*name=["\']description["\'][^>]*content=["\'](.*?)["\']/si', $html, $m)) {
+                $description = html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+            }
+
+            // Extrair og:description como fallback
+            if (!$description && preg_match('/<meta[^>]*property=["\']og:description["\'][^>]*content=["\'](.*?)["\']/si', $html, $m)) {
+                $description = html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+            }
+
+            // Extrair texto do body (limpo)
+            $bodyText = '';
+            if (preg_match('/<body[^>]*>(.*?)<\/body>/si', $html, $m)) {
+                $body = $m[1];
+                // Remover script, style, nav, header, footer
+                $body = preg_replace('/<(script|style|nav|header|footer|iframe|noscript)[^>]*>.*?<\/\1>/si', '', $body);
+                // Remover tags HTML
+                $body = strip_tags($body);
+                // Limpar espaços
+                $body = preg_replace('/\s+/', ' ', $body);
+                $bodyText = mb_substr(trim($body), 0, 600);
+            }
+
+            $parts = [];
+            if ($title) $parts[] = "Título: {$title}";
+            if ($description) $parts[] = "Descrição: {$description}";
+            if ($bodyText) $parts[] = "Conteúdo: {$bodyText}";
+
+            if (empty($parts)) {
+                return null;
+            }
+
+            return mb_substr(implode('. ', $parts), 0, 800);
+        } catch (\Exception $e) {
+            Log::debug("fetchUrlContent failed for {$url}: {$e->getMessage()}");
+            return null;
+        }
     }
 
     /**
@@ -1129,22 +1234,63 @@ class PostController extends Controller
         $files = $request->file('reference_images');
         if (!$files || empty($files)) return null;
 
-        $imageContents = [];
-        foreach ($files as $file) {
-            $base64 = base64_encode(file_get_contents($file->getRealPath()));
-            $mime = $file->getMimeType();
-            $imageContents[] = [
-                'type' => 'image_url',
-                'image_url' => ['url' => "data:{$mime};base64,{$base64}", 'detail' => 'low'],
-            ];
+        $fileCount = count($files);
+
+        // Se múltiplas imagens, analisar cada uma individualmente para identificar produtos distintos
+        if ($fileCount > 1) {
+            $descriptions = [];
+            foreach ($files as $i => $file) {
+                $base64 = base64_encode(file_get_contents($file->getRealPath()));
+                $mime = $file->getMimeType();
+                $imageContent = [
+                    'type' => 'image_url',
+                    'image_url' => ['url' => "data:{$mime};base64,{$base64}", 'detail' => 'low'],
+                ];
+
+                $messages = [
+                    ['role' => 'system', 'content' => 'You analyze a SINGLE product/reference image for social media. Identify the SPECIFIC product shown, describe it in detail: product name/type, colors, packaging, key visual features, brand elements visible. Be precise — this will be used to create an INDIVIDUAL post for THIS specific product. Output in English. Max 150 words.'],
+                    ['role' => 'user', 'content' => [
+                        ['type' => 'text', 'text' => "Analyze image " . ($i + 1) . " of {$fileCount}. Describe THIS SPECIFIC product/subject in detail so I can create a SEPARATE, dedicated social media post for it:"],
+                        $imageContent,
+                    ]],
+                ];
+
+                try {
+                    $result = $aiGateway->chat(
+                        model: AIModel::GPT4o,
+                        messages: $messages,
+                        brand: $brand,
+                        user: $request->user(),
+                        feature: 'reference_image_analysis',
+                    );
+                    $descriptions[] = "PRODUTO/IMAGEM " . ($i + 1) . ": " . ($result['content'] ?? '');
+                } catch (\Exception $e) {
+                    Log::warning("Reference image {$i} analysis failed: {$e->getMessage()}");
+                }
+            }
+
+            if (empty($descriptions)) return null;
+
+            return "ATENÇÃO: Foram enviadas {$fileCount} imagens de referência, cada uma com um PRODUTO/ASSUNTO DIFERENTE.\n"
+                . "Você DEVE criar posts/sugestões SEPARADOS para CADA produto — NÃO misture todos em uma única imagem ou post.\n"
+                . "Cada produto deve ter seu próprio post individual com foco exclusivo nele.\n\n"
+                . implode("\n\n", $descriptions);
         }
+
+        // Imagem única — análise padrão
+        $base64 = base64_encode(file_get_contents($files[0]->getRealPath()));
+        $mime = $files[0]->getMimeType();
+        $imageContent = [
+            'type' => 'image_url',
+            'image_url' => ['url' => "data:{$mime};base64,{$base64}", 'detail' => 'low'],
+        ];
 
         $messages = [
             ['role' => 'system', 'content' => 'You analyze reference images for social media post creation. Describe the visual style, composition, colors, subjects, and mood in detail. Be concise but thorough. Output in English.'],
-            ['role' => 'user', 'content' => array_merge(
-                [['type' => 'text', 'text' => 'Describe these reference images in detail — style, composition, colors, objects, mood — so I can recreate a similar image with AI:']],
-                $imageContents,
-            )],
+            ['role' => 'user', 'content' => [
+                ['type' => 'text', 'text' => 'Describe this reference image in detail — style, composition, colors, objects, mood — so I can recreate a similar image with AI:'],
+                $imageContent,
+            ]],
         ];
 
         try {

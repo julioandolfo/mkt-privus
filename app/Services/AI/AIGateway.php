@@ -157,7 +157,7 @@ class AIGateway
             if ($brand->segment) $brandHints .= " ({$brand->segment})";
             if ($brand->primary_color) $brandHints .= ". Brand colors: {$brand->primary_color}";
             if ($brand->secondary_color) $brandHints .= ", {$brand->secondary_color}";
-            $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art.";
+            $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art, NOT fantasy, NOT surreal. The scene must be physically possible and photographable in the real world. Use bold, impactful typography (Montserrat Black, Bebas Neue, Poppins Bold style) if text is needed — NEVER use thin or generic fonts like Arial.";
             if (!empty($referenceImages)) {
                 $brandHints .= " CRITICAL EDITING RULES: You are EDITING the provided image(s), NOT generating new ones. You MUST preserve ALL existing elements EXACTLY as they are — every logo, text, label, barcode, shape, color, texture, shadow, and reflection MUST remain pixel-perfect and unchanged. Only modify what the user explicitly asks to change. Everything else MUST stay identical to the original image. Treat this as a photo retouching job, not a creative generation task.";
             }
@@ -401,13 +401,16 @@ class AIGateway
         };
 
         $prompt = "Create a REALISTIC, photographic-style image for a Brazilian social media post ({$platform}, {$aspectRatio}). ";
-        $prompt .= "The image should look like a real high-quality professional photograph, NOT an illustration, NOT a cartoon, NOT a digital art piece. ";
+        $prompt .= "The image MUST look like a REAL photograph taken with a professional camera — real lighting, real textures, real surfaces, real environments. ";
+        $prompt .= "ABSOLUTELY NO: fantasy elements, surreal scenes, impossible physics, floating objects, magical lighting, dreamlike atmospheres, sci-fi environments, abstract backgrounds, or any element that could not exist in a real photograph. ";
+        $prompt .= "The scene must be something that could actually be photographed in a real studio, store, home, or outdoor location. ";
+        $prompt .= "NOT an illustration, NOT a cartoon, NOT digital art, NOT a render, NOT concept art. ";
         $prompt .= "Topic: {$topic}. ";
 
         if ($imageStyle) {
             $prompt .= "Visual style: {$imageStyle}. ";
         } else {
-            $prompt .= "Style: realistic product photography, professional studio lighting, clean modern composition, warm and inviting, Brazilian marketing aesthetic. ";
+            $prompt .= "Style: realistic product photography, professional studio lighting, clean modern composition, warm and inviting, Brazilian marketing aesthetic. Real surfaces like marble, wood, concrete, fabric — NOT gradient backgrounds or abstract shapes. ";
         }
 
         if ($brand->segment) {
@@ -430,7 +433,7 @@ class AIGateway
                 return $desc;
             })->implode('; ');
             $prompt .= "The brand sells these products: {$productDescriptions}. ";
-            $prompt .= "IMPORTANT: Create a product photography composition showing these products or similar items in a real-world context (on a table, being used, in packaging, lifestyle setting). ";
+            $prompt .= "IMPORTANT: Pick the ONE product most relevant to the topic and create a product photography composition showing ONLY that single product in a real-world context (on a table, being used, in packaging, lifestyle setting). Do NOT show multiple products in the same image — focus on ONE product per post. ";
         }
 
         $mascot = $brand->mascots()->primary()->first() ?? $brand->mascots()->first();
@@ -446,10 +449,13 @@ class AIGateway
         }
 
         // Regras de texto na imagem
-        $prompt .= "If the topic naturally calls for text (promotions, announcements, tips), include SHORT text IN PORTUGUESE (Brazilian Portuguese) as clean overlay typography. ";
+        $prompt .= "If the topic naturally calls for text (promotions, announcements, tips), include SHORT text IN PORTUGUESE (Brazilian Portuguese) using BOLD, eye-catching typography — ";
+        $prompt .= "use modern impactful fonts like Montserrat Black, Bebas Neue, Poppins Bold, or Impact-style typefaces. ";
+        $prompt .= "The text must be LARGE, high-contrast, and visually striking — NOT small, thin, or generic like Arial/Helvetica. ";
+        $prompt .= "Use techniques like: bold weight, text shadows, color contrast against background, slight text glow, or colored text blocks. ";
         $prompt .= "If no text is needed, keep the image purely photographic. ";
         $prompt .= "The final result must look like a real Instagram post from a professional Brazilian brand — NOT like AI-generated art, NOT like a tech illustration. ";
-        $prompt .= "Think: product photos, lifestyle shots, studio photography, real textures, natural lighting.";
+        $prompt .= "Think: product photos, lifestyle shots, studio photography, real textures, natural lighting. NEVER fantasy, surreal, or dreamlike.";
 
         return $prompt;
     }

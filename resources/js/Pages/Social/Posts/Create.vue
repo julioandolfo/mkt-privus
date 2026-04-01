@@ -75,6 +75,7 @@ const imageStyle = ref('');
 const imageSize = ref('1024x1024');
 const referenceImages = ref<File[]>([]);
 const referenceImagePreviews = ref<string[]>([]);
+const contextUrls = ref<string[]>(['']);
 const referenceInput = ref<HTMLInputElement | null>(null);
 
 function triggerReferenceInput() { referenceInput.value?.click(); }
@@ -94,6 +95,14 @@ function removeReference(index: number) {
     URL.revokeObjectURL(referenceImagePreviews.value[index]);
     referenceImages.value.splice(index, 1);
     referenceImagePreviews.value.splice(index, 1);
+}
+
+function addContextUrl() {
+    if (contextUrls.value.length < 5) contextUrls.value.push('');
+}
+function removeContextUrl(index: number) {
+    contextUrls.value.splice(index, 1);
+    if (contextUrls.value.length === 0) contextUrls.value.push('');
 }
 
 const imageStyleOptions = [
@@ -243,6 +252,7 @@ async function generateCompletePost() {
         if (imageStyle.value) formData.append('image_style', imageStyle.value);
         formData.append('image_size', imageSize.value);
         referenceImages.value.forEach((file, i) => formData.append(`reference_images[${i}]`, file));
+        contextUrls.value.filter(u => u.trim()).forEach((url, i) => formData.append(`context_urls[${i}]`, url.trim()));
 
         const response = await axios.post(route('social.generate-complete'), formData);
 
@@ -896,6 +906,27 @@ const toneOptions = [
                                         <input ref="referenceInput" type="file" accept="image/*" multiple class="hidden" @change="onReferenceSelect" />
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- Links de Contexto -->
+                        <div>
+                            <label class="text-sm text-gray-400 mb-1 block">Links de Referência (opcional)</label>
+                            <p class="text-[10px] text-gray-500 mb-2">A IA vai acessar e analisar o conteúdo destes links para enriquecer o post.</p>
+                            <div class="space-y-2">
+                                <div v-for="(url, i) in contextUrls" :key="i" class="flex items-center gap-2">
+                                    <input v-model="contextUrls[i]" type="url"
+                                        class="flex-1 rounded-xl bg-gray-800 border-gray-700 text-white text-xs focus:border-indigo-500 focus:ring-indigo-500"
+                                        placeholder="https://exemplo.com/pagina-do-produto" />
+                                    <button v-if="contextUrls.length > 1" type="button" @click="removeContextUrl(i)" class="text-gray-500 hover:text-red-400 transition">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                                    </button>
+                                </div>
+                                <button v-if="contextUrls.length < 5" type="button" @click="addContextUrl"
+                                    class="text-xs text-indigo-400 hover:text-indigo-300 transition flex items-center gap-1">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                    Adicionar outro link
+                                </button>
                             </div>
                         </div>
 
