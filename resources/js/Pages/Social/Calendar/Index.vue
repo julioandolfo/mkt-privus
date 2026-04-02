@@ -88,6 +88,10 @@ const generateForm = ref({
     post_types: ['feed'] as string[],
 });
 
+const contextUrls = ref<string[]>(['']);
+function addContextUrl() { if (contextUrls.value.length < 5) contextUrls.value.push(''); }
+function removeContextUrl(i: number) { contextUrls.value.splice(i, 1); if (!contextUrls.value.length) contextUrls.value.push(''); }
+
 // Imagens de referência
 const referenceImages = ref<File[]>([]);
 const referenceImagePreviews = ref<string[]>([]);
@@ -275,6 +279,7 @@ function openGenerateModal() {
     generateForm.value.post_types = ['feed'];
     referenceImages.value = [];
     referenceImagePreviews.value = [];
+    contextUrls.value = [''];
     generateResult.value = null;
     showGenerateModal.value = true;
 }
@@ -295,6 +300,7 @@ async function submitGenerate() {
         formData.append('format_mode', generateForm.value.format_mode);
         generateForm.value.post_types.forEach((pt, i) => formData.append(`post_types[${i}]`, pt));
         referenceImages.value.forEach((file, i) => formData.append(`reference_images[${i}]`, file));
+        contextUrls.value.filter(u => u.trim()).forEach((url, i) => formData.append(`context_urls[${i}]`, url.trim()));
 
         const res = await axios.post(route('social.calendar.content.generate'), formData);
         generateResult.value = res.data.message;
@@ -884,6 +890,27 @@ onMounted(fetchCalendarData);
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                                 </button>
                                 <input ref="referenceInput" type="file" accept="image/*" multiple class="hidden" @change="onReferenceSelect" />
+                            </div>
+                        </div>
+
+                        <!-- Links de Contexto -->
+                        <div>
+                            <label class="text-xs text-gray-400 mb-1 block">Links de Referência (opcional)</label>
+                            <p class="text-[10px] text-gray-500 mb-2">A IA vai acessar e analisar o conteúdo destes links para enriquecer as pautas.</p>
+                            <div class="space-y-2">
+                                <div v-for="(url, i) in contextUrls" :key="i" class="flex items-center gap-2">
+                                    <input v-model="contextUrls[i]" type="url"
+                                        class="flex-1 rounded-xl bg-gray-800 border-gray-700 text-white text-xs focus:border-violet-500 focus:ring-violet-500"
+                                        placeholder="https://exemplo.com/pagina" />
+                                    <button v-if="contextUrls.length > 1" type="button" @click="removeContextUrl(i)" class="text-gray-500 hover:text-red-400 transition">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                                    </button>
+                                </div>
+                                <button v-if="contextUrls.length < 5" type="button" @click="addContextUrl"
+                                    class="text-xs text-violet-400 hover:text-violet-300 transition flex items-center gap-1">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                    Adicionar outro link
+                                </button>
                             </div>
                         </div>
 

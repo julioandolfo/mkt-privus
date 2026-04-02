@@ -97,6 +97,8 @@ class ContentCalendarController extends Controller
             'post_types.*' => 'string|in:feed,carousel,story,reel,video,pin',
             'reference_images' => 'nullable|array|max:3',
             'reference_images.*' => 'image|max:10240',
+            'context_urls' => 'nullable|array|max:5',
+            'context_urls.*' => 'nullable|url|max:500',
         ]);
 
         if ($request->hasFile('reference_images')) {

@@ -81,6 +81,21 @@ class ContentCalendarService
             $formatInstruction = "Escolha automaticamente o melhor formato de conteudo (feed, carousel, reel, story, video, pin) para cada post, baseado nos dados de performance e na estrategia. Priorize formatos com melhor engajamento historico.";
         }
 
+        // Buscar conteúdo dos links de referência
+        $contextUrls = array_filter($options['context_urls'] ?? []);
+        if (!empty($contextUrls)) {
+            $urlParts = [];
+            foreach (array_slice($contextUrls, 0, 5) as $url) {
+                $fetched = $this->fetchUrlContent($url);
+                if ($fetched) {
+                    $urlParts[] = "CONTEÚDO DE {$url}:\n{$fetched}";
+                }
+            }
+            if (!empty($urlParts)) {
+                $extraInstructions .= "\n\nCONTEXTO EXTRAÍDO DOS LINKS DE REFERÊNCIA (use estas informações para criar pautas relevantes, inspirar temas e extrair contexto):\n" . implode("\n\n", $urlParts);
+            }
+        }
+
         $prompt = $this->buildCalendarPrompt(
             $brandContext, $start->format('Y-m-d'), $end->format('Y-m-d'),
             $totalPosts, $platformsStr, $categoriesStr, $tone,
@@ -313,6 +328,44 @@ class ContentCalendarService
     }
 
     // ===== PRIVATE METHODS =====
+
+    private function fetchUrlContent(string $url): ?string
+    {
+        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) return null;
+
+        try {
+            $response = \Illuminate\Support\Facades\Http::timeout(10)
+                ->withHeaders(['User-Agent' => 'Mozilla/5.0 (compatible; PrivusBot/1.0)', 'Accept' => 'text/html'])
+                ->get($url);
+
+            if (!$response->successful()) return null;
+
+            $html = $response->body();
+            $title = '';
+            if (preg_match('/<title[^>]*>(.*?)<\/title>/si', $html, $m)) {
+                $title = html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+            }
+            $description = '';
+            if (preg_match('/<meta[^>]*name=["\']description["\'][^>]*content=["\'](.*?)["\']/si', $html, $m)) {
+                $description = html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+            }
+            if (!$description && preg_match('/<meta[^>]*property=["\']og:description["\'][^>]*content=["\'](.*?)["\']/si', $html, $m)) {
+                $description = html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+            }
+            $bodyText = '';
+            if (preg_match('/<body[^>]*>(.*?)<\/body>/si', $html, $m)) {
+                $body = preg_replace('/<(script|style|nav|header|footer|iframe|noscript)[^>]*>.*?<\/\1>/si', '', $m[1]);
+                $bodyText = mb_substr(trim(preg_replace('/\s+/', ' ', strip_tags($body))), 0, 600);
+            }
+            $parts = [];
+            if ($title) $parts[] = "Título: {$title}";
+            if ($description) $parts[] = "Descrição: {$description}";
+            if ($bodyText) $parts[] = "Conteúdo: {$bodyText}";
+            return empty($parts) ? null : mb_substr(implode('. ', $parts), 0, 800);
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
 
     private function buildCalendarPrompt(
         string $brandContext, string $startDate, string $endDate,

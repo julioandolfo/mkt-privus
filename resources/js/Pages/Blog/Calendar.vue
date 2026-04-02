@@ -193,10 +193,13 @@ onMounted(() => {
 async function submitGenerate() {
     generating.value = true;
     try {
-        const payload = {
-            ...generateForm.value,
-            context_urls: generateForm.value.context_urls.filter(u => u.trim()),
-        };
+        const filteredUrls = generateForm.value.context_urls.filter(u => u.trim());
+        const payload: Record<string, any> = { ...generateForm.value };
+        if (filteredUrls.length > 0) {
+            payload.context_urls = filteredUrls;
+        } else {
+            delete payload.context_urls;
+        }
         const resp = await axios.post(route('blog.calendar.generate'), payload);
         if (resp.data.success) {
             showGenerateModal.value = false;
