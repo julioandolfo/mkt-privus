@@ -244,7 +244,23 @@ class BlogCalendarService
                 $article->update(['cover_image_path' => $coverResult['path']]);
             }
 
-            // 4. Vincular artigo à pauta
+            // 4. Auto-aprovar se artigo completo e config permite
+            $article->refresh();
+            $autoApproved = false;
+            $cfg = $brand->getContentEngineConfig();
+            $autoApprove = (bool) ($cfg['blog_auto_approve'] ?? false);
+
+            if ($autoApprove && $article->isComplete()) {
+                $article->update(['status' => 'approved']);
+                $autoApproved = true;
+
+                SystemLog::info('blog', 'calendar.auto_approved', "Artigo auto-aprovado (completo): \"{$article->title}\"", [
+                    'article_id' => $article->id,
+                    'seo_score' => $article->seoScore(),
+                ]);
+            }
+
+            // 5. Vincular artigo à pauta
             $item->update([
                 'status' => 'generated',
                 'article_id' => $article->id,
@@ -254,6 +270,7 @@ class BlogCalendarService
                 'calendar_item_id' => $item->id,
                 'article_id' => $article->id,
                 'has_cover' => !empty($coverResult),
+                'auto_approved' => $autoApproved,
             ]);
 
             return [
@@ -261,6 +278,7 @@ class BlogCalendarService
                 'article_id' => $article->id,
                 'article_title' => $article->title,
                 'has_cover' => !empty($coverResult),
+                'auto_approved' => $autoApproved,
             ];
         } catch (\Throwable $e) {
             $item->update(['status' => 'pending']);

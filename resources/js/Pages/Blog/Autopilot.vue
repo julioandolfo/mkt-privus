@@ -11,6 +11,7 @@ const props = defineProps<{
         connection_id: number | null;
         category_id: number | null;
         require_approval: boolean;
+        auto_approve: boolean;
         tone: string;
         instructions: string;
         cover_width: number;
@@ -167,6 +168,17 @@ const summary = computed(() => {
                         <div>
                             <p class="text-sm text-gray-200">Geração e publicação totalmente automática</p>
                             <p class="text-xs text-gray-500">A IA gera pautas <strong>e</strong> artigos completos automaticamente. Os artigos ficam em "Pendente de revisão" — você só aprova antes de publicar.</p>
+                        </div>
+                    </label>
+                </div>
+
+                <!-- Auto-aprovação -->
+                <div class="rounded-xl bg-gray-800/50 border border-gray-700 p-4">
+                    <label class="flex items-start gap-3 cursor-pointer">
+                        <input type="checkbox" v-model="form.auto_approve" class="mt-0.5 rounded border-gray-600 text-indigo-600 focus:ring-indigo-500" />
+                        <div>
+                            <p class="text-sm font-medium text-white">Auto-aprovar artigos completos</p>
+                            <p class="text-xs text-gray-500">Quando ativado, artigos que tiverem todos os elementos (texto, imagem de capa, SEO) serão aprovados automaticamente. Artigos incompletos (sem capa, sem meta description, etc.) continuam como "Pendente de revisão" para sua conferência.</p>
                         </div>
                     </label>
                 </div>

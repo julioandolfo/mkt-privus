@@ -164,6 +164,21 @@ class BlogArticle extends Model
         return $this->status === 'pending_review';
     }
 
+    /**
+     * Verifica se o artigo está completo — tem todos os elementos necessários para publicação.
+     * Usado para auto-aprovação: se completo, pode ser aprovado/publicado sem revisão humana.
+     */
+    public function isComplete(): bool
+    {
+        return !empty($this->title)
+            && !empty($this->content)
+            && !empty($this->excerpt)
+            && !empty($this->cover_image_path)
+            && !empty($this->meta_title)
+            && !empty($this->meta_description)
+            && mb_strlen(strip_tags($this->content)) >= 200;
+    }
+
     public function canSchedule(): bool
     {
         return in_array($this->status, ['approved', 'failed'])

@@ -112,6 +112,16 @@ class GenerateBlogArticlesJob implements ShouldQueue
                         $article->update(['cover_image_path' => $coverResult['path']]);
                     }
 
+                    // Auto-aprovar se artigo completo e config permite
+                    $article->refresh();
+                    $cfg = $brand->getContentEngineConfig();
+                    $autoApproved = false;
+
+                    if ((bool) ($cfg['blog_auto_approve'] ?? false) && $article->isComplete()) {
+                        $article->update(['status' => 'approved']);
+                        $autoApproved = true;
+                    }
+
                     $totalGenerated++;
 
                     SystemLog::info('blog', 'auto_generate.created', "Artigo gerado: \"{$article->title}\" para marca #{$brand->id}", [
@@ -119,6 +129,7 @@ class GenerateBlogArticlesJob implements ShouldQueue
                         'brand_id' => $brand->id,
                         'connection_id' => $connection->id,
                         'has_cover' => !empty($coverResult),
+                        'auto_approved' => $autoApproved,
                     ]);
                 }
             } catch (\Throwable $e) {
