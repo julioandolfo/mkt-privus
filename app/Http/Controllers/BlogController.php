@@ -651,8 +651,33 @@ class BlogController extends Controller
 
     public function connectionCategories(AnalyticsConnection $connection): JsonResponse
     {
-        $categories = $this->wpService->fetchCategories($connection);
-        return response()->json(['success' => true, 'categories' => $categories]);
+        $brandId = session('current_brand_id');
+
+        // Retornar categorias locais sincronizadas para esta conexão (+ categorias sem conexão específica)
+        $localCategories = BlogCategory::forBrand($brandId)
+            ->where(function ($q) use ($connection) {
+                $q->where('wordpress_connection_id', $connection->id)
+                  ->orWhereNull('wordpress_connection_id');
+            })
+            ->orderBy('name')
+            ->get(['id', 'name', 'wp_category_id', 'wordpress_connection_id']);
+
+        // Se não tem categorias locais, tentar sincronizar do WP
+        if ($localCategories->isEmpty()) {
+            try {
+                $this->wpService->syncCategories($connection, $brandId);
+                $localCategories = BlogCategory::forBrand($brandId)
+                    ->where('wordpress_connection_id', $connection->id)
+                    ->orderBy('name')
+                    ->get(['id', 'name', 'wp_category_id', 'wordpress_connection_id']);
+            } catch (\Throwable $e) {
+                // fallback: buscar direto do WP
+                $wpCategories = $this->wpService->fetchCategories($connection);
+                return response()->json(['success' => true, 'categories' => $wpCategories]);
+            }
+        }
+
+        return response()->json(['success' => true, 'categories' => $localCategories]);
     }
 
     // ===== CALENDÁRIO EDITORIAL =====

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, Link } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 
 const props = defineProps<{
@@ -25,6 +25,60 @@ const form = ref({ ...props.config });
 const saving = ref(false);
 const running = ref(false);
 const result = ref<{ type: 'success' | 'error'; message: string } | null>(null);
+const availableCategories = ref<{ id: number; name: string }[]>([...props.categories]);
+const loadingCategories = ref(false);
+const syncingCategories = ref(false);
+
+// Ao mudar conexão WP, buscar categorias dessa conexão
+watch(() => form.value.connection_id, async (newId, oldId) => {
+    if (newId === oldId) return;
+    form.value.category_id = null;
+
+    if (!newId) {
+        availableCategories.value = [...props.categories];
+        return;
+    }
+
+    await fetchCategoriesForConnection(newId);
+});
+
+async function fetchCategoriesForConnection(connectionId: number) {
+    loadingCategories.value = true;
+    try {
+        const { data } = await axios.get(route('blog.connections.categories', connectionId));
+        if (data.success && data.categories?.length) {
+            availableCategories.value = data.categories.map((c: any) => ({
+                id: c.id ?? c.wp_id,
+                name: c.name,
+                wp_id: c.id ?? c.wp_id,
+            }));
+        } else {
+            availableCategories.value = [];
+        }
+    } catch {
+        availableCategories.value = [];
+    } finally {
+        loadingCategories.value = false;
+    }
+}
+
+async function syncWpCategories() {
+    if (!form.value.connection_id) return;
+    syncingCategories.value = true;
+    try {
+        await axios.post(route('blog.categories.sync'), { connection_id: form.value.connection_id });
+        await fetchCategoriesForConnection(form.value.connection_id);
+    } catch {
+        // silently fail
+    } finally {
+        syncingCategories.value = false;
+    }
+}
+
+// Carregar categorias da conexão selecionada ao montar
+if (form.value.connection_id) {
+    fetchCategoriesForConnection(form.value.connection_id);
+}
 
 async function save() {
     saving.value = true;
@@ -54,7 +108,7 @@ async function runNow() {
 }
 
 const selectedConnection = computed(() => props.connections.find(c => c.id === form.value.connection_id));
-const selectedCategory = computed(() => props.categories.find(c => c.id === form.value.category_id));
+const selectedCategory = computed(() => availableCategories.value.find(c => c.id === form.value.category_id));
 
 const summary = computed(() => {
     if (!form.value.enabled) return 'Autopilot desativado';
@@ -145,12 +199,29 @@ const summary = computed(() => {
                 <!-- Categoria padrão -->
                 <div>
                     <label class="text-sm text-gray-400 mb-1 block">Categoria padrão</label>
-                    <select v-model="form.category_id"
-                        class="w-full rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500">
-                        <option :value="null">Sem categoria (IA sugere automaticamente)</option>
-                        <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
-                    </select>
-                    <p class="text-[10px] text-gray-600 mt-1">Se deixar em branco, a IA vai sugerir a categoria mais adequada para cada artigo.</p>
+                    <div class="flex items-center gap-2">
+                        <select v-model="form.category_id"
+                            :disabled="loadingCategories"
+                            class="flex-1 rounded-xl bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:opacity-50">
+                            <option :value="null">{{ loadingCategories ? 'Carregando categorias...' : 'Sem categoria (IA sugere automaticamente)' }}</option>
+                            <option v-for="c in availableCategories" :key="c.id" :value="c.id">{{ c.name }}</option>
+                        </select>
+                        <button v-if="form.connection_id" @click="syncWpCategories" :disabled="syncingCategories" type="button"
+                            class="shrink-0 rounded-xl border border-gray-700 px-3 py-2 text-xs text-gray-400 hover:text-white hover:border-gray-500 disabled:opacity-50 transition"
+                            :title="'Sincronizar categorias do WordPress'">
+                            <svg :class="syncingCategories ? 'animate-spin' : ''" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="text-[10px] text-gray-600 mt-1">
+                        <template v-if="form.connection_id">
+                            {{ availableCategories.length }} categoria(s) encontrada(s). Clique no ícone para sincronizar do WordPress.
+                        </template>
+                        <template v-else>
+                            Selecione um destino WordPress para carregar as categorias disponíveis.
+                        </template>
+                    </p>
                 </div>
 
                 <!-- Modo aprovação -->
