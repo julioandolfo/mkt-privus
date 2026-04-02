@@ -34,6 +34,7 @@ class BlogCalendarService
         $tone = $options['tone'] ?? $brand->tone_of_voice ?? 'profissional e acessível';
         $aiModel = $options['ai_model'] ?? 'gpt-4o-mini';
         $extraInstructions = $options['instructions'] ?? '';
+        $contextUrls = $options['context_urls'] ?? [];
         $batchStatus = $options['batch_status'] ?? 'draft';
         $connectionId = $options['wordpress_connection_id'] ?? null;
         $categoryId = $options['blog_category_id'] ?? null;
@@ -68,6 +69,20 @@ class BlogCalendarService
             ->get(['id', 'name', 'slug', 'wp_category_id']);
 
         $categoriesList = $existingCategories->map(fn($c) => $c->name)->implode(', ');
+
+        // Buscar conteúdo dos links de referência
+        if (!empty($contextUrls)) {
+            $urlParts = [];
+            foreach (array_slice($contextUrls, 0, 5) as $url) {
+                $fetched = $this->fetchUrlContent($url);
+                if ($fetched) {
+                    $urlParts[] = "CONTEÚDO DE {$url}:\n{$fetched}";
+                }
+            }
+            if (!empty($urlParts)) {
+                $extraInstructions .= "\n\nCONTEXTO EXTRAÍDO DOS LINKS DE REFERÊNCIA (use estas informações para criar pautas relevantes, inspirar temas, extrair dados e contexto):\n" . implode("\n\n", $urlParts);
+            }
+        }
 
         $brandContext = $brand->getAIContext();
         $batchId = uniqid('blogcal_');
@@ -330,6 +345,59 @@ class BlogCalendarService
     }
 
     // ===== PRIVATE =====
+
+    /**
+     * Busca e extrai conteúdo textual de uma URL para contexto da IA.
+     */
+    private function fetchUrlContent(string $url): ?string
+    {
+        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+            return null;
+        }
+
+        try {
+            $response = \Illuminate\Support\Facades\Http::timeout(10)
+                ->withHeaders([
+                    'User-Agent' => 'Mozilla/5.0 (compatible; PrivusBot/1.0)',
+                    'Accept' => 'text/html',
+                ])
+                ->get($url);
+
+            if (!$response->successful()) return null;
+
+            $html = $response->body();
+
+            $title = '';
+            if (preg_match('/<title[^>]*>(.*?)<\/title>/si', $html, $m)) {
+                $title = html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+            }
+
+            $description = '';
+            if (preg_match('/<meta[^>]*name=["\']description["\'][^>]*content=["\'](.*?)["\']/si', $html, $m)) {
+                $description = html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+            }
+            if (!$description && preg_match('/<meta[^>]*property=["\']og:description["\'][^>]*content=["\'](.*?)["\']/si', $html, $m)) {
+                $description = html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+            }
+
+            $bodyText = '';
+            if (preg_match('/<body[^>]*>(.*?)<\/body>/si', $html, $m)) {
+                $body = preg_replace('/<(script|style|nav|header|footer|iframe|noscript)[^>]*>.*?<\/\1>/si', '', $m[1]);
+                $body = strip_tags($body);
+                $body = preg_replace('/\s+/', ' ', $body);
+                $bodyText = mb_substr(trim($body), 0, 600);
+            }
+
+            $parts = [];
+            if ($title) $parts[] = "Título: {$title}";
+            if ($description) $parts[] = "Descrição: {$description}";
+            if ($bodyText) $parts[] = "Conteúdo: {$bodyText}";
+
+            return empty($parts) ? null : mb_substr(implode('. ', $parts), 0, 800);
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
 
     private function buildCalendarPrompt(
         string $brandContext,
