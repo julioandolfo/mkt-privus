@@ -320,6 +320,19 @@ class BlogController extends Controller
             user: Auth::user(),
         );
 
+        // Gerar imagem de capa automaticamente junto com o artigo
+        if ($result['success'] ?? false) {
+            $coverResult = $this->articleService->generateCoverImage(
+                brand: $brand,
+                title: $result['title'] ?? $request->input('topic'),
+                excerpt: $result['excerpt'] ?? '',
+            );
+
+            if ($coverResult) {
+                $result['cover_image'] = $coverResult;
+            }
+        }
+
         return response()->json($result);
     }
 

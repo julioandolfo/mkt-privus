@@ -76,6 +76,9 @@ async function generateWithAI() {
             form.tags = resp.data.tags || [];
             form.ai_model_used = resp.data.ai_model_used || '';
             form.tokens_used = resp.data.tokens_used || 0;
+            if (resp.data.cover_image?.path) {
+                form.cover_image_path = resp.data.cover_image.path;
+            }
             currentStep.value = 2;
         } else {
             alert(resp.data.error || 'Erro ao gerar artigo.');

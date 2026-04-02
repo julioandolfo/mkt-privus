@@ -106,37 +106,60 @@ class BlogArticleService
             // Escolher o mais próximo do aspect ratio desejado
             $dalleSize = ($width >= $height) ? '1792x1024' : '1024x1792';
 
+            // Incluir logo e referências visuais da marca
+            $brandRefImages = $this->extractBrandLogoAndReferences($brand);
+            if (!empty($brandRefImages)) {
+                $hasLogo = collect($brandRefImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
+                if ($hasLogo) {
+                    $prompt .= " BRAND LOGO: The FIRST reference image is the brand's ACTUAL logo. Place it in a corner or naturally integrated — do NOT recreate or write the brand name as text. Use the EXACT logo as provided.";
+                }
+            }
+
             $result = $this->aiGateway->generateImage(
                 prompt: $prompt,
                 brand: $brand,
                 size: $dalleSize,
                 quality: 'standard',
+                referenceImages: $brandRefImages ?: null,
             );
 
-            if (!empty($result['url'])) {
+            // Buscar imagem gerada: priorizar stored_path (já salvo no storage), fallback para URL
+            $imageContent = null;
+
+            if (!empty($result['stored_path'])) {
+                $imageContent = Storage::disk('public')->get($result['stored_path']);
+            }
+
+            if (!$imageContent && !empty($result['url'])) {
                 $imageContent = @file_get_contents($result['url']);
-                if ($imageContent) {
-                    // Redimensionar para as dimensões exatas desejadas
-                    $resized = $this->resizeImage($imageContent, $width, $height);
+            }
 
-                    $filename = 'blog-covers/' . uniqid('cover_') . '.png';
-                    Storage::disk('public')->put($filename, $resized ?? $imageContent);
+            if ($imageContent) {
+                // Redimensionar para as dimensões exatas desejadas
+                $resized = $this->resizeImage($imageContent, $width, $height);
 
-                    SystemLog::info('blog', 'cover.generated', "Capa gerada para artigo: {$title} ({$width}x{$height})", [
-                        'brand_id' => $brand->id,
-                        'path' => $filename,
-                        'dimensions' => "{$width}x{$height}",
-                        'resized' => $resized !== null,
-                    ]);
+                $filename = 'blog-covers/' . uniqid('cover_') . '.png';
+                Storage::disk('public')->put($filename, $resized ?? $imageContent);
 
-                    return [
-                        'path' => $filename,
-                        'url' => Storage::disk('public')->url($filename),
-                        'prompt' => $prompt,
-                        'width' => $width,
-                        'height' => $height,
-                    ];
+                // Limpar imagem temporária original se foi salva em ai-generated/
+                if (!empty($result['stored_path']) && $result['stored_path'] !== $filename) {
+                    Storage::disk('public')->delete($result['stored_path']);
                 }
+
+                SystemLog::info('blog', 'cover.generated', "Capa gerada para artigo: {$title} ({$width}x{$height})", [
+                    'brand_id' => $brand->id,
+                    'path' => $filename,
+                    'dimensions' => "{$width}x{$height}",
+                    'resized' => $resized !== null,
+                ]);
+
+                return [
+                    'path' => $filename,
+                    'url' => Storage::disk('public')->url($filename),
+                    'prompt' => $prompt,
+                    'width' => $width,
+                    'height' => $height,
+                ];
             }
 
             return null;
@@ -314,6 +337,41 @@ class BlogArticleService
     }
 
     // ===== PRIVATE =====
+
+    /**
+     * Extrai logo e referências visuais da marca como base64 para enviar à API de imagem.
+     */
+    private function extractBrandLogoAndReferences(Brand $brand): array
+    {
+        $images = [];
+
+        // Logo da marca
+        $logo = $brand->primaryLogo();
+        if ($logo && $logo->file_path) {
+            $logoPath = Storage::disk('public')->path($logo->file_path);
+            if (file_exists($logoPath) && filesize($logoPath) <= 5 * 1024 * 1024) {
+                $images[] = [
+                    'base64' => base64_encode(file_get_contents($logoPath)),
+                    'mime' => $logo->mime_type ?? 'image/png',
+                    'role' => 'logo',
+                ];
+            }
+        }
+
+        // Referências visuais (max 2 se já tem logo)
+        $references = $brand->references()->limit($images ? 2 : 3)->get();
+        foreach ($references as $ref) {
+            $path = Storage::disk('public')->path($ref->file_path);
+            if (!file_exists($path)) continue;
+            if (filesize($path) > 5 * 1024 * 1024) continue;
+            $images[] = [
+                'base64' => base64_encode(file_get_contents($path)),
+                'mime' => $ref->mime_type ?? 'image/jpeg',
+            ];
+        }
+
+        return $images;
+    }
 
     private function buildArticleSystemPrompt(string $brandContext, ?string $tone): string
     {
