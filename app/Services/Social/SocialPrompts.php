@@ -65,6 +65,7 @@ Sua tarefa e criar legendas envolventes e eficazes para {$platform->label()}.
 - Adapte o tom conforme solicitado
 - NAO inclua hashtags na legenda (elas serao geradas separadamente)
 - Escreva em portugues do Brasil
+- FORMATACAO: Escreva texto PURO, pronto para colar diretamente na rede social. NAO use NENHUM caractere de formatacao como: **, *, _, __, #, ##, [], (), {}, /, \, >, `, ```. Nada de markdown, negrito, italico, titulos ou links formatados. Apenas texto simples, emojis e quebras de linha
 PROMPT;
 
         if ($brandContext) {
@@ -248,6 +249,7 @@ Sua tarefa é criar um post completo e pronto para publicação.
 - Escreva em português do Brasil
 - Seja criativo e evite clichês
 - O conteúdo deve parecer autêntico, não genérico
+- FORMATAÇÃO: Escreva texto PURO, pronto para colar diretamente na rede social. NÃO use NENHUM caractere de formatação como: **, *, _, __, #, ##, [], (), {}, /, \, >, `, ```. Nada de markdown, negrito, itálico, títulos ou links formatados. Apenas texto simples, emojis e quebras de linha
 PROMPT;
     }
 
@@ -293,6 +295,7 @@ Responda APENAS com um array JSON, sem markdown, sem explicações:
 - Tipos de post: feed, carousel, story, reel, video, pin
 - Se a marca possui mascote, inclua pelo menos 1 sugestão que use o mascote como personagem (storytelling, humor, interação)
 - Se a marca possui fotos de produtos, inclua pelo menos 1 sugestão focada em produto (destaque, review, promoção, comparativo, unboxing)
+- FORMATAÇÃO DAS LEGENDAS: Escreva texto PURO dentro do campo "caption", pronto para colar diretamente na rede social. NÃO use NENHUM caractere de formatação como: **, *, _, __, #, ##, [], (), {}, /, \, >, `, ```. Nada de markdown, negrito, itálico ou links formatados. Apenas texto simples, emojis e quebras de linha (\n)
 - Responda APENAS com o JSON
 PROMPT;
     }

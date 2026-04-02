@@ -79,7 +79,7 @@ class ContentGeneratorService
         $hashtags = $this->parseHashtags($hashtagResponse['content']);
 
         return [
-            'caption' => trim($captionResponse['content']),
+            'caption' => self::sanitizeCaption($captionResponse['content']),
             'hashtags' => $hashtags,
             'model' => $model->value,
             'tokens' => [
@@ -206,6 +206,45 @@ class ContentGeneratorService
     }
 
     // ===== PRIVATE =====
+
+    /**
+     * Remove caracteres de formatação markdown/especiais da legenda gerada pela IA.
+     * Mantém apenas texto puro, emojis e quebras de linha.
+     */
+    public static function sanitizeCaption(string $caption): string
+    {
+        $text = trim($caption);
+
+        // Remover blocos de código
+        $text = preg_replace('/```[\s\S]*?```/', '', $text);
+        $text = preg_replace('/`([^`]+)`/', '$1', $text);
+
+        // Remover negrito/itálico markdown: **text**, *text*, __text__, _text_
+        $text = preg_replace('/\*\*(.+?)\*\*/', '$1', $text);
+        $text = preg_replace('/(?<!\w)\*(.+?)\*(?!\w)/', '$1', $text);
+        $text = preg_replace('/__(.+?)__/', '$1', $text);
+        $text = preg_replace('/(?<!\w)_(.+?)_(?!\w)/', '$1', $text);
+
+        // Remover headers markdown: ## Título, # Título
+        $text = preg_replace('/^#{1,6}\s+/m', '', $text);
+
+        // Remover links markdown: [texto](url) → texto
+        $text = preg_replace('/\[([^\]]+)\]\([^)]+\)/', '$1', $text);
+
+        // Remover blockquotes: > texto → texto
+        $text = preg_replace('/^>\s*/m', '', $text);
+
+        // Remover listas markdown: - item ou * item → item
+        $text = preg_replace('/^[\-\*]\s+/m', '', $text);
+
+        // Remover chaves/colchetes soltos
+        $text = str_replace(['{', '}', '[', ']'], '', $text);
+
+        // Limpar linhas em branco múltiplas
+        $text = preg_replace('/\n{3,}/', "\n\n", $text);
+
+        return trim($text);
+    }
 
     /**
      * Extrai hashtags de um texto

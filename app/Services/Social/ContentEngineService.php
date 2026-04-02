@@ -94,7 +94,7 @@ class ContentEngineService
                 'brand_id' => $brand->id,
                 'content_rule_id' => $rule->id,
                 'title' => $rule->name . ' — ' . now()->format('d/m'),
-                'caption' => trim($captionResponse['content']),
+                'caption' => ContentGeneratorService::sanitizeCaption($captionResponse['content']),
                 'hashtags' => $hashtags,
                 'platforms' => $rule->platforms,
                 'post_type' => $rule->post_type,
@@ -154,7 +154,7 @@ class ContentEngineService
 
             foreach ($parsed as $item) {
                 $title = $item['title'] ?? 'Sugestão da IA';
-                $caption = $item['caption'] ?? '';
+                $caption = ContentGeneratorService::sanitizeCaption($item['caption'] ?? '');
                 $platforms = $item['platforms'] ?? ['instagram'];
                 $postType = $item['post_type'] ?? 'feed';
 
