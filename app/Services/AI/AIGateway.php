@@ -406,6 +406,7 @@ class AIGateway
         $prompt .= "The scene must be something that could actually be photographed in a real studio, store, home, or outdoor location. ";
         $prompt .= "NOT an illustration, NOT a cartoon, NOT digital art, NOT a render, NOT concept art. ";
         $prompt .= "Topic: {$topic}. ";
+        $prompt .= "BRAND NAME RULE: Do NOT write the brand name '{$brand->name}' as text in the image. If the brand logo is provided as a reference image, use that exact logo instead. If no logo is provided, simply omit the brand name entirely — do NOT invent or generate text logos. ";
 
         if ($imageStyle) {
             $prompt .= "Visual style: {$imageStyle}. ";

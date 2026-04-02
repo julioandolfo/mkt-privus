@@ -942,13 +942,24 @@ class PostController extends Controller
             $imageData = null;
             if ($shouldGenerateImage) {
                 try {
-                    $refImages = $this->extractReferenceImages($request);
+                    $userRefImages = $this->extractReferenceImages($request);
                     $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
+
+                    // Incluir logo e referências visuais da marca (sempre, independente do upload do usuário)
+                    $brandRefImages = $this->extractBrandLogoAndReferences($brand);
+                    $hasLogo = collect($brandRefImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
+
+                    // Mesclar: logo da marca primeiro, depois imagens do usuário (max 3 total para a API)
+                    $allRefImages = array_merge($brandRefImages, $userRefImages);
+                    $allRefImages = array_slice($allRefImages, 0, 4); // logo + até 3 do usuário
 
                     Log::info("generateCompletePost image generation", [
                         'has_reference_files' => $request->hasFile('reference_images'),
                         'reference_files_count' => count($request->file('reference_images') ?? []),
-                        'extracted_ref_images' => count($refImages),
+                        'user_ref_images' => count($userRefImages),
+                        'brand_ref_images' => count($brandRefImages),
+                        'has_logo' => $hasLogo,
+                        'total_ref_images' => count($allRefImages),
                         'reference_context_length' => mb_strlen($referenceContext ?? ''),
                         'generate_image' => $shouldGenerateImage,
                     ]);
@@ -962,15 +973,20 @@ class PostController extends Controller
                         $validated['image_style'] ?? null,
                     );
 
+                    // Instrução de logo da marca
+                    if ($hasLogo) {
+                        $imagePrompt .= "\n\nBRAND LOGO: One of the reference images is the brand's ACTUAL logo. You MUST use this EXACT logo in the generated image — place it in a corner or naturally integrated. Do NOT recreate, redraw, or write the brand name as text. Use the real logo EXACTLY as provided — same colors, shapes, proportions.";
+                    }
+
                     if ($referenceContext) {
                         $imagePrompt .= "\n\nREFERENCE IMAGE DESCRIPTION: " . $referenceContext;
                     }
 
-                    $refCount = count($refImages);
-                    if ($refCount === 1) {
-                        $imagePrompt .= "\n\nEDIT MODE: You are editing the provided image. Keep ALL product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect. Only add or change what is explicitly requested. Do NOT regenerate, reimagine, or artistically reinterpret the product.";
-                    } elseif ($refCount > 1) {
-                        $imagePrompt .= "\n\nIMPORTANT: Multiple reference images were provided, each showing a DIFFERENT product. "
+                    $userRefCount = count($userRefImages);
+                    if ($userRefCount === 1) {
+                        $imagePrompt .= "\n\nEDIT MODE: You are editing the provided product image. Keep ALL product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect. Only add or change what is explicitly requested. Do NOT regenerate, reimagine, or artistically reinterpret the product.";
+                    } elseif ($userRefCount > 1) {
+                        $imagePrompt .= "\n\nIMPORTANT: Multiple product reference images were provided, each showing a DIFFERENT product. "
                             . "Generate an image for the FIRST product only (image 1). Each product should get its own separate post image. "
                             . "Focus EXCLUSIVELY on the product from image 1 — do NOT combine all products into a single image. "
                             . "Keep the product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect.";
@@ -982,7 +998,7 @@ class PostController extends Controller
                         user: $request->user(),
                         size: $validated['image_size'] ?? '1024x1024',
                         quality: 'auto',
-                        referenceImages: $refImages ?: null,
+                        referenceImages: !empty($allRefImages) ? $allRefImages : null,
                     );
                 } catch (\Throwable $e) {
                     Log::warning("Image generation failed: {$e->getMessage()}");
@@ -1214,6 +1230,38 @@ class PostController extends Controller
      * Extrai imagens de referência do request como base64 para envio direto à API de imagem
      * @return array<array{base64: string, mime: string}>
      */
+    /**
+     * Extrai logo e referências visuais da marca como base64 para envio à API de imagem.
+     */
+    private function extractBrandLogoAndReferences(\App\Models\Brand $brand): array
+    {
+        $images = [];
+
+        $logo = $brand->primaryLogo();
+        if ($logo && $logo->file_path) {
+            $logoPath = Storage::disk('public')->path($logo->file_path);
+            if (file_exists($logoPath) && filesize($logoPath) <= 5 * 1024 * 1024) {
+                $images[] = [
+                    'base64' => base64_encode(file_get_contents($logoPath)),
+                    'mime' => $logo->mime_type ?? 'image/png',
+                    'role' => 'logo',
+                ];
+            }
+        }
+
+        $references = $brand->references()->limit($images ? 2 : 3)->get();
+        foreach ($references as $ref) {
+            $path = Storage::disk('public')->path($ref->file_path);
+            if (!file_exists($path) || filesize($path) > 5 * 1024 * 1024) continue;
+            $images[] = [
+                'base64' => base64_encode(file_get_contents($path)),
+                'mime' => $ref->mime_type ?? 'image/jpeg',
+            ];
+        }
+
+        return $images;
+    }
+
     private function extractReferenceImages(Request $request): array
     {
         $files = $request->file('reference_images');
@@ -1328,8 +1376,14 @@ class PostController extends Controller
             ]);
             $aiGateway = app(AIGateway::class);
 
-            $refImages = $this->extractReferenceImages($request);
+            $userRefImages = $this->extractReferenceImages($request);
             $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
+
+            // Incluir logo e referências visuais da marca
+            $brandRefImages = $this->extractBrandLogoAndReferences($brand);
+            $hasLogo = collect($brandRefImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
+            $allRefImages = array_merge($brandRefImages, $userRefImages);
+            $allRefImages = array_slice($allRefImages, 0, 4);
 
             $topic = $validated['prompt_context'] ?? $post->title ?? mb_substr($post->caption ?? '', 0, 200);
             $platform = SocialPlatform::tryFrom($post->platforms[0] ?? 'instagram') ?? SocialPlatform::Instagram;
@@ -1344,6 +1398,10 @@ class PostController extends Controller
                 $validated['image_style'] ?? null,
             );
 
+            if ($hasLogo) {
+                $imagePrompt .= "\n\nBRAND LOGO: One of the reference images is the brand's ACTUAL logo. You MUST use this EXACT logo in the generated image — place it in a corner or naturally integrated. Do NOT recreate, redraw, or write the brand name as text. Use the real logo EXACTLY as provided.";
+            }
+
             if ($validated['prompt_context'] ?? null) {
                 $imagePrompt .= "\n\nADDITIONAL CONTEXT: " . $validated['prompt_context'];
             }
@@ -1352,7 +1410,7 @@ class PostController extends Controller
                 $imagePrompt .= "\n\nREFERENCE IMAGE DESCRIPTION: " . $referenceContext;
             }
 
-            if (!empty($refImages)) {
+            if (!empty($userRefImages)) {
                 $imagePrompt .= "\n\nEDIT MODE: You are editing the provided image(s). Keep ALL product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect. Only add or change what is explicitly requested. Do NOT regenerate, reimagine, or artistically reinterpret the products.";
             }
 
@@ -1362,7 +1420,7 @@ class PostController extends Controller
                 user: $request->user(),
                 size: $validated['image_size'] ?? '1024x1024',
                 quality: 'auto',
-                referenceImages: $refImages ?: null,
+                referenceImages: !empty($allRefImages) ? $allRefImages : null,
             );
 
             $storagePath = null;
