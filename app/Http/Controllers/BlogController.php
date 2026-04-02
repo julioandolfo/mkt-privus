@@ -971,8 +971,10 @@ class BlogController extends Controller
             'cover_height'     => 'nullable|integer|min:100|max:4000',
         ]);
 
-        $brandId = session('current_brand_id');
-        $brand   = Brand::findOrFail($brandId);
+        $brand = $request->user()?->getActiveBrand();
+        if (!$brand) {
+            return response()->json(['success' => false, 'error' => 'Nenhuma marca ativa selecionada.']);
+        }
 
         $brand->updateContentEngineConfig([
             'blog_autopilot_enabled'  => $validated['enabled']          ?? false,
