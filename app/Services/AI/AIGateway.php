@@ -157,7 +157,7 @@ class AIGateway
             if ($brand->segment) $brandHints .= " ({$brand->segment})";
             if ($brand->primary_color) $brandHints .= ". Brand colors: {$brand->primary_color}";
             if ($brand->secondary_color) $brandHints .= ", {$brand->secondary_color}";
-            $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art, NOT fantasy, NOT surreal. The scene must be physically possible and photographable in the real world. Use bold, impactful typography (Montserrat Black, Bebas Neue, Poppins Bold style) if text is needed — NEVER use thin or generic fonts like Arial.";
+            $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art, NOT fantasy, NOT surreal. The scene must be physically possible and photographable in the real world. Use bold, impactful, visually striking typography if text is needed — NEVER use thin or generic fonts like Arial/Helvetica.";
             if (!empty($referenceImages)) {
                 $brandHints .= " CRITICAL EDITING RULES: You are EDITING the provided image(s), NOT generating new ones. You MUST preserve ALL existing elements EXACTLY as they are — every logo, text, label, barcode, shape, color, texture, shadow, and reflection MUST remain pixel-perfect and unchanged. Only modify what the user explicitly asks to change. Everything else MUST stay identical to the original image. Treat this as a photo retouching job, not a creative generation task.";
             }
@@ -448,11 +448,22 @@ class AIGateway
             $prompt .= "Post caption context (in Portuguese): \"{$captionEssence}\". ";
         }
 
-        // Regras de texto na imagem
-        $prompt .= "If the topic naturally calls for text (promotions, announcements, tips), include SHORT text IN PORTUGUESE (Brazilian Portuguese) using BOLD, eye-catching typography — ";
-        $prompt .= "use modern impactful fonts like Montserrat Black, Bebas Neue, Poppins Bold, or Impact-style typefaces. ";
-        $prompt .= "The text must be LARGE, high-contrast, and visually striking — NOT small, thin, or generic like Arial/Helvetica. ";
-        $prompt .= "Use techniques like: bold weight, text shadows, color contrast against background, slight text glow, or colored text blocks. ";
+        // Regras de texto na imagem — com variação de estilo tipográfico
+        $typographyStyles = [
+            'BOLD MODERN: Use Montserrat Black or Poppins ExtraBold — clean, geometric, uppercase, high-contrast white or colored text with subtle shadow. Place as overlay block at top or bottom.',
+            'HAND LETTERING: Use a hand-drawn brush lettering style — organic strokes, slightly imperfect, warm and personal feel. Like a calligraphy artist wrote directly on the photo. Thick brush strokes.',
+            'NEON GLOW: Use a neon sign / glowing text effect — bright vivid colors (pink, cyan, yellow) against a darker area of the image. Realistic neon tube lettering with soft glow and light reflections.',
+            'RETRO VINTAGE: Use a retro/vintage typeface with serifs — distressed texture, warm tones, slight grain. Think 70s poster or classic diner signage. Bold and nostalgic.',
+            'MINIMALIST SANS: Use a clean condensed sans-serif like Bebas Neue or Oswald — all caps, generous letter-spacing, thin lines as dividers. Elegant and understated but still bold enough to read.',
+            'STREET/URBAN: Use a graffiti-inspired or street art style lettering — edgy, dynamic angles, spray paint texture, bold colors. Urban and youthful energy.',
+            'ELEGANT SCRIPT: Use an elegant flowing script font — sophisticated cursive with contrast between thick and thin strokes. Luxurious and premium feel, like a fashion brand.',
+            'STICKER/BADGE: Place text inside a graphic badge, ribbon, or sticker shape — rounded corners, solid color fill, bold condensed text inside. Eye-catching label effect.',
+        ];
+        $selectedStyle = $typographyStyles[array_rand($typographyStyles)];
+
+        $prompt .= "If the topic naturally calls for text (promotions, announcements, tips), include SHORT text IN PORTUGUESE (Brazilian Portuguese). ";
+        $prompt .= "TYPOGRAPHY STYLE FOR THIS POST: {$selectedStyle} ";
+        $prompt .= "The text must be LARGE, high-contrast, and visually striking — NEVER small, thin, or generic like Arial/Helvetica/default system fonts. ";
         $prompt .= "If no text is needed, keep the image purely photographic. ";
         $prompt .= "The final result must look like a real Instagram post from a professional Brazilian brand — NOT like AI-generated art, NOT like a tech illustration. ";
         $prompt .= "Think: product photos, lifestyle shots, studio photography, real textures, natural lighting. NEVER fantasy, surreal, or dreamlike.";
@@ -486,8 +497,12 @@ class AIGateway
             }
 
             $brandRefImages = $this->extractBrandReferenceImages($brand);
+            $hasLogo = collect($brandRefImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
             if (!empty($brandRefImages)) {
-                $prompt .= "\n\nCRITICAL: Reference images from the brand's actual feed are provided. You MUST match the exact same visual style, color scheme, product presentation, and aesthetic. The generated image should look like it belongs in the same Instagram feed as these references. Use the same types of products, colors, layouts, and branding elements visible in the references.";
+                $prompt .= "\n\nCRITICAL: Reference images from the brand are provided. You MUST match the exact same visual style, color scheme, product presentation, and aesthetic. The generated image should look like it belongs in the same Instagram feed as these references.";
+                if ($hasLogo) {
+                    $prompt .= "\n\nBRAND LOGO: The FIRST reference image is the brand's ACTUAL logo. You MUST use this EXACT logo image in the generated post — do NOT recreate, redraw, or write the brand name as text. Place the real logo from the reference image into the composition (corner, top, or naturally integrated). The logo must appear EXACTLY as provided — same colors, shapes, proportions, and details.";
+                }
             }
 
             $result = $this->generateImage(
@@ -740,7 +755,20 @@ class AIGateway
     {
         $images = [];
 
-        $references = $brand->references()->limit(3)->get();
+        // Sempre incluir o logo da marca como primeira referência (para a IA usar o logo real)
+        $logo = $brand->primaryLogo();
+        if ($logo && $logo->file_path) {
+            $logoPath = \Illuminate\Support\Facades\Storage::disk('public')->path($logo->file_path);
+            if (file_exists($logoPath) && filesize($logoPath) <= 5 * 1024 * 1024) {
+                $images[] = [
+                    'base64' => base64_encode(file_get_contents($logoPath)),
+                    'mime' => $logo->mime_type ?? 'image/png',
+                    'role' => 'logo',
+                ];
+            }
+        }
+
+        $references = $brand->references()->limit($images ? 2 : 3)->get();
         foreach ($references as $ref) {
             $path = \Illuminate\Support\Facades\Storage::disk('public')->path($ref->file_path);
             if (!file_exists($path)) continue;
