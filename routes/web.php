@@ -564,4 +564,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
 Route::get('/l/{slug}', [LinkPagePublicController::class, 'show'])->name('links.public');
 Route::post('/l/{slug}/click', [LinkPagePublicController::class, 'click'])->name('links.public.click');
 
+// Páginas Legais (Termos e Privacidade)
+Route::get('/terms', function () {
+    return Inertia::render('Terms');
+})->name('terms');
+
+Route::get('/privacy', function () {
+    return Inertia::render('Privacy');
+})->name('privacy');
+
 require __DIR__.'/auth.php';
