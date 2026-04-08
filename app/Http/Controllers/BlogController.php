@@ -322,14 +322,23 @@ class BlogController extends Controller
 
         // Gerar imagem de capa automaticamente junto com o artigo
         if ($result['success'] ?? false) {
-            $coverResult = $this->articleService->generateCoverImage(
-                brand: $brand,
-                title: $result['title'] ?? $request->input('topic'),
-                excerpt: $result['excerpt'] ?? '',
-            );
+            try {
+                $coverResult = $this->articleService->generateCoverImage(
+                    brand: $brand,
+                    title: $result['title'] ?? $request->input('topic'),
+                    excerpt: $result['excerpt'] ?? '',
+                    content: $result['content'] ?? '',
+                    keywords: $result['meta_keywords'] ?? $request->input('keywords'),
+                );
 
-            if ($coverResult) {
-                $result['cover_image'] = $coverResult;
+                if ($coverResult) {
+                    $result['cover_image'] = $coverResult;
+                } else {
+                    $result['cover_image_error'] = 'Falha ao gerar imagem de capa automaticamente. Tente clicar em "Gerar Imagem".';
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error("blog.generate auto cover failed: {$e->getMessage()}");
+                $result['cover_image_error'] = 'Erro ao gerar capa: ' . $e->getMessage();
             }
         }
 
@@ -344,6 +353,8 @@ class BlogController extends Controller
         $request->validate([
             'title' => 'required|string|max:255',
             'excerpt' => 'nullable|string|max:500',
+            'content' => 'nullable|string',
+            'keywords' => 'nullable|string|max:500',
             'cover_width' => 'nullable|integer|min:100|max:4000',
             'cover_height' => 'nullable|integer|min:100|max:4000',
         ]);
@@ -359,6 +370,8 @@ class BlogController extends Controller
             excerpt: $request->input('excerpt', ''),
             width: $request->input('cover_width', 1750),
             height: $request->input('cover_height', 650),
+            content: $request->input('content'),
+            keywords: $request->input('keywords'),
         );
 
         if ($result) {

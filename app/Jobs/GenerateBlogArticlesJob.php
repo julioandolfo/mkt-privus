@@ -106,6 +106,8 @@ class GenerateBlogArticlesJob implements ShouldQueue
                         brand: $brand,
                         title: $result['title'],
                         excerpt: $result['excerpt'] ?? '',
+                        content: $result['content'] ?? '',
+                        keywords: $result['meta_keywords'] ?? ($topic['keywords'] ?? null),
                     );
 
                     if ($coverResult) {

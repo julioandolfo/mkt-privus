@@ -120,6 +120,8 @@ async function generateCoverImage() {
         const resp = await axios.post(route('blog.generate-cover'), {
             title: form.title,
             excerpt: form.excerpt,
+            content: form.content || '',
+            keywords: form.meta_keywords || '',
             cover_width: form.cover_width || 1750,
             cover_height: form.cover_height || 650,
         });

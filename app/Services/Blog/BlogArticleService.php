@@ -98,9 +98,11 @@ class BlogArticleService
         string $excerpt = '',
         int $width = 1750,
         int $height = 650,
+        ?string $content = null,
+        ?string $keywords = null,
     ): ?array {
         try {
-            $prompt = $this->buildCoverImagePrompt($brand, $title, $excerpt);
+            $prompt = $this->buildCoverImagePrompt($brand, $title, $excerpt, $content, $keywords);
 
             // DALL-E 3 só suporta 1024x1024, 1792x1024, 1024x1792
             // Escolher o mais próximo do aspect ratio desejado
@@ -426,13 +428,14 @@ PROMPT;
         return $message;
     }
 
-    private function buildCoverImagePrompt(Brand $brand, string $title, string $excerpt): string
+    private function buildCoverImagePrompt(Brand $brand, string $title, string $excerpt, ?string $content = null, ?string $keywords = null): string
     {
         $segment = $brand->segment ?? 'negócio';
 
         $prompt = "Create a REALISTIC, photographic-style blog cover image for a Brazilian brand article. ";
+        $prompt .= "The image MUST be visually relevant to the SPECIFIC article topic — not generic. ";
         $prompt .= "Article title (in Portuguese): \"{$title}\". ";
-        $prompt .= "The image must look like a real professional photograph — NOT an illustration, NOT a cartoon, NOT digital art. ";
+        $prompt .= "The image must look like a real professional photograph — NOT an illustration, NOT a cartoon, NOT digital art, NOT random imagery. ";
         $prompt .= "Brand: {$brand->name} ({$segment}). ";
 
         if ($brand->primary_color) {
@@ -452,8 +455,24 @@ PROMPT;
         $prompt .= "Think: magazine cover photo, editorial spread, lifestyle product shot. ";
         $prompt .= "Do NOT include any text or words in the image — text will be added separately as overlay. ";
 
+        // CRÍTICO: contexto do artigo para imagem relevante
         if ($excerpt) {
-            $prompt .= "Article context: " . mb_substr($excerpt, 0, 200);
+            $prompt .= "\n\nARTICLE EXCERPT (in Portuguese — use this to make the image relevant): \"" . mb_substr($excerpt, 0, 300) . "\". ";
+        }
+
+        if ($keywords) {
+            $prompt .= "Article keywords: {$keywords}. The image should visually represent these concepts. ";
+        }
+
+        if ($content) {
+            // Extrair primeiros parágrafos do conteúdo (sem HTML) para dar contexto rico à IA
+            $plainContent = strip_tags($content);
+            $plainContent = preg_replace('/\s+/', ' ', $plainContent);
+            $contentSnippet = mb_substr(trim($plainContent), 0, 600);
+            if ($contentSnippet) {
+                $prompt .= "\n\nARTICLE CONTENT (first paragraphs, in Portuguese — the image MUST visually represent the actual subject discussed here): \"{$contentSnippet}\". ";
+                $prompt .= "Analyze this content carefully and create an image that illustrates the SPECIFIC topic, scenario, objects, people, or environment mentioned. Do NOT generate a generic or random image — it must clearly relate to the article's actual subject matter.";
+            }
         }
 
         return $prompt;

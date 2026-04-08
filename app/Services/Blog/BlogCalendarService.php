@@ -253,6 +253,8 @@ class BlogCalendarService
                 excerpt: $result['excerpt'] ?? '',
                 width: $meta['cover_width'] ?? 1750,
                 height: $meta['cover_height'] ?? 650,
+                content: $result['content'] ?? '',
+                keywords: $result['meta_keywords'] ?? $item->keywords,
             );
 
             if ($coverResult) {
