@@ -432,14 +432,18 @@ PROMPT;
     {
         $segment = $brand->segment ?? 'negócio';
 
-        $prompt = "Create a REALISTIC, photographic-style blog cover image for a Brazilian brand article. ";
+        // Sanitizar nome da marca de todos os textos para evitar hallucination de logo pelo modelo
+        $cleanTitle = \App\Services\AI\AIGateway::stripBrandName($title, $brand->name);
+        $cleanExcerpt = \App\Services\AI\AIGateway::stripBrandName($excerpt, $brand->name);
+        $cleanContent = $content ? \App\Services\AI\AIGateway::stripBrandName($content, $brand->name) : null;
+
+        $prompt = "Create a REALISTIC, photographic-style blog cover image for a Brazilian {$segment} article. ";
         $prompt .= "The image MUST be visually relevant to the SPECIFIC article topic — not generic. ";
-        $prompt .= "Article title (in Portuguese): \"{$title}\". ";
+        $prompt .= "Article title (in Portuguese): \"{$cleanTitle}\". ";
         $prompt .= "The image must look like a real professional photograph — NOT an illustration, NOT a cartoon, NOT digital art, NOT random imagery. ";
-        $prompt .= "Brand: {$brand->name} ({$segment}). ";
 
         if ($brand->primary_color) {
-            $prompt .= "Brand colors: {$brand->primary_color}";
+            $prompt .= "Color palette: {$brand->primary_color}";
             if ($brand->secondary_color) $prompt .= " and {$brand->secondary_color}";
             $prompt .= " — use subtly in lighting, background tones, or props. ";
         }
@@ -448,7 +452,7 @@ PROMPT;
         $products = $brand->products()->limit(3)->get();
         if ($products->isNotEmpty()) {
             $productNames = $products->pluck('label')->implode(', ');
-            $prompt .= "The brand sells: {$productNames}. Include relevant products or similar items in the composition when the topic relates to them. ";
+            $prompt .= "The business sells: {$productNames}. Include relevant generic products or similar items in the composition when the topic relates to them — without ANY brand identification. ";
         }
 
         $prompt .= "Style: clean editorial photography, natural lighting, real textures, warm tones, professional studio quality. ";
@@ -456,17 +460,17 @@ PROMPT;
         $prompt .= "Do NOT include any text or words in the image — text will be added separately as overlay. ";
 
         // CRÍTICO: contexto do artigo para imagem relevante
-        if ($excerpt) {
-            $prompt .= "\n\nARTICLE EXCERPT (in Portuguese — use this to make the image relevant): \"" . mb_substr($excerpt, 0, 300) . "\". ";
+        if ($cleanExcerpt) {
+            $prompt .= "\n\nARTICLE EXCERPT (in Portuguese — use this to make the image relevant): \"" . mb_substr($cleanExcerpt, 0, 300) . "\". ";
         }
 
         if ($keywords) {
             $prompt .= "Article keywords: {$keywords}. The image should visually represent these concepts. ";
         }
 
-        if ($content) {
+        if ($cleanContent) {
             // Extrair primeiros parágrafos do conteúdo (sem HTML) para dar contexto rico à IA
-            $plainContent = strip_tags($content);
+            $plainContent = strip_tags($cleanContent);
             $plainContent = preg_replace('/\s+/', ' ', $plainContent);
             $contentSnippet = mb_substr(trim($plainContent), 0, 600);
             if ($contentSnippet) {

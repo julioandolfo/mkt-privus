@@ -153,11 +153,22 @@ class AIGateway
 
         $enhancedPrompt = $prompt;
         if ($brand) {
-            $brandHints = "Brand: '{$brand->name}'";
-            if ($brand->segment) $brandHints .= " ({$brand->segment})";
-            if ($brand->primary_color) $brandHints .= ". Brand colors: {$brand->primary_color}";
+            $hasLogoReference = !empty($referenceImages) && collect($referenceImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
+
+            // NUNCA mencionar o nome da marca no prompt — modelo de imagem inventa logos baseado no conhecimento da internet
+            $brandHints = "Brazilian small business";
+            if ($brand->segment) $brandHints .= " in the '{$brand->segment}' segment";
+            if ($brand->primary_color) $brandHints .= ". Color palette: {$brand->primary_color}";
             if ($brand->secondary_color) $brandHints .= ", {$brand->secondary_color}";
-            $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art, NOT fantasy, NOT surreal. The scene must be physically possible and photographable in the real world. Use bold, impactful, visually striking typography if text is needed — NEVER use thin or generic fonts like Arial/Helvetica.";
+            $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art, NOT fantasy, NOT surreal. The scene must be physically possible and photographable in the real world.";
+
+            // CRÍTICO: regra anti-hallucination de logos
+            if ($hasLogoReference) {
+                $brandHints .= " BRAND LOGO RULE: A real brand logo is provided as a reference image. Use ONLY that exact logo — do NOT invent, modify, or replace it with any other logo. Place it naturally in the composition.";
+            } else {
+                $brandHints .= " BRAND NEUTRALITY RULE: NO brand logo was provided. The image MUST be 100% BRAND-NEUTRAL — do NOT include any logos, brand marks, wordmarks, trademark symbols, company names, product brand labels, or text that resembles a brand identity from any real-world company. Do NOT invent fictional logos either. Show ONLY generic, unbranded products, clean surfaces, and neutral environments. If you would normally place a logo somewhere, leave that area empty or with abstract decoration instead. NEVER reference, hallucinate, or recreate logos from your training data.";
+            }
+
             if (!empty($referenceImages)) {
                 $brandHints .= " CRITICAL EDITING RULES: You are EDITING the provided image(s), NOT generating new ones. You MUST preserve ALL existing elements EXACTLY as they are — every logo, text, label, barcode, shape, color, texture, shadow, and reflection MUST remain pixel-perfect and unchanged. Only modify what the user explicitly asks to change. Everything else MUST stay identical to the original image. Treat this as a photo retouching job, not a creative generation task.";
             }
@@ -383,6 +394,34 @@ class AIGateway
     }
 
     /**
+     * Remove o nome da marca de um texto antes de enviar para o modelo de imagem.
+     * Evita que o modelo invente logos baseados no conhecimento que tem da internet.
+     */
+    public static function stripBrandName(string $text, ?string $brandName): string
+    {
+        if (empty($brandName) || empty($text)) return $text;
+
+        // Remover variações: "Marca", "marca", "MARCA", e palavras compostas
+        $variants = [
+            $brandName,
+            mb_strtolower($brandName),
+            mb_strtoupper($brandName),
+            ucfirst(mb_strtolower($brandName)),
+        ];
+
+        // Adicionar versões sem espaços e separadas por palavra
+        $words = preg_split('/\s+/', $brandName);
+        if (count($words) > 1) {
+            $variants[] = implode('', $words); // "MinhaMarca"
+        }
+
+        $variants = array_unique(array_filter($variants));
+
+        // Substituir cada variante por placeholder neutro
+        return trim(preg_replace('/\s+/', ' ', str_ireplace($variants, 'a marca', $text)));
+    }
+
+    /**
      * Constrói prompt de imagem para conteúdo social a partir de contexto da marca.
      * Helper reutilizável por PostController, ContentCalendarService, ContentEngineService.
      */
@@ -400,13 +439,16 @@ class AIGateway
             default => 'square 1:1',
         };
 
+        // Remover o nome da marca do topic e caption para evitar hallucination de logo pelo modelo
+        $cleanTopic = self::stripBrandName($topic, $brand->name);
+        $cleanCaption = self::stripBrandName($caption, $brand->name);
+
         $prompt = "Create a REALISTIC, photographic-style image for a Brazilian social media post ({$platform}, {$aspectRatio}). ";
         $prompt .= "The image MUST look like a REAL photograph taken with a professional camera — real lighting, real textures, real surfaces, real environments. ";
         $prompt .= "ABSOLUTELY NO: fantasy elements, surreal scenes, impossible physics, floating objects, magical lighting, dreamlike atmospheres, sci-fi environments, abstract backgrounds, or any element that could not exist in a real photograph. ";
         $prompt .= "The scene must be something that could actually be photographed in a real studio, store, home, or outdoor location. ";
         $prompt .= "NOT an illustration, NOT a cartoon, NOT digital art, NOT a render, NOT concept art. ";
-        $prompt .= "Topic: {$topic}. ";
-        $prompt .= "BRAND NAME RULE: Do NOT write the brand name '{$brand->name}' as text in the image. If the brand logo is provided as a reference image, use that exact logo instead. If no logo is provided, simply omit the brand name entirely — do NOT invent or generate text logos. ";
+        $prompt .= "Topic: {$cleanTopic}. ";
 
         if ($imageStyle) {
             $prompt .= "Visual style: {$imageStyle}. ";
@@ -444,7 +486,7 @@ class AIGateway
             $prompt .= "The brand has a mascot: \"{$mascotDesc}\". Include it only when it naturally fits the topic. ";
         }
 
-        $captionEssence = mb_substr(strip_tags($caption), 0, 200);
+        $captionEssence = mb_substr(strip_tags($cleanCaption), 0, 200);
         if ($captionEssence) {
             $prompt .= "Post caption context (in Portuguese): \"{$captionEssence}\". ";
         }
@@ -836,16 +878,17 @@ class AIGateway
         }
 
         try {
+            // IMPORTANTE: NÃO passar $brand para evitar injeção do nome da marca no system prompt.
+            // O modelo de imagem usa essa descrição depois e poderia hallucinate logos baseado no nome.
             $result = $this->chat(
                 model: AIModel::GPT4o,
                 messages: [
-                    ['role' => 'system', 'content' => 'You analyze brand reference images from their social media feed. Describe the visual style, color palette, composition, textures, mood, product types, and aesthetic in detail (max 200 words). Focus on recurring visual patterns, brand colors, typography style, and product presentation. Output in English.'],
+                    ['role' => 'system', 'content' => 'You analyze visual reference images for image generation. Describe ONLY the visual style, color palette, composition, textures, mood, product types, and aesthetic in detail (max 200 words). Focus on recurring visual patterns, colors, typography style, and product presentation. CRITICAL: Do NOT mention any brand names, company names, logos, wordmarks, or trademark identifiers. Describe products and elements generically (e.g. "a beverage bottle" not "a Coca-Cola bottle"). Output in English.'],
                     ['role' => 'user', 'content' => array_merge(
-                        [['type' => 'text', 'text' => "Analyze these brand images from their social media feed. Describe the visual identity, style patterns, and aesthetic so I can generate new images that match this brand perfectly:"]],
+                        [['type' => 'text', 'text' => "Analyze these reference images. Describe the visual identity, style patterns, and aesthetic generically — without naming any brand. Focus on style, colors, composition, lighting:"]],
                         $imageContents,
                     )],
                 ],
-                brand: $brand,
                 feature: 'brand_reference_analysis',
             );
             $desc = $result['content'] ?? null;
