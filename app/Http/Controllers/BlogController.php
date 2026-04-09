@@ -320,7 +320,7 @@ class BlogController extends Controller
             user: Auth::user(),
         );
 
-        // Gerar imagem de capa automaticamente junto com o artigo
+        // Gerar imagem de capa automaticamente junto com o artigo (síncrono no fluxo manual)
         if ($result['success'] ?? false) {
             try {
                 $coverResult = $this->articleService->generateCoverImage(
@@ -335,9 +335,14 @@ class BlogController extends Controller
                     $result['cover_image'] = $coverResult;
                 } else {
                     $result['cover_image_error'] = 'Falha ao gerar imagem de capa automaticamente. Tente clicar em "Gerar Imagem".';
+                    \Illuminate\Support\Facades\Log::warning('blog.generate auto cover returned null', [
+                        'title' => $result['title'] ?? null,
+                    ]);
                 }
             } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::error("blog.generate auto cover failed: {$e->getMessage()}");
+                \Illuminate\Support\Facades\Log::error("blog.generate auto cover failed: {$e->getMessage()}", [
+                    'file' => $e->getFile() . ':' . $e->getLine(),
+                ]);
                 $result['cover_image_error'] = 'Erro ao gerar capa: ' . $e->getMessage();
             }
         }
@@ -1006,7 +1011,7 @@ class BlogController extends Controller
         ]);
 
         SystemLog::info('blog', 'autopilot.config_saved', 'Configurações de autopilot de blog salvas', [
-            'brand_id' => $brandId,
+            'brand_id' => $brand->id,
             'enabled'  => $validated['enabled'] ?? false,
         ]);
 

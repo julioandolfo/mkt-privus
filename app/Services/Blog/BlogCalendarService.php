@@ -245,57 +245,31 @@ class BlogCalendarService
                 ],
             ]);
 
-            // 3. Tentar gerar imagem de capa (dimensões do metadata ou default)
+            // 3. Dispatchar job dedicado para gerar a capa em background (com retries)
             $meta = $item->metadata ?? [];
-            $coverResult = $this->articleService->generateCoverImage(
-                brand: $brand,
-                title: $result['title'],
-                excerpt: $result['excerpt'] ?? '',
-                width: $meta['cover_width'] ?? 1750,
-                height: $meta['cover_height'] ?? 650,
-                content: $result['content'] ?? '',
-                keywords: $result['meta_keywords'] ?? $item->keywords,
-            );
+            \App\Jobs\GenerateBlogCoverJob::dispatch(
+                $article->id,
+                $meta['cover_width'] ?? 1750,
+                $meta['cover_height'] ?? 650,
+            )->onQueue('content-engine');
 
-            if ($coverResult) {
-                $article->update(['cover_image_path' => $coverResult['path']]);
-            }
-
-            // 4. Auto-aprovar se artigo completo e config permite
-            $article->refresh();
-            $autoApproved = false;
-            $cfg = $brand->getContentEngineConfig();
-            $autoApprove = (bool) ($cfg['blog_auto_approve'] ?? false);
-
-            if ($autoApprove && $article->isComplete()) {
-                $article->update(['status' => 'approved']);
-                $autoApproved = true;
-
-                SystemLog::info('blog', 'calendar.auto_approved', "Artigo auto-aprovado (completo): \"{$article->title}\"", [
-                    'article_id' => $article->id,
-                    'seo_score' => $article->seoScore(),
-                ]);
-            }
-
-            // 5. Vincular artigo à pauta
+            // 4. Vincular artigo à pauta
             $item->update([
                 'status' => 'generated',
                 'article_id' => $article->id,
             ]);
 
-            SystemLog::info('blog', 'calendar.article_generated', "Artigo gerado da pauta: \"{$item->title}\"", [
+            SystemLog::info('blog', 'calendar.article_generated', "Artigo gerado da pauta: \"{$item->title}\" (capa em background)", [
                 'calendar_item_id' => $item->id,
                 'article_id' => $article->id,
-                'has_cover' => !empty($coverResult),
-                'auto_approved' => $autoApproved,
+                'cover_dispatched' => true,
             ]);
 
             return [
                 'success' => true,
                 'article_id' => $article->id,
                 'article_title' => $article->title,
-                'has_cover' => !empty($coverResult),
-                'auto_approved' => $autoApproved,
+                'cover_dispatched' => true,
             ];
         } catch (\Throwable $e) {
             $item->update(['status' => 'pending']);

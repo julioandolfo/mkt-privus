@@ -101,37 +101,16 @@ class GenerateBlogArticlesJob implements ShouldQueue
                         ],
                     ]);
 
-                    // Tentar gerar imagem de capa
-                    $coverResult = $articleService->generateCoverImage(
-                        brand: $brand,
-                        title: $result['title'],
-                        excerpt: $result['excerpt'] ?? '',
-                        content: $result['content'] ?? '',
-                        keywords: $result['meta_keywords'] ?? ($topic['keywords'] ?? null),
-                    );
-
-                    if ($coverResult) {
-                        $article->update(['cover_image_path' => $coverResult['path']]);
-                    }
-
-                    // Auto-aprovar se artigo completo e config permite
-                    $article->refresh();
-                    $cfg = $brand->getContentEngineConfig();
-                    $autoApproved = false;
-
-                    if ((bool) ($cfg['blog_auto_approve'] ?? false) && $article->isComplete()) {
-                        $article->update(['status' => 'approved']);
-                        $autoApproved = true;
-                    }
+                    // Dispatchar job dedicado para gerar a capa em background (com retries)
+                    GenerateBlogCoverJob::dispatch($article->id)->onQueue('content-engine');
 
                     $totalGenerated++;
 
-                    SystemLog::info('blog', 'auto_generate.created', "Artigo gerado: \"{$article->title}\" para marca #{$brand->id}", [
+                    SystemLog::info('blog', 'auto_generate.created', "Artigo gerado: \"{$article->title}\" para marca #{$brand->id} (capa em background)", [
                         'article_id' => $article->id,
                         'brand_id' => $brand->id,
                         'connection_id' => $connection->id,
-                        'has_cover' => !empty($coverResult),
-                        'auto_approved' => $autoApproved,
+                        'cover_dispatched' => true,
                     ]);
                 }
             } catch (\Throwable $e) {
