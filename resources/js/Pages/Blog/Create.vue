@@ -79,6 +79,9 @@ async function generateWithAI() {
             if (resp.data.cover_image?.path) {
                 form.cover_image_path = resp.data.cover_image.path;
             }
+            if (resp.data.cover_image_error) {
+                console.warn('[Blog Cover]', resp.data.cover_image_error);
+            }
             currentStep.value = 2;
         } else {
             alert(resp.data.error || 'Erro ao gerar artigo.');

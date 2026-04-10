@@ -102,20 +102,45 @@ class BlogArticleService
         ?string $keywords = null,
     ): ?array {
         try {
+            SystemLog::info('blog', 'cover.step1_start', "[COVER DEBUG] Iniciando geração de capa para: {$title}", [
+                'brand_id' => $brand->id,
+                'width' => $width,
+                'height' => $height,
+                'has_content' => !empty($content),
+                'content_length' => mb_strlen($content ?? ''),
+                'has_keywords' => !empty($keywords),
+            ]);
+
             $prompt = $this->buildCoverImagePrompt($brand, $title, $excerpt, $content, $keywords);
 
+            SystemLog::info('blog', 'cover.step2_prompt', "[COVER DEBUG] Prompt construído (" . mb_strlen($prompt) . " chars)", [
+                'brand_id' => $brand->id,
+                'prompt_preview' => mb_substr($prompt, 0, 300),
+            ]);
+
             // DALL-E 3 só suporta 1024x1024, 1792x1024, 1024x1792
-            // Escolher o mais próximo do aspect ratio desejado
             $dalleSize = ($width >= $height) ? '1792x1024' : '1024x1792';
 
             // Incluir logo e referências visuais da marca
             $brandRefImages = $this->extractBrandLogoAndReferences($brand);
-            if (!empty($brandRefImages)) {
-                $hasLogo = collect($brandRefImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
-                if ($hasLogo) {
-                    $prompt .= " BRAND LOGO: The FIRST reference image is the brand's ACTUAL logo. Place it in a corner or naturally integrated — do NOT recreate or write the brand name as text. Use the EXACT logo as provided.";
-                }
+            $hasLogo = collect($brandRefImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
+
+            SystemLog::info('blog', 'cover.step3_refs', "[COVER DEBUG] Referências extraídas", [
+                'brand_id' => $brand->id,
+                'ref_images_count' => count($brandRefImages),
+                'has_logo' => $hasLogo,
+                'dalle_size' => $dalleSize,
+            ]);
+
+            if ($hasLogo) {
+                $prompt .= " BRAND LOGO: The FIRST reference image is the brand's ACTUAL logo. Place it in a corner or naturally integrated — do NOT recreate or write the brand name as text. Use the EXACT logo as provided.";
             }
+
+            SystemLog::info('blog', 'cover.step4_calling_api', "[COVER DEBUG] Chamando AIGateway.generateImage...", [
+                'brand_id' => $brand->id,
+                'size' => $dalleSize,
+                'has_refs' => !empty($brandRefImages),
+            ]);
 
             $result = $this->aiGateway->generateImage(
                 prompt: $prompt,
@@ -125,15 +150,32 @@ class BlogArticleService
                 referenceImages: $brandRefImages ?: null,
             );
 
+            SystemLog::info('blog', 'cover.step5_api_response', "[COVER DEBUG] AIGateway respondeu", [
+                'brand_id' => $brand->id,
+                'has_stored_path' => !empty($result['stored_path']),
+                'stored_path' => $result['stored_path'] ?? null,
+                'has_url' => !empty($result['url']),
+                'url_preview' => mb_substr($result['url'] ?? '', 0, 100),
+                'model' => $result['model'] ?? null,
+            ]);
+
             // Buscar imagem gerada: priorizar stored_path (já salvo no storage), fallback para URL
             $imageContent = null;
 
             if (!empty($result['stored_path'])) {
                 $imageContent = Storage::disk('public')->get($result['stored_path']);
+                SystemLog::info('blog', 'cover.step6a_stored', "[COVER DEBUG] Imagem lida do storage: " . ($imageContent ? strlen($imageContent) . ' bytes' : 'FALHOU'), [
+                    'brand_id' => $brand->id,
+                    'path' => $result['stored_path'],
+                ]);
             }
 
             if (!$imageContent && !empty($result['url'])) {
                 $imageContent = @file_get_contents($result['url']);
+                SystemLog::info('blog', 'cover.step6b_url', "[COVER DEBUG] Imagem baixada da URL: " . ($imageContent ? strlen($imageContent) . ' bytes' : 'FALHOU'), [
+                    'brand_id' => $brand->id,
+                    'url' => mb_substr($result['url'], 0, 100),
+                ]);
             }
 
             if ($imageContent) {
@@ -148,11 +190,12 @@ class BlogArticleService
                     Storage::disk('public')->delete($result['stored_path']);
                 }
 
-                SystemLog::info('blog', 'cover.generated', "Capa gerada para artigo: {$title} ({$width}x{$height})", [
+                SystemLog::info('blog', 'cover.step7_success', "[COVER DEBUG] Capa salva com sucesso: {$filename} ({$width}x{$height})", [
                     'brand_id' => $brand->id,
                     'path' => $filename,
                     'dimensions' => "{$width}x{$height}",
                     'resized' => $resized !== null,
+                    'final_size' => strlen($resized ?? $imageContent),
                 ]);
 
                 return [
@@ -164,11 +207,20 @@ class BlogArticleService
                 ];
             }
 
+            SystemLog::error('blog', 'cover.step7_no_content', "[COVER DEBUG] Nenhum conteúdo de imagem obtido — retornando null", [
+                'brand_id' => $brand->id,
+                'had_stored_path' => !empty($result['stored_path']),
+                'had_url' => !empty($result['url']),
+            ]);
+
             return null;
         } catch (\Throwable $e) {
-            SystemLog::error('blog', 'cover.generation_error', "Erro ao gerar capa: {$e->getMessage()}", [
+            SystemLog::error('blog', 'cover.generation_error', "[COVER DEBUG] EXCEPTION: {$e->getMessage()}", [
                 'brand_id' => $brand->id,
                 'title' => $title,
+                'exception_class' => get_class($e),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+                'trace_preview' => mb_substr($e->getTraceAsString(), 0, 500),
             ]);
             return null;
         }

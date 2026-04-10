@@ -322,6 +322,15 @@ class BlogController extends Controller
 
         // Gerar imagem de capa automaticamente junto com o artigo (síncrono no fluxo manual)
         if ($result['success'] ?? false) {
+            \App\Models\SystemLog::info('blog', 'controller.cover_start', "[BLOG CTRL] Iniciando geração de capa inline para: " . ($result['title'] ?? 'sem título'), [
+                'brand_id' => $brand->id,
+                'has_title' => !empty($result['title']),
+                'has_excerpt' => !empty($result['excerpt']),
+                'has_content' => !empty($result['content']),
+                'content_length' => mb_strlen($result['content'] ?? ''),
+                'has_keywords' => !empty($result['meta_keywords']),
+            ]);
+
             try {
                 $coverResult = $this->articleService->generateCoverImage(
                     brand: $brand,
@@ -333,15 +342,23 @@ class BlogController extends Controller
 
                 if ($coverResult) {
                     $result['cover_image'] = $coverResult;
+                    \App\Models\SystemLog::info('blog', 'controller.cover_success', "[BLOG CTRL] Capa gerada com sucesso: {$coverResult['path']}", [
+                        'brand_id' => $brand->id,
+                        'path' => $coverResult['path'],
+                    ]);
                 } else {
                     $result['cover_image_error'] = 'Falha ao gerar imagem de capa automaticamente. Tente clicar em "Gerar Imagem".';
-                    \Illuminate\Support\Facades\Log::warning('blog.generate auto cover returned null', [
+                    \App\Models\SystemLog::error('blog', 'controller.cover_null', "[BLOG CTRL] generateCoverImage retornou null", [
+                        'brand_id' => $brand->id,
                         'title' => $result['title'] ?? null,
                     ]);
                 }
             } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::error("blog.generate auto cover failed: {$e->getMessage()}", [
+                \App\Models\SystemLog::error('blog', 'controller.cover_exception', "[BLOG CTRL] EXCEPTION ao gerar capa: {$e->getMessage()}", [
+                    'brand_id' => $brand->id,
+                    'exception_class' => get_class($e),
                     'file' => $e->getFile() . ':' . $e->getLine(),
+                    'trace' => mb_substr($e->getTraceAsString(), 0, 500),
                 ]);
                 $result['cover_image_error'] = 'Erro ao gerar capa: ' . $e->getMessage();
             }
