@@ -153,25 +153,29 @@ class AIGateway
 
         $enhancedPrompt = $prompt;
         if ($brand) {
-            $hasLogoReference = !empty($referenceImages) && collect($referenceImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
+            $hasLogoRef = !empty($referenceImages) && collect($referenceImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
+            $hasUserProductRef = !empty($referenceImages) && collect($referenceImages)->contains(fn($img) => empty($img['role']));
 
-            // NUNCA mencionar o nome da marca no prompt — modelo de imagem inventa logos baseado no conhecimento da internet
+            // NUNCA mencionar o nome da marca — modelo de imagem inventa logos baseado na internet
             $brandHints = "Brazilian small business";
             if ($brand->segment) $brandHints .= " in the '{$brand->segment}' segment";
             if ($brand->primary_color) $brandHints .= ". Color palette: {$brand->primary_color}";
             if ($brand->secondary_color) $brandHints .= ", {$brand->secondary_color}";
-            $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art, NOT fantasy, NOT surreal. The scene must be physically possible and photographable in the real world.";
+            $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art, NOT fantasy, NOT surreal.";
 
-            // CRÍTICO: regra anti-hallucination de logos
-            if ($hasLogoReference) {
-                $brandHints .= " BRAND LOGO RULE: A real brand logo is provided as a reference image. Use ONLY that exact logo — do NOT invent, modify, or replace it with any other logo. Place it naturally in the composition.";
+            // REGRA ABSOLUTA ANTI-LOGO
+            $brandHints .= "\n\nABSOLUTE LOGO RULE: ";
+            if ($hasLogoRef) {
+                $brandHints .= "A brand logo was provided as one of the reference images. You may ONLY use that exact provided logo — copy it pixel-perfect from the reference. Do NOT modify it, do NOT replace it with any other logo, and do NOT add any additional logos, brands, or wordmarks from any other company.";
             } else {
-                $brandHints .= " BRAND NEUTRALITY RULE: NO brand logo was provided. The image MUST be 100% BRAND-NEUTRAL — do NOT include any logos, brand marks, wordmarks, trademark symbols, company names, product brand labels, or text that resembles a brand identity from any real-world company. Do NOT invent fictional logos either. Show ONLY generic, unbranded products, clean surfaces, and neutral environments. If you would normally place a logo somewhere, leave that area empty or with abstract decoration instead. NEVER reference, hallucinate, or recreate logos from your training data.";
+                $brandHints .= "NO logo was provided. The image MUST contain ZERO logos, ZERO brand marks, ZERO company names, ZERO wordmarks, ZERO trademark symbols. Do NOT place any text that could be confused with a brand name. Do NOT reference real-world brands from your training data. Products must appear UNBRANDED — plain labels or no labels at all.";
             }
 
-            if (!empty($referenceImages)) {
-                $brandHints .= " CRITICAL EDITING RULES: You are EDITING the provided image(s), NOT generating new ones. You MUST preserve ALL existing elements EXACTLY as they are — every logo, text, label, barcode, shape, color, texture, shadow, and reflection MUST remain pixel-perfect and unchanged. Only modify what the user explicitly asks to change. Everything else MUST stay identical to the original image. Treat this as a photo retouching job, not a creative generation task.";
+            // Modo de edição APENAS para imagens de produto do usuário (não para logo)
+            if ($hasUserProductRef) {
+                $brandHints .= "\nPRODUCT EDITING: Product reference images are provided. Keep the product's physical appearance unchanged — shape, color, texture. But do NOT copy or replicate any third-party logos, brand names, or labels that may appear on the reference products. Replace any visible third-party branding with clean, unbranded surfaces.";
             }
+
             $enhancedPrompt = "{$brandHints}\n\n{$prompt}";
         }
 
@@ -222,7 +226,11 @@ class AIGateway
             'size' => $mappedSize,
         ];
 
-        if ($hasRefImages) {
+        // Só usar modo 'edit' se houver imagens de produto do usuário (sem role).
+        // Logo da marca e referências visuais NÃO devem ativar modo edit —
+        // senão o modelo tenta preservar tudo das referências, incluindo logos de terceiros.
+        $hasUserProductImages = $hasRefImages && collect($referenceImages)->contains(fn($img) => empty($img['role']));
+        if ($hasUserProductImages) {
             $imageGenTool['action'] = 'edit';
         }
 
@@ -316,11 +324,13 @@ class AIGateway
         ?Brand $brand,
         ?User $user,
     ): array {
-        $hasRefImages = !empty($referenceImages);
+        // Só usar endpoint /edits se houver imagens de produto do usuário (sem role)
+        $hasUserProductImages = !empty($referenceImages) && collect($referenceImages)->contains(fn($img) => empty($img['role']));
 
-        if ($hasRefImages) {
+        if ($hasUserProductImages) {
             $imagesPayload = [];
             foreach ($referenceImages as $img) {
+                if (!empty($img['role'])) continue; // Pular logo — não editar
                 $imagesPayload[] = ['image_url' => "data:{$img['mime']};base64,{$img['base64']}"];
             }
 
