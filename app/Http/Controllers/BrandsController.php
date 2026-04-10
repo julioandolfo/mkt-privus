@@ -197,6 +197,23 @@ class BrandsController extends Controller
             ->with('success', "Marca alterada para {$brand->name}");
     }
 
+    /**
+     * Reseta o histórico de referência da IA — a partir de agora a IA só usa posts novos como referência.
+     * Assets da marca (logo, referências manuais) são mantidos.
+     */
+    public function resetAiHistory(Brand $brand): JsonResponse
+    {
+        $brand->updateContentEngineConfig([
+            'ai_reference_since' => now()->toISOString(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Histórico de IA resetado. A IA usará apenas posts novos como referência visual a partir de agora.',
+            'reference_since' => now()->toISOString(),
+        ]);
+    }
+
     // ===== BRAND ASSETS =====
 
     /**

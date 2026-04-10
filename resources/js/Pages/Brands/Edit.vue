@@ -7,6 +7,23 @@ import { Head, Link, useForm, router, usePage } from '@inertiajs/vue3';
 import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
 
+const resettingAi = ref(false);
+const resetAiMessage = ref<string | null>(null);
+
+async function resetAiHistory() {
+    if (!confirm('Tem certeza? A IA vai ignorar todos os posts anteriores como referência visual e usar apenas posts novos a partir de agora. Os assets da marca (logo, referências manuais) serão mantidos.')) return;
+    resettingAi.value = true;
+    resetAiMessage.value = null;
+    try {
+        const { data } = await axios.post(route('brands.reset-ai-history', props.brand.id));
+        resetAiMessage.value = data.message || 'Histórico resetado.';
+    } catch (e: any) {
+        resetAiMessage.value = e.response?.data?.error || 'Erro ao resetar.';
+    } finally {
+        resettingAi.value = false;
+    }
+}
+
 // Flash messages
 const page = usePage();
 const flashMessage = ref<string | null>(null);
@@ -508,6 +525,23 @@ const urlTypeOptions = [
                     <p class="text-sm text-gray-500 mb-4">Informações adicionais que serão enviadas como contexto quando a IA gerar conteúdo para esta marca.</p>
                     <textarea id="ai_context" v-model="form.ai_context" rows="4" class="block w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" placeholder="Ex: Nossa empresa atua no mercado desde 2010, focamos em soluções sustentáveis..." />
                     <InputError :message="form.errors.ai_context" class="mt-2" />
+                </div>
+
+                <!-- Resetar Histórico IA -->
+                <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-base font-semibold text-white">Resetar Histórico IA</h2>
+                            <p class="text-sm text-gray-500 mt-0.5">A IA usa posts publicados como referência visual. Clique para ignorar posts antigos e usar apenas novos a partir de agora. Assets da marca (logo, referências manuais) são mantidos.</p>
+                        </div>
+                        <button @click="resetAiHistory" :disabled="resettingAi"
+                            class="shrink-0 ml-4 rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-2.5 text-sm font-medium text-red-400 hover:bg-red-500/20 hover:text-red-300 disabled:opacity-50 transition">
+                            {{ resettingAi ? 'Resetando...' : 'Resetar Histórico IA' }}
+                        </button>
+                    </div>
+                    <div v-if="resetAiMessage" class="mt-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 text-sm text-emerald-400">
+                        {{ resetAiMessage }}
+                    </div>
                 </div>
 
                 <!-- Configurações do Content Engine -->

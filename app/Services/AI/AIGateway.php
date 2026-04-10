@@ -842,9 +842,16 @@ class AIGateway
      */
     private function extractRecentPostImages(Brand $brand): array
     {
-        $recentMedia = \App\Models\PostMedia::whereHas('post', function ($q) use ($brand) {
+        // Respeitar "ai_reference_since" — só pegar posts criados após essa data
+        $cfg = $brand->getContentEngineConfig();
+        $referenceSince = $cfg['ai_reference_since'] ?? null;
+
+        $recentMedia = \App\Models\PostMedia::whereHas('post', function ($q) use ($brand, $referenceSince) {
             $q->where('brand_id', $brand->id)
               ->where('status', \App\Enums\PostStatus::Published);
+            if ($referenceSince) {
+                $q->where('created_at', '>=', $referenceSince);
+            }
         })
         ->where('type', 'image')
         ->whereNotNull('file_path')
@@ -932,9 +939,16 @@ class AIGateway
 
         if (!empty($imageContents)) return $imageContents;
 
-        $recentMedia = \App\Models\PostMedia::whereHas('post', function ($q) use ($brand) {
+        // Respeitar "ai_reference_since"
+        $cfg = $brand->getContentEngineConfig();
+        $referenceSince = $cfg['ai_reference_since'] ?? null;
+
+        $recentMedia = \App\Models\PostMedia::whereHas('post', function ($q) use ($brand, $referenceSince) {
             $q->where('brand_id', $brand->id)
               ->where('status', \App\Enums\PostStatus::Published);
+            if ($referenceSince) {
+                $q->where('created_at', '>=', $referenceSince);
+            }
         })
         ->where('type', 'image')
         ->whereNotNull('file_path')

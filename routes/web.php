@@ -87,6 +87,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/brands/{brand}/assets', [BrandsController::class, 'uploadAsset'])->name('brands.assets.upload');
     Route::delete('/brands/{brand}/assets/{asset}', [BrandsController::class, 'deleteAsset'])->name('brands.assets.delete');
     Route::post('/brands/{brand}/assets/{asset}/primary', [BrandsController::class, 'setPrimaryAsset'])->name('brands.assets.primary');
+    Route::post('/brands/{brand}/reset-ai-history', [BrandsController::class, 'resetAiHistory'])->name('brands.reset-ai-history');
 
     // Perfil (Breeze)
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
