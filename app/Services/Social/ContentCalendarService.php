@@ -240,7 +240,7 @@ class ContentCalendarService
             $totalTokens = ($captionResponse['input_tokens'] ?? 0) + ($captionResponse['output_tokens'] ?? 0)
                 + ($hashtagResponse['input_tokens'] ?? 0) + ($hashtagResponse['output_tokens'] ?? 0);
 
-            // Tentar gerar imagem com DALL-E 3
+            // Tentar gerar imagem com gpt-image-1
             $imageData = $this->aiGateway->tryGenerateImageForContent(
                 brand: $brand,
                 topic: $item->title,

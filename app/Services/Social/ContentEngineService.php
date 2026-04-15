@@ -72,7 +72,7 @@ class ContentEngineService
             $totalTokens = ($captionResponse['input_tokens'] ?? 0) + ($captionResponse['output_tokens'] ?? 0)
                 + ($hashtagResponse['input_tokens'] ?? 0) + ($hashtagResponse['output_tokens'] ?? 0);
 
-            // Tentar gerar imagem com DALL-E 3
+            // Tentar gerar imagem com gpt-image-1
             $imageData = $this->aiGateway->tryGenerateImageForContent(
                 brand: $brand,
                 topic: $rule->name,
@@ -158,7 +158,7 @@ class ContentEngineService
                 $platforms = $item['platforms'] ?? ['instagram'];
                 $postType = $item['post_type'] ?? 'feed';
 
-                // Tentar gerar imagem com DALL-E 3 para cada sugestão
+                // Tentar gerar imagem com gpt-image-1 para cada sugestão
                 $imageData = $this->aiGateway->tryGenerateImageForContent(
                     brand: $brand,
                     topic: $title,

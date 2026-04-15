@@ -846,7 +846,7 @@ class ContentEngineV2Controller extends Controller
                     'alt_text' => $post->title,
                     'metadata' => [
                         'source' => 'ai_generated_v2',
-                        'model' => $imageResult['model'] ?? 'dall-e-3',
+                        'model' => $imageResult['model'] ?? 'gpt-image-1',
                         'prompt' => $imageResult['prompt'] ?? null,
                         'campaign_id' => $campaign['id'] ?? null,
                     ],

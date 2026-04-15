@@ -391,7 +391,7 @@ const seoScore = computed(() => {
                         </div>
                         <button @click="generateCoverImage" :disabled="generatingCover || !form.title" type="button"
                             class="rounded-xl bg-gray-800 border border-gray-700 px-4 py-2 text-xs text-gray-300 hover:text-white transition disabled:opacity-50">
-                            {{ generatingCover ? 'Gerando com DALL-E 3...' : 'Gerar com IA' }}
+                            {{ generatingCover ? 'Gerando com IA...' : 'Gerar com IA' }}
                         </button>
                         <label class="rounded-xl bg-gray-800 border border-gray-700 px-4 py-2 text-xs text-gray-300 hover:text-white transition cursor-pointer">
                             Upload

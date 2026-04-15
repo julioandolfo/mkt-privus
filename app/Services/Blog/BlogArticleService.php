@@ -87,7 +87,7 @@ class BlogArticleService
     }
 
     /**
-     * Gera imagem de capa para um artigo com DALL-E 3
+     * Gera imagem de capa para um artigo usando gpt-image-1 via AIGateway.
      *
      * @param int $width  Largura desejada (default 1750)
      * @param int $height Altura desejada (default 650)
@@ -118,7 +118,7 @@ class BlogArticleService
                 'prompt_preview' => mb_substr($prompt, 0, 300),
             ]);
 
-            // DALL-E 3 só suporta 1024x1024, 1792x1024, 1024x1792
+            // gpt-image-1 aceita 1024x1024, 1024x1536, 1536x1024 (o AIGateway remapeia)
             $dalleSize = ($width >= $height) ? '1792x1024' : '1024x1792';
 
             // Incluir logo e referências visuais da marca

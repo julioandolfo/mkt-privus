@@ -871,7 +871,7 @@ const toneOptions = [
                                 <input type="checkbox" v-model="generateImage" class="rounded border-gray-600 text-indigo-600 focus:ring-indigo-500" />
                                 <div>
                                     <span class="text-sm font-medium text-white">Gerar Imagem com IA</span>
-                                    <span class="text-[10px] text-gray-500 ml-2">(GPT-5.4 Responses API — preserva produtos reais)</span>
+                                    <span class="text-[10px] text-gray-500 ml-2">(gpt-image-1 via Responses API — preserva produtos reais)</span>
                                 </div>
                             </label>
                             <div v-if="generateImage" class="space-y-3 pl-7">
@@ -966,7 +966,7 @@ const toneOptions = [
                             <p v-if="analyzeWebsite">Analisando sites e links da marca...</p>
                             <p v-if="analyzeSocial">Analisando redes sociais conectadas...</p>
                             <p>Gerando título, legenda e hashtags...</p>
-                            <p v-if="generateImage">Gerando imagem com GPT-5.4...</p>
+                            <p v-if="generateImage">Gerando imagem com gpt-image-1...</p>
                         </div>
                     </div>
 

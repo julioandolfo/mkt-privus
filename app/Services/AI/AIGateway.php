@@ -156,24 +156,31 @@ class AIGateway
             $hasLogoRef = !empty($referenceImages) && collect($referenceImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
             $hasUserProductRef = !empty($referenceImages) && collect($referenceImages)->contains(fn($img) => empty($img['role']));
 
-            // NUNCA mencionar o nome da marca — modelo de imagem inventa logos baseado na internet
-            $brandHints = "Brazilian small business";
-            if ($brand->segment) $brandHints .= " in the '{$brand->segment}' segment";
-            if ($brand->primary_color) $brandHints .= ". Color palette: {$brand->primary_color}";
-            if ($brand->secondary_color) $brandHints .= ", {$brand->secondary_color}";
-            $brandHints .= ". Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art, NOT fantasy, NOT surreal.";
+            // NÃO mencionar segmento nem nome da marca — isso induz o modelo a recuperar logos
+            // de concorrentes famosos do mesmo setor a partir do conhecimento de treinamento.
+            $brandHints = "Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art, NOT fantasy, NOT surreal.";
 
-            // REGRA ABSOLUTA ANTI-LOGO
-            $brandHints .= "\n\nABSOLUTE LOGO RULE: ";
+            if ($brand->primary_color) {
+                $brandHints .= " Use this brand color palette subtly in background/props/lighting (not as flat overlays): primary {$brand->primary_color}";
+                if ($brand->secondary_color) $brandHints .= ", secondary {$brand->secondary_color}";
+                $brandHints .= ".";
+            }
+
+            // Instruções POSITIVAS de identidade visual (negativas como "não use logos" são ignoradas pelo modelo).
+            $brandHints .= "\n\nVISUAL IDENTITY ENFORCEMENT:";
             if ($hasLogoRef) {
-                $brandHints .= "A brand logo was provided as one of the reference images. You may ONLY use that exact provided logo — copy it pixel-perfect from the reference. Do NOT modify it, do NOT replace it with any other logo, and do NOT add any additional logos, brands, or wordmarks from any other company.";
+                $brandHints .= "\n- The FIRST reference image is THE ONLY logo that may appear in the output. Copy it pixel-perfect from the reference — same colors, shapes, proportions, typography.";
+                $brandHints .= "\n- Every logo, wordmark, brand name, badge, sticker, packaging label, signage and decal visible in the scene MUST be either this exact provided logo OR fully blank/unbranded.";
+                $brandHints .= "\n- Do NOT invent, redraw, re-letter, stylize or translate the logo. Use the reference bitmap as-is.";
             } else {
-                $brandHints .= "NO logo was provided. The image MUST contain ZERO logos, ZERO brand marks, ZERO company names, ZERO wordmarks, ZERO trademark symbols. Do NOT place any text that could be confused with a brand name. Do NOT reference real-world brands from your training data. Products must appear UNBRANDED — plain labels or no labels at all.";
+                $brandHints .= "\n- Produce only unbranded, generic products and surfaces: blank labels, plain packaging, solid-color signage, no wordmarks, no badges, no decals, no stickers, no trademark symbols.";
+                $brandHints .= "\n- Treat every label slot, product front, bottle, box, tag, shirt, cup, screen, storefront and sign as an empty surface to be rendered blank.";
+                $brandHints .= "\n- Compose the scene purely from the topic, the color palette and the reference photography style — not from knowledge of real companies.";
             }
 
             // Modo de edição APENAS para imagens de produto do usuário (não para logo)
             if ($hasUserProductRef) {
-                $brandHints .= "\nPRODUCT EDITING: Product reference images are provided. Keep the product's physical appearance unchanged — shape, color, texture. But do NOT copy or replicate any third-party logos, brand names, or labels that may appear on the reference products. Replace any visible third-party branding with clean, unbranded surfaces.";
+                $brandHints .= "\n\nPRODUCT PHOTOS PROVIDED: Keep each product's physical shape, color and texture exactly as in the reference. Any third-party logo or label visible on the reference product MUST be replaced by a clean, blank surface in the output — do not copy external branding.";
             }
 
             $enhancedPrompt = "{$brandHints}\n\n{$prompt}";
@@ -192,10 +199,13 @@ class AIGateway
         $mappedQuality = $qualityMap[$quality] ?? $quality;
 
         $hasRefImages = !empty($referenceImages);
-        $usedModel = 'gpt-5.4';
+        // Orquestrador da Responses API (suporta a tool image_generation, que usa gpt-image-1 internamente).
+        $orchestratorModel = 'gpt-4o';
+        $usedModel = 'gpt-image-1';
 
-        Log::info("generateImage: using Responses API with model={$usedModel}", [
-            'model' => $usedModel,
+        Log::info("generateImage: using Responses API with image_generation tool", [
+            'orchestrator' => $orchestratorModel,
+            'image_model' => $usedModel,
             'has_ref_images' => $hasRefImages,
             'ref_images_count' => $hasRefImages ? count($referenceImages) : 0,
             'size' => $mappedSize,
@@ -235,7 +245,7 @@ class AIGateway
         }
 
         $payload = [
-            'model' => 'gpt-5.4',
+            'model' => $orchestratorModel,
             'input' => [
                 [
                     'role' => 'user',
@@ -253,8 +263,8 @@ class AIGateway
 
         if (!$response->successful()) {
             $errorMsg = $response->json()['error']['message'] ?? $response->body();
-            Log::warning("Responses API FAILED with model={$usedModel}, status={$response->status()}: {$errorMsg}");
-            Log::warning("FALLING BACK to Images API (gpt-image-1.5) — image quality will be lower");
+            Log::warning("Responses API FAILED (orchestrator={$orchestratorModel}), status={$response->status()}: {$errorMsg}");
+            Log::warning("Falling back to direct Images API with gpt-image-1");
 
             return $this->generateImageFallback($apiKey, $enhancedPrompt, $referenceImages, $mappedSize, $mappedQuality, $brand, $user);
         }
@@ -338,7 +348,7 @@ class AIGateway
                 'Authorization' => "Bearer {$apiKey}",
                 'Content-Type' => 'application/json',
             ])->timeout(180)->post('https://api.openai.com/v1/images/edits', [
-                'model' => 'gpt-image-1.5',
+                'model' => 'gpt-image-1',
                 'images' => $imagesPayload,
                 'prompt' => $prompt,
                 'n' => 1,
@@ -350,7 +360,7 @@ class AIGateway
                 'Authorization' => "Bearer {$apiKey}",
                 'Content-Type' => 'application/json',
             ])->timeout(180)->post('https://api.openai.com/v1/images/generations', [
-                'model' => 'gpt-image-1.5',
+                'model' => 'gpt-image-1',
                 'prompt' => $prompt,
                 'n' => 1,
                 'size' => $size,
@@ -383,7 +393,7 @@ class AIGateway
                     'user_id' => $user->id,
                     'brand_id' => $brand?->id,
                     'provider' => 'openai',
-                    'model' => 'gpt-image-1.5',
+                    'model' => 'gpt-image-1',
                     'feature' => 'image_generation_fallback',
                     'input_tokens' => mb_strlen($prompt),
                     'output_tokens' => 0,
@@ -398,7 +408,7 @@ class AIGateway
             'url' => $imageUrl,
             'revised_prompt' => $imageData['revised_prompt'] ?? $prompt,
             'size' => $size,
-            'model' => 'gpt-image-1.5',
+            'model' => 'gpt-image-1',
             'stored_path' => $tempPath,
         ];
     }
@@ -466,9 +476,9 @@ class AIGateway
             $prompt .= "Style: realistic product photography, professional studio lighting, clean modern composition, warm and inviting, Brazilian marketing aesthetic. Real surfaces like marble, wood, concrete, fabric — NOT gradient backgrounds or abstract shapes. ";
         }
 
-        if ($brand->segment) {
-            $prompt .= "Industry/segment: {$brand->segment}. ";
-        }
+        // Intencionalmente NÃO incluímos o segmento/setor aqui:
+        // mencionar "bebidas", "moda", "eletrônicos", etc. faz o modelo puxar logos de
+        // concorrentes conhecidos do setor a partir do conhecimento de treinamento.
 
         if ($brand->primary_color) {
             $prompt .= "Brand color palette: primary {$brand->primary_color}";
@@ -808,7 +818,7 @@ class AIGateway
     {
         $images = [];
 
-        // Sempre incluir o logo da marca como primeira referência (para a IA usar o logo real)
+        // 1) Logo sempre primeiro (para o modelo copiar o logo real, não inventar)
         $logo = $brand->primaryLogo();
         if ($logo && $logo->file_path) {
             $logoPath = \Illuminate\Support\Facades\Storage::disk('public')->path($logo->file_path);
@@ -821,26 +831,37 @@ class AIGateway
             }
         }
 
-        $references = $brand->references()->limit($images ? 2 : 3)->get();
+        // 2) Assets de referência cadastrados em MARCAS (identidade visual oficial)
+        $references = $brand->references()->limit(2)->get();
         foreach ($references as $ref) {
             $path = \Illuminate\Support\Facades\Storage::disk('public')->path($ref->file_path);
             if (!file_exists($path)) continue;
+            $fileSize = filesize($path);
+            if ($fileSize > 5 * 1024 * 1024) continue;
             $images[] = [
                 'base64' => base64_encode(file_get_contents($path)),
                 'mime' => $ref->mime_type ?? 'image/jpeg',
+                'role' => 'reference',
             ];
         }
 
-        if (!empty($images)) return $images;
+        // 3) Últimos posts publicados — mesmo com logo/referências, usamos 1-2 posts recentes
+        //    para o modelo alinhar com o estilo visual do feed atual da marca.
+        $slotsLeft = max(0, 4 - count($images));
+        if ($slotsLeft > 0) {
+            foreach ($this->extractRecentPostImages($brand, $slotsLeft) as $postImg) {
+                $images[] = $postImg + ['role' => 'recent_post'];
+            }
+        }
 
-        return $this->extractRecentPostImages($brand);
+        return $images;
     }
 
     /**
      * Busca imagens dos posts publicados mais recentes da marca para usar como referência visual.
      * @return array<array{base64: string, mime: string}>
      */
-    private function extractRecentPostImages(Brand $brand): array
+    private function extractRecentPostImages(Brand $brand, int $limit = 3): array
     {
         // Respeitar "ai_reference_since" — só pegar posts criados após essa data
         $cfg = $brand->getContentEngineConfig();
@@ -856,7 +877,7 @@ class AIGateway
         ->where('type', 'image')
         ->whereNotNull('file_path')
         ->latest('id')
-        ->limit(3)
+        ->limit(max(1, $limit))
         ->get();
 
         if ($recentMedia->isEmpty()) return [];

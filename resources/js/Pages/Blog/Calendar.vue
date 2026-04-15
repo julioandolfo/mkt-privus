@@ -683,7 +683,7 @@ const pendingCount = computed(() => calendarItems.value.filter(i => i.status ===
                                         <p class="text-[10px] text-gray-600 mt-0.5 text-center">Altura</p>
                                     </div>
                                 </div>
-                                <p class="text-[10px] text-gray-600 mt-1">Padrão: 1750x650. A imagem é gerada via DALL-E 3 e redimensionada automaticamente.</p>
+                                <p class="text-[10px] text-gray-600 mt-1">Padrão: 1750x650. A imagem é gerada via gpt-image-1 e redimensionada automaticamente.</p>
                             </div>
                         </div>
 
