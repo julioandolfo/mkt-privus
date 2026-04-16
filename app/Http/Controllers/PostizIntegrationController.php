@@ -114,8 +114,8 @@ class PostizIntegrationController extends Controller
 
                 $existing = SocialAccount::where('postiz_integration_id', $integration['id'])->first();
 
-                $attrs = [
-                    'brand_id' => $brand->id,
+                // Dados que vêm da origem (Postiz) e são sempre refrescados
+                $fromSource = [
                     'platform' => $platform->value,
                     'source' => 'postiz',
                     'postiz_integration_id' => $integration['id'],
@@ -123,27 +123,37 @@ class PostizIntegrationController extends Controller
                     'username' => $integration['profile'] ?? $integration['name'] ?? $integration['id'],
                     'display_name' => $integration['name'] ?? $integration['profile'] ?? '',
                     'avatar_url' => $integration['picture'] ?? null,
-                    'is_active' => !($integration['disabled'] ?? false),
-                    'metadata' => [
-                        'postiz' => [
-                            'identifier' => $integration['identifier'] ?? null,
-                            'customer' => $integration['customer'] ?? null,
-                        ],
+                ];
+
+                $postizMetadata = [
+                    'postiz' => [
+                        'identifier' => $integration['identifier'] ?? null,
+                        'customer' => $integration['customer'] ?? null,
                     ],
                 ];
 
                 if ($existing) {
-                    $existing->update($attrs);
+                    // NÃO sobrescreve brand_id nem is_active — o usuário pode
+                    // ter vinculado a conta a outra marca ou desativado manualmente.
+                    // Mescla metadata pra preservar campos customizados.
+                    $existing->update(array_merge($fromSource, [
+                        'metadata' => array_merge((array) $existing->metadata, $postizMetadata),
+                    ]));
                     $updated++;
                 } else {
-                    SocialAccount::create($attrs);
+                    SocialAccount::create(array_merge($fromSource, [
+                        'brand_id' => $brand->id,
+                        'is_active' => !($integration['disabled'] ?? false),
+                        'metadata' => $postizMetadata,
+                    ]));
                     $created++;
                 }
             }
 
-            // Marca como inativas contas Postiz cujo integration_id não veio mais na listagem
+            // Marca como inativas contas Postiz cujo integration_id não veio mais na
+            // listagem (desconectadas no painel do Postiz). Sem filtro de brand porque
+            // cada API key do Postiz representa uma organização única.
             $deactivated = SocialAccount::postiz()
-                ->where('brand_id', $brand->id)
                 ->when(!empty($postizIds), fn($q) => $q->whereNotIn('postiz_integration_id', $postizIds))
                 ->where('is_active', true)
                 ->update(['is_active' => false]);
