@@ -217,7 +217,8 @@ class AIGateway
             'size' => $mappedSize,
             'quality' => $mappedQuality,
             'prompt_length' => mb_strlen($enhancedPrompt),
-            'prompt_full' => $enhancedPrompt,
+            // Mantém o log em uma linha só para parseáveis (grep/jq) — substitui quebras por " | ".
+            'prompt_full' => str_replace(["\r\n", "\r", "\n"], ' | ', $enhancedPrompt),
             'endpoint' => 'POST /v1/responses',
         ]);
 
@@ -295,7 +296,7 @@ class AIGateway
             'brand_id' => $brand?->id,
             'response_model' => $responseModel,
             'image_model' => $usedModel,
-            'revised_prompt' => $revisedPrompt,
+            'revised_prompt' => str_replace(["\r\n", "\r", "\n"], ' | ', (string) $revisedPrompt),
             'revised_prompt_changed' => $revisedPrompt !== $enhancedPrompt,
         ]);
 
