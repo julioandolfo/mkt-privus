@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\SocialPlatform;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,6 +11,19 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class SocialAccount extends Model
 {
     use HasFactory;
+
+    /**
+     * Global scope: esconde rows cujo platform não está mais presente no enum
+     * SocialPlatform (ex: 'pinterest' após remoção). Evita hidratação falhar
+     * com ValueError. Rows ficam no banco para histórico mas somem das queries.
+     */
+    protected static function booted(): void
+    {
+        static::addGlobalScope('valid_platform', function (Builder $query) {
+            $validPlatforms = array_map(fn($c) => $c->value, SocialPlatform::cases());
+            $query->whereIn('platform', $validPlatforms);
+        });
+    }
 
     protected $fillable = [
         'brand_id',
