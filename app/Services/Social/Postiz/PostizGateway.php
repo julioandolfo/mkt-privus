@@ -160,6 +160,46 @@ class PostizGateway
     }
 
     /**
+     * GET /analytics/{integrationId}?date=N — analytics agregados da conta.
+     *
+     * Retorna array de métricas; cada item tem:
+     *   - label: nome da métrica (ex: "Followers", "Impressions")
+     *   - data: [{ total: "1250", date: "2026-04-15" }, ...]
+     *   - percentageChange: float (variação no período)
+     *
+     * `date` aceita 7, 30 ou 90 dias de lookback.
+     *
+     * @return array<int, array{label:string, data:array, percentageChange:float|int}>
+     */
+    public function getPlatformAnalytics(string $integrationId, int $days = 30): array
+    {
+        $response = $this->client()->get("/analytics/{$integrationId}", ['date' => $days]);
+
+        if (!$response->successful()) {
+            $this->throwApiError("Falha ao buscar analytics Postiz da integration {$integrationId}", $response);
+        }
+
+        return $response->json() ?? [];
+    }
+
+    /**
+     * GET /analytics/post/{postId}?date=N — analytics de um post específico.
+     * Mesmo formato do getPlatformAnalytics.
+     *
+     * @return array<int, array{label:string, data:array, percentageChange:float|int}>
+     */
+    public function getPostAnalytics(string $postId, int $days = 30): array
+    {
+        $response = $this->client()->get("/analytics/post/{$postId}", ['date' => $days]);
+
+        if (!$response->successful()) {
+            $this->throwApiError("Falha ao buscar analytics do post Postiz {$postId}", $response);
+        }
+
+        return $response->json() ?? [];
+    }
+
+    /**
      * DELETE /integrations/{id} — desconecta uma integration.
      */
     public function deleteIntegration(string $integrationId): void

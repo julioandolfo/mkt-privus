@@ -5,6 +5,8 @@ namespace App\Services\Social;
 use App\Models\SocialAccount;
 use App\Models\SocialInsight;
 use App\Models\SystemLog;
+use App\Services\Social\Postiz\PostizAnalyticsMapper;
+use App\Services\Social\Postiz\PostizGateway;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -18,19 +20,10 @@ class SocialInsightsService
     {
         $date = $date ?? now()->toDateString();
 
-        // Contas via Postiz não têm API de insights disponível — pular.
-        if ($account->isPostizBacked()) {
-            return null;
-        }
-
         try {
-            $platform = $account->platform->value ?? $account->platform;
-            $data = match ($platform) {
-                'instagram' => $this->fetchInstagramInsights($account),
-                'facebook' => $this->fetchFacebookInsights($account),
-                'youtube' => $this->fetchYoutubeInsights($account),
-                default => null,
-            };
+            $data = $account->isPostizBacked()
+                ? $this->fetchPostizInsights($account)
+                : $this->fetchDirectInsights($account);
 
             if (!$data) {
                 return null;
@@ -42,14 +35,14 @@ class SocialInsightsService
                 ->orderByDesc('date')
                 ->first();
 
-            if ($previousInsight && $data['followers_count'] && $previousInsight->followers_count) {
+            if ($previousInsight && ($data['followers_count'] ?? null) && $previousInsight->followers_count) {
                 $data['net_followers'] = $data['followers_count'] - $previousInsight->followers_count;
                 $data['followers_gained'] = max(0, $data['net_followers']);
                 $data['followers_lost'] = min(0, $data['net_followers']) * -1;
             }
 
-            // Calcular engagement rate
-            if (($data['engagement'] ?? 0) > 0 && ($data['followers_count'] ?? 0) > 0) {
+            // Calcular engagement rate (se Postiz já não forneceu)
+            if (empty($data['engagement_rate']) && ($data['engagement'] ?? 0) > 0 && ($data['followers_count'] ?? 0) > 0) {
                 $data['engagement_rate'] = round(($data['engagement'] / $data['followers_count']) * 100, 4);
             }
 
@@ -113,7 +106,6 @@ class SocialInsightsService
     {
         $accounts = SocialAccount::where('brand_id', $brandId)
             ->where('is_active', true)
-            ->direct()
             ->get();
 
         $results = [];
@@ -129,7 +121,7 @@ class SocialInsightsService
      */
     public function syncAll(): array
     {
-        $accounts = SocialAccount::where('is_active', true)->direct()->get();
+        $accounts = SocialAccount::where('is_active', true)->get();
         $results = [];
 
         foreach ($accounts as $account) {
@@ -137,6 +129,51 @@ class SocialInsightsService
         }
 
         return $results;
+    }
+
+    /**
+     * Dispatcher das plataformas com integração direta (Meta/Google).
+     */
+    private function fetchDirectInsights(SocialAccount $account): ?array
+    {
+        $platform = $account->platform->value ?? $account->platform;
+        return match ($platform) {
+            'instagram' => $this->fetchInstagramInsights($account),
+            'facebook' => $this->fetchFacebookInsights($account),
+            'youtube' => $this->fetchYoutubeInsights($account),
+            default => null,
+        };
+    }
+
+    /**
+     * Busca analytics via Postiz e converte para o schema de social_insights.
+     * Usa lookback de 7 dias (menor valor aceito pela API do Postiz) para pegar
+     * o valor mais recente — a métrica "do dia" vai para as colunas, o histórico
+     * do período fica em platform_data['postiz']['changes'].
+     */
+    private function fetchPostizInsights(SocialAccount $account): ?array
+    {
+        if (!$account->postiz_integration_id) {
+            return null;
+        }
+
+        try {
+            $raw = PostizGateway::fromConfig()->getPlatformAnalytics($account->postiz_integration_id, 7);
+            $data = PostizAnalyticsMapper::map($raw);
+
+            if (empty(array_filter($data, fn($v, $k) => $k !== 'platform_data' && $v !== null, ARRAY_FILTER_USE_BOTH))) {
+                // Postiz devolveu só labels desconhecidos — não descarta, guarda o raw pra análise
+                $data['platform_data']['postiz']['raw'] = $raw;
+            }
+
+            return $data;
+        } catch (\Throwable $e) {
+            SystemLog::warning('social', 'insights.postiz.fetch_error', "Falha ao buscar analytics Postiz @{$account->username}: {$e->getMessage()}", [
+                'account_id' => $account->id,
+                'integration_id' => $account->postiz_integration_id,
+            ]);
+            return null;
+        }
     }
 
     // ================================================================
