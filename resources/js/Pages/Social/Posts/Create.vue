@@ -27,9 +27,13 @@ interface AIModelOption {
 const props = defineProps<{
     platforms: Platform[];
     postTypes: PostTypeOption[];
-    accounts: Array<{ id: number; platform: string; platform_label: string; platform_color: string; username: string; display_name: string }>;
+    accounts: Array<{ id: number; platform: string; platform_label: string; platform_color: string; username: string; display_name: string; is_active?: boolean }>;
     aiModels: AIModelOption[];
 }>();
+
+function hasConnectedAccount(platformValue: string): boolean {
+    return (props.accounts || []).some(a => a.platform === platformValue && a.is_active !== false);
+}
 
 const form = useForm({
     title: '',
@@ -425,7 +429,11 @@ const toneOptions = [
                 <!-- Secao 1: Plataformas -->
                 <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
                     <h2 class="text-lg font-semibold text-white mb-2">Plataformas</h2>
-                    <p class="text-sm text-gray-500 mb-4">Selecione onde este post será publicado</p>
+                    <p class="text-sm text-gray-500 mb-1">Selecione onde este post será publicado</p>
+                    <p class="text-xs text-emerald-500/80 mb-4 flex items-center gap-1.5">
+                        <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]"></span>
+                        Contorno verde = conta conectada (publicação automática disponível)
+                    </p>
 
                     <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
                         <button
@@ -434,13 +442,18 @@ const toneOptions = [
                             type="button"
                             @click="togglePlatform(platform.value)"
                             :class="[
-                                'flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all',
+                                'relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all',
                                 form.platforms.includes(platform.value)
                                     ? 'border-current bg-current/10'
-                                    : 'border-gray-700 hover:border-gray-600 bg-gray-800/50',
+                                    : hasConnectedAccount(platform.value)
+                                        ? 'border-emerald-500/60 bg-emerald-500/5 shadow-[0_0_18px_rgba(16,185,129,0.35)] hover:border-emerald-400 hover:shadow-[0_0_24px_rgba(16,185,129,0.5)]'
+                                        : 'border-gray-700 hover:border-gray-600 bg-gray-800/50',
                             ]"
                             :style="form.platforms.includes(platform.value) ? { borderColor: platform.color, color: platform.color } : {}"
+                            :title="hasConnectedAccount(platform.value) ? `Conta ${platform.label} conectada` : `Sem conta conectada em ${platform.label}`"
                         >
+                            <span v-if="hasConnectedAccount(platform.value) && !form.platforms.includes(platform.value)"
+                                class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.8)]"></span>
                             <!-- Platform icons -->
                             <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor" :style="{ color: form.platforms.includes(platform.value) ? platform.color : '#9CA3AF' }">
                                 <template v-if="platform.value === 'instagram'">
@@ -449,7 +462,7 @@ const toneOptions = [
                                 <template v-else-if="platform.value === 'facebook'">
                                     <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
                                 </template>
-                                <template v-else-if="platform.value === 'linkedin'">
+                                <template v-else-if="platform.value === 'linkedin' || platform.value === 'linkedin_page'">
                                     <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
                                 </template>
                                 <template v-else-if="platform.value === 'tiktok'">
@@ -458,12 +471,13 @@ const toneOptions = [
                                 <template v-else-if="platform.value === 'youtube'">
                                     <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
                                 </template>
-                                <template v-else-if="platform.value === 'pinterest'">
-                                    <path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.162-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.631-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12.017 24c6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z"/>
+                                <template v-else-if="platform.value === 'google_my_business'">
+                                    <path d="M12.24 10.285V14.4h6.806c-.275 1.765-2.056 5.174-6.806 5.174-4.095 0-7.439-3.389-7.439-7.574s3.345-7.574 7.439-7.574c2.33 0 3.891.989 4.785 1.849l3.254-3.138C18.189 1.186 15.479 0 12.24 0c-6.635 0-12 5.365-12 12s5.365 12 12 12c6.926 0 11.52-4.869 11.52-11.726 0-.788-.085-1.39-.189-1.989H12.24z"/>
                                 </template>
                             </svg>
                             <span :class="['text-xs font-medium', form.platforms.includes(platform.value) ? '' : 'text-gray-400']">
                                 {{ platform.label }}
+                                <span v-if="platform.value === 'linkedin_page'" class="block text-[9px] opacity-70">(empresa)</span>
                             </span>
                         </button>
                     </div>
