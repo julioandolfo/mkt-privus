@@ -121,20 +121,14 @@ class BlogArticleService
             // gpt-image-1 aceita 1024x1024, 1024x1536, 1536x1024 (o AIGateway remapeia)
             $dalleSize = ($width >= $height) ? '1792x1024' : '1024x1792';
 
-            // Incluir logo e referências visuais da marca
+            // Referências visuais da marca (sem logo — política no-logo)
             $brandRefImages = $this->extractBrandLogoAndReferences($brand);
-            $hasLogo = collect($brandRefImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
 
             SystemLog::info('blog', 'cover.step3_refs', "[COVER DEBUG] Referências extraídas", [
                 'brand_id' => $brand->id,
                 'ref_images_count' => count($brandRefImages),
-                'has_logo' => $hasLogo,
-                'dalle_size' => $dalleSize,
+                'size' => $dalleSize,
             ]);
-
-            if ($hasLogo) {
-                $prompt .= " BRAND LOGO: The FIRST reference image is the brand's ACTUAL logo. Place it in a corner or naturally integrated — do NOT recreate or write the brand name as text. Use the EXACT logo as provided.";
-            }
 
             SystemLog::info('blog', 'cover.step4_calling_api', "[COVER DEBUG] Chamando AIGateway.generateImage...", [
                 'brand_id' => $brand->id,
@@ -393,27 +387,14 @@ class BlogArticleService
     // ===== PRIVATE =====
 
     /**
-     * Extrai logo e referências visuais da marca como base64 para enviar à API de imagem.
+     * Extrai referências visuais da marca (estilo/cor/composição) como base64 para enviar à API de imagem.
+     * Política no-logo: o logo NÃO é incluído como referência para não ser renderizado na capa.
      */
     private function extractBrandLogoAndReferences(Brand $brand): array
     {
         $images = [];
 
-        // Logo da marca
-        $logo = $brand->primaryLogo();
-        if ($logo && $logo->file_path) {
-            $logoPath = Storage::disk('public')->path($logo->file_path);
-            if (file_exists($logoPath) && filesize($logoPath) <= 5 * 1024 * 1024) {
-                $images[] = [
-                    'base64' => base64_encode(file_get_contents($logoPath)),
-                    'mime' => $logo->mime_type ?? 'image/png',
-                    'role' => 'logo',
-                ];
-            }
-        }
-
-        // Referências visuais (max 2 se já tem logo)
-        $references = $brand->references()->limit($images ? 2 : 3)->get();
+        $references = $brand->references()->limit(3)->get();
         foreach ($references as $ref) {
             $path = Storage::disk('public')->path($ref->file_path);
             if (!file_exists($path)) continue;
@@ -421,6 +402,7 @@ class BlogArticleService
             $images[] = [
                 'base64' => base64_encode(file_get_contents($path)),
                 'mime' => $ref->mime_type ?? 'image/jpeg',
+                'role' => 'reference',
             ];
         }
 

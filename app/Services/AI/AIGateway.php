@@ -153,7 +153,6 @@ class AIGateway
 
         $enhancedPrompt = $prompt;
         if ($brand) {
-            $hasLogoRef = !empty($referenceImages) && collect($referenceImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
             $hasUserProductRef = !empty($referenceImages) && collect($referenceImages)->contains(fn($img) => empty($img['role']));
 
             // NÃO mencionar segmento nem nome da marca — isso induz o modelo a recuperar logos
@@ -166,21 +165,17 @@ class AIGateway
                 $brandHints .= ".";
             }
 
-            // Instruções POSITIVAS de identidade visual (negativas como "não use logos" são ignoradas pelo modelo).
-            $brandHints .= "\n\nVISUAL IDENTITY ENFORCEMENT:";
-            if ($hasLogoRef) {
-                $brandHints .= "\n- The FIRST reference image is THE ONLY logo that may appear in the output. Copy it pixel-perfect from the reference — same colors, shapes, proportions, typography.";
-                $brandHints .= "\n- Every logo, wordmark, brand name, badge, sticker, packaging label, signage and decal visible in the scene MUST be either this exact provided logo OR fully blank/unbranded.";
-                $brandHints .= "\n- Do NOT invent, redraw, re-letter, stylize or translate the logo. Use the reference bitmap as-is.";
-            } else {
-                $brandHints .= "\n- Produce only unbranded, generic products and surfaces: blank labels, plain packaging, solid-color signage, no wordmarks, no badges, no decals, no stickers, no trademark symbols.";
-                $brandHints .= "\n- Treat every label slot, product front, bottle, box, tag, shirt, cup, screen, storefront and sign as an empty surface to be rendered blank.";
-                $brandHints .= "\n- Compose the scene purely from the topic, the color palette and the reference photography style — not from knowledge of real companies.";
-            }
+            // Política: posts sociais modernos NÃO aplicam logo da marca na imagem.
+            // Qualquer logotipo, wordmark ou marca visível (inclusive em fundo/produtos/placas) deve ser removido.
+            $brandHints .= "\n\nNO-LOGO POLICY (MANDATORY):";
+            $brandHints .= "\n- Do not render any logo, wordmark, brand name, monogram, badge, sticker, trademark or company insignia anywhere in the image.";
+            $brandHints .= "\n- Every label slot, product front, bottle, box, tag, shirt, cup, screen, storefront, sign, vehicle, cap and packaging surface must be fully blank or solid-color — treat them as empty surfaces.";
+            $brandHints .= "\n- If a reference image is provided only for style/color/composition guidance, extract the photographic style from it but ignore any logo it contains.";
+            $brandHints .= "\n- Compose the scene purely from the topic and the color palette — never from memory of real companies.";
 
-            // Modo de edição APENAS para imagens de produto do usuário (não para logo)
+            // Modo de edição APENAS para imagens de produto do usuário
             if ($hasUserProductRef) {
-                $brandHints .= "\n\nPRODUCT PHOTOS PROVIDED: Keep each product's physical shape, color and texture exactly as in the reference. Any third-party logo or label visible on the reference product MUST be replaced by a clean, blank surface in the output — do not copy external branding.";
+                $brandHints .= "\n\nPRODUCT PHOTOS PROVIDED: Keep each product's physical shape, color and texture exactly as in the reference. Any logo, third-party branding or label visible on the reference product MUST be replaced by a clean, blank surface in the output.";
             }
 
             $enhancedPrompt = "{$brandHints}\n\n{$prompt}";
@@ -576,12 +571,8 @@ class AIGateway
             }
 
             $brandRefImages = $this->extractBrandReferenceImages($brand);
-            $hasLogo = collect($brandRefImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
             if (!empty($brandRefImages)) {
-                $prompt .= "\n\nCRITICAL: Reference images from the brand are provided. You MUST match the exact same visual style, color scheme, product presentation, and aesthetic. The generated image should look like it belongs in the same Instagram feed as these references.";
-                if ($hasLogo) {
-                    $prompt .= "\n\nBRAND LOGO: The FIRST reference image is the brand's ACTUAL logo. You MUST use this EXACT logo image in the generated post — do NOT recreate, redraw, or write the brand name as text. Place the real logo from the reference image into the composition (corner, top, or naturally integrated). The logo must appear EXACTLY as provided — same colors, shapes, proportions, and details.";
-                }
+                $prompt .= "\n\nREFERENCE IMAGES: Reference images are provided only for visual style, color scheme, composition and aesthetic — the generated image should feel like it belongs in the same Instagram feed as these references. Do NOT copy, redraw or include any logo, wordmark or branding that may appear in the references; extract only the photographic style.";
             }
 
             $result = $this->generateImage(
@@ -834,21 +825,11 @@ class AIGateway
     {
         $images = [];
 
-        // 1) Logo sempre primeiro (para o modelo copiar o logo real, não inventar)
-        $logo = $brand->primaryLogo();
-        if ($logo && $logo->file_path) {
-            $logoPath = \Illuminate\Support\Facades\Storage::disk('public')->path($logo->file_path);
-            if (file_exists($logoPath) && filesize($logoPath) <= 5 * 1024 * 1024) {
-                $images[] = [
-                    'base64' => base64_encode(file_get_contents($logoPath)),
-                    'mime' => $logo->mime_type ?? 'image/png',
-                    'role' => 'logo',
-                ];
-            }
-        }
+        // Política: NÃO enviamos o logo como referência — posts sociais modernos não aplicam logo
+        // na imagem. Incluir o logo como referência induz o modelo a desenhá-lo no resultado.
 
-        // 2) Assets de referência cadastrados em MARCAS (identidade visual oficial)
-        $references = $brand->references()->limit(2)->get();
+        // 1) Assets de referência cadastrados em MARCAS (identidade visual oficial — cor/estilo)
+        $references = $brand->references()->limit(3)->get();
         foreach ($references as $ref) {
             $path = \Illuminate\Support\Facades\Storage::disk('public')->path($ref->file_path);
             if (!file_exists($path)) continue;

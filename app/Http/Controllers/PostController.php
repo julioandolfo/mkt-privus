@@ -945,20 +945,18 @@ class PostController extends Controller
                     $userRefImages = $this->extractReferenceImages($request);
                     $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
 
-                    // Incluir logo e referências visuais da marca (sempre, independente do upload do usuário)
+                    // Referências de identidade visual da marca (sem logo — política no-logo para posts sociais)
                     $brandRefImages = $this->extractBrandLogoAndReferences($brand);
-                    $hasLogo = collect($brandRefImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
 
-                    // Mesclar: logo da marca primeiro, depois imagens do usuário (max 3 total para a API)
+                    // Mesclar: refs da marca primeiro, depois imagens do usuário (max 4 total para a API)
                     $allRefImages = array_merge($brandRefImages, $userRefImages);
-                    $allRefImages = array_slice($allRefImages, 0, 4); // logo + até 3 do usuário
+                    $allRefImages = array_slice($allRefImages, 0, 4);
 
                     Log::info("generateCompletePost image generation", [
                         'has_reference_files' => $request->hasFile('reference_images'),
                         'reference_files_count' => count($request->file('reference_images') ?? []),
                         'user_ref_images' => count($userRefImages),
                         'brand_ref_images' => count($brandRefImages),
-                        'has_logo' => $hasLogo,
                         'total_ref_images' => count($allRefImages),
                         'reference_context_length' => mb_strlen($referenceContext ?? ''),
                         'generate_image' => $shouldGenerateImage,
@@ -972,11 +970,6 @@ class PostController extends Controller
                         $postType,
                         $validated['image_style'] ?? null,
                     );
-
-                    // Instrução de logo da marca
-                    if ($hasLogo) {
-                        $imagePrompt .= "\n\nBRAND LOGO: One of the reference images is the brand's ACTUAL logo. You MUST use this EXACT logo in the generated image — place it in a corner or naturally integrated. Do NOT recreate, redraw, or write the brand name as text. Use the real logo EXACTLY as provided — same colors, shapes, proportions.";
-                    }
 
                     if ($referenceContext) {
                         $imagePrompt .= "\n\nREFERENCE IMAGE DESCRIPTION: " . $referenceContext;
@@ -1231,31 +1224,21 @@ class PostController extends Controller
      * @return array<array{base64: string, mime: string}>
      */
     /**
-     * Extrai logo e referências visuais da marca como base64 para envio à API de imagem.
+     * Extrai referências visuais da marca (estilo/cor/composição) como base64 para envio à API de imagem.
+     * Política no-logo: o logo NÃO é enviado como referência para não ser renderizado no post.
      */
     private function extractBrandLogoAndReferences(\App\Models\Brand $brand): array
     {
         $images = [];
 
-        $logo = $brand->primaryLogo();
-        if ($logo && $logo->file_path) {
-            $logoPath = Storage::disk('public')->path($logo->file_path);
-            if (file_exists($logoPath) && filesize($logoPath) <= 5 * 1024 * 1024) {
-                $images[] = [
-                    'base64' => base64_encode(file_get_contents($logoPath)),
-                    'mime' => $logo->mime_type ?? 'image/png',
-                    'role' => 'logo',
-                ];
-            }
-        }
-
-        $references = $brand->references()->limit($images ? 2 : 3)->get();
+        $references = $brand->references()->limit(3)->get();
         foreach ($references as $ref) {
             $path = Storage::disk('public')->path($ref->file_path);
             if (!file_exists($path) || filesize($path) > 5 * 1024 * 1024) continue;
             $images[] = [
                 'base64' => base64_encode(file_get_contents($path)),
                 'mime' => $ref->mime_type ?? 'image/jpeg',
+                'role' => 'reference',
             ];
         }
 
@@ -1379,9 +1362,8 @@ class PostController extends Controller
             $userRefImages = $this->extractReferenceImages($request);
             $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
 
-            // Incluir logo e referências visuais da marca
+            // Referências de identidade visual da marca (sem logo — política no-logo para posts sociais)
             $brandRefImages = $this->extractBrandLogoAndReferences($brand);
-            $hasLogo = collect($brandRefImages)->contains(fn($img) => ($img['role'] ?? '') === 'logo');
             $allRefImages = array_merge($brandRefImages, $userRefImages);
             $allRefImages = array_slice($allRefImages, 0, 4);
 
@@ -1397,10 +1379,6 @@ class PostController extends Controller
                 $postType,
                 $validated['image_style'] ?? null,
             );
-
-            if ($hasLogo) {
-                $imagePrompt .= "\n\nBRAND LOGO: One of the reference images is the brand's ACTUAL logo. You MUST use this EXACT logo in the generated image — place it in a corner or naturally integrated. Do NOT recreate, redraw, or write the brand name as text. Use the real logo EXACTLY as provided.";
-            }
 
             if ($validated['prompt_context'] ?? null) {
                 $imagePrompt .= "\n\nADDITIONAL CONTEXT: " . $validated['prompt_context'];
