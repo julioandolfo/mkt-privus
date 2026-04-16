@@ -203,14 +203,21 @@ class AIGateway
         $orchestratorModel = 'gpt-4o';
         $usedModel = 'gpt-image-1';
 
-        Log::info("generateImage: using Responses API with image_generation tool", [
+        // Role breakdown das referências — chave para debugar vazamento de logo de terceiros.
+        $refRoles = $hasRefImages ? collect($referenceImages)->map(fn($img) => $img['role'] ?? 'user_product')->countBy()->toArray() : [];
+
+        Log::info("generateImage:request", [
+            'brand_id' => $brand?->id,
+            'brand_name' => $brand?->name,
             'orchestrator' => $orchestratorModel,
             'image_model' => $usedModel,
             'has_ref_images' => $hasRefImages,
             'ref_images_count' => $hasRefImages ? count($referenceImages) : 0,
+            'ref_roles' => $refRoles,
             'size' => $mappedSize,
             'quality' => $mappedQuality,
             'prompt_length' => mb_strlen($enhancedPrompt),
+            'prompt_full' => $enhancedPrompt,
             'endpoint' => 'POST /v1/responses',
         ]);
 
@@ -271,7 +278,6 @@ class AIGateway
 
         $data = $response->json();
         $responseModel = $data['model'] ?? 'unknown';
-        Log::info("Responses API SUCCESS: response_model={$responseModel}, requested_model={$usedModel}");
 
         $imageBase64 = null;
         $revisedPrompt = $enhancedPrompt;
@@ -283,6 +289,15 @@ class AIGateway
                 break;
             }
         }
+
+        // Log do que o modelo DE FATO gerou — permite detectar logos de concorrentes no prompt reescrito.
+        Log::info("generateImage:response", [
+            'brand_id' => $brand?->id,
+            'response_model' => $responseModel,
+            'image_model' => $usedModel,
+            'revised_prompt' => $revisedPrompt,
+            'revised_prompt_changed' => $revisedPrompt !== $enhancedPrompt,
+        ]);
 
         $imageUrl = '';
         $tempPath = null;
