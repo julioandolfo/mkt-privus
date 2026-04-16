@@ -112,7 +112,9 @@ class SocialAccountController extends Controller
         ])->toArray();
 
         // Verificar credenciais OAuth configuradas (plataformas diretas + Postiz)
-        $postizConfigured = !empty(config('services.postiz.api_key'));
+        // Postiz: aceita tanto Setting (definido pela UI) quanto .env.
+        $postizConfigured = !empty(Setting::get('oauth', 'postiz_api_key'))
+            || !empty(config('services.postiz.api_key'));
         $oauthConfigured = [
             'facebook' => $this->hasOAuthConfig('meta'),
             'instagram' => $this->hasOAuthConfig('meta'),
