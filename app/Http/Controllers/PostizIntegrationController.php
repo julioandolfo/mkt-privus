@@ -215,7 +215,7 @@ class PostizIntegrationController extends Controller
             'linkedin' => SocialPlatform::LinkedIn,
             'linkedin-page' => SocialPlatform::LinkedInPage,
             'tiktok' => SocialPlatform::TikTok,
-            'googlebusiness' => SocialPlatform::GoogleMyBusiness,
+            'gmb' => SocialPlatform::GoogleMyBusiness,
             default => null,
         };
     }

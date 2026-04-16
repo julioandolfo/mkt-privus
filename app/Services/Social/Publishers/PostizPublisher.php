@@ -174,7 +174,7 @@ class PostizPublisher extends AbstractPublisher
                 'brand_organic_toggle' => (bool) ($post->metadata['tiktok']['brand_organic_toggle'] ?? false),
                 'content_posting_method' => $post->metadata['tiktok']['content_posting_method'] ?? 'DIRECT_POST',
             ],
-            'googlebusiness' => $base,
+            'gmb' => $base,
             default => $base,
         };
     }

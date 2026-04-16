@@ -59,7 +59,7 @@ enum SocialPlatform: string
             self::LinkedIn => 'linkedin',
             self::LinkedInPage => 'linkedin-page',
             self::TikTok => 'tiktok',
-            self::GoogleMyBusiness => 'googlebusiness',
+            self::GoogleMyBusiness => 'gmb',
             default => null,
         };
     }
