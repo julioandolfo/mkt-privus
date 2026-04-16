@@ -9,10 +9,15 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('email_providers', function (Blueprint $table) {
-            // Limite por hora (ex: SendPulse grátis = 50/h)
-            $table->unsignedInteger('hourly_limit')->nullable()->after('daily_limit');
-            $table->unsignedInteger('sends_this_hour')->default(0)->after('sends_today');
-            $table->timestamp('last_hour_reset_at')->nullable()->after('last_reset_at');
+            if (!Schema::hasColumn('email_providers', 'hourly_limit')) {
+                $table->unsignedInteger('hourly_limit')->nullable()->after('daily_limit');
+            }
+            if (!Schema::hasColumn('email_providers', 'sends_this_hour')) {
+                $table->unsignedInteger('sends_this_hour')->default(0)->after('sends_today');
+            }
+            if (!Schema::hasColumn('email_providers', 'last_hour_reset_at')) {
+                $table->timestamp('last_hour_reset_at')->nullable()->after('last_reset_at');
+            }
         });
     }
 
