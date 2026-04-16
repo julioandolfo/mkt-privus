@@ -19,6 +19,7 @@ class SocialInsightsService
     public function syncAccount(SocialAccount $account, ?Carbon $date = null): ?SocialInsight
     {
         $date = $date ?? now()->toDateString();
+        $platform = $account->platform->value ?? (string) $account->platform;
 
         try {
             $data = $account->isPostizBacked()
