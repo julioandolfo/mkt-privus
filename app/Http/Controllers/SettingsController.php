@@ -143,19 +143,15 @@ class SettingsController extends Controller
         // Estatísticas de uso de IA
         $aiUsageStats = $this->getAiUsageStats();
 
-        // Credenciais OAuth (unificadas para Social + Analytics)
+        // Credenciais OAuth (Meta + Google direto, Postiz gateway para demais redes)
         $oauthCredentials = [
             'meta_app_id' => Setting::get('oauth', 'meta_app_id') ?: config('social_oauth.meta.app_id', ''),
             'meta_app_secret_set' => !empty(Setting::get('oauth', 'meta_app_secret')) || !empty(config('social_oauth.meta.app_secret')),
-            'linkedin_client_id' => Setting::get('oauth', 'linkedin_client_id') ?: config('social_oauth.linkedin.client_id', ''),
-            'linkedin_client_secret_set' => !empty(Setting::get('oauth', 'linkedin_client_secret')) || !empty(config('social_oauth.linkedin.client_secret')),
             'google_client_id' => Setting::get('oauth', 'google_client_id') ?: config('social_oauth.google.client_id', ''),
             'google_client_secret_set' => !empty(Setting::get('oauth', 'google_client_secret')) || !empty(config('social_oauth.google.client_secret')),
             'google_ads_developer_token_set' => !empty(Setting::get('oauth', 'google_ads_developer_token')) || !empty(config('services.google_ads.developer_token')),
-            'tiktok_client_key' => Setting::get('oauth', 'tiktok_client_key') ?: config('social_oauth.tiktok.client_key', ''),
-            'tiktok_client_secret_set' => !empty(Setting::get('oauth', 'tiktok_client_secret')) || !empty(config('social_oauth.tiktok.client_secret')),
-            'pinterest_app_id' => Setting::get('oauth', 'pinterest_app_id') ?: config('social_oauth.pinterest.app_id', ''),
-            'pinterest_app_secret_set' => !empty(Setting::get('oauth', 'pinterest_app_secret')) || !empty(config('social_oauth.pinterest.app_secret')),
+            'postiz_api_key_set' => !empty(Setting::get('oauth', 'postiz_api_key')) || !empty(config('services.postiz.api_key')),
+            'postiz_url' => Setting::get('oauth', 'postiz_url') ?: config('services.postiz.url', 'https://api.postiz.com/public/v1'),
         ];
 
         return Inertia::render('Settings/Index', [
@@ -346,15 +342,11 @@ class SettingsController extends Controller
         $validated = $request->validate([
             'meta_app_id' => 'nullable|string|max:255',
             'meta_app_secret' => 'nullable|string|max:255',
-            'linkedin_client_id' => 'nullable|string|max:255',
-            'linkedin_client_secret' => 'nullable|string|max:255',
             'google_client_id' => 'nullable|string|max:500',
             'google_client_secret' => 'nullable|string|max:255',
             'google_ads_developer_token' => 'nullable|string|max:255',
-            'tiktok_client_key' => 'nullable|string|max:255',
-            'tiktok_client_secret' => 'nullable|string|max:255',
-            'pinterest_app_id' => 'nullable|string|max:255',
-            'pinterest_app_secret' => 'nullable|string|max:255',
+            'postiz_api_key' => 'nullable|string|max:500',
+            'postiz_url' => 'nullable|url|max:500',
         ]);
 
         // Salvar apenas os que foram preenchidos (não sobrescrever com vazio)

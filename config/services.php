@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'postiz' => [
+        'url' => env('POSTIZ_API_URL', 'https://api.postiz.com/public/v1'),
+        'api_key' => env('POSTIZ_API_KEY'),
+        'timeout' => env('POSTIZ_TIMEOUT', 30),
+    ],
+
 ];

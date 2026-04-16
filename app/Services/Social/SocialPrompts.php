@@ -20,10 +20,10 @@ class SocialPrompts
         return match ($platform) {
             SocialPlatform::Instagram => 2200,
             SocialPlatform::Facebook => 63206,
-            SocialPlatform::LinkedIn => 3000,
+            SocialPlatform::LinkedIn, SocialPlatform::LinkedInPage => 3000,
             SocialPlatform::TikTok => 2200,
             SocialPlatform::YouTube => 5000,
-            SocialPlatform::Pinterest => 500,
+            SocialPlatform::GoogleMyBusiness => 1500,
         };
     }
 
@@ -35,10 +35,10 @@ class SocialPrompts
         return match ($platform) {
             SocialPlatform::Instagram => ['min' => 5, 'max' => 15, 'ideal' => 10],
             SocialPlatform::Facebook => ['min' => 1, 'max' => 5, 'ideal' => 3],
-            SocialPlatform::LinkedIn => ['min' => 3, 'max' => 5, 'ideal' => 4],
+            SocialPlatform::LinkedIn, SocialPlatform::LinkedInPage => ['min' => 3, 'max' => 5, 'ideal' => 4],
             SocialPlatform::TikTok => ['min' => 3, 'max' => 8, 'ideal' => 5],
             SocialPlatform::YouTube => ['min' => 5, 'max' => 15, 'ideal' => 10],
-            SocialPlatform::Pinterest => ['min' => 2, 'max' => 10, 'ideal' => 5],
+            SocialPlatform::GoogleMyBusiness => ['min' => 0, 'max' => 3, 'ideal' => 1],
         };
     }
 
@@ -121,7 +121,7 @@ GUIDE,
 - Posts com imagem performam melhor
 GUIDE,
 
-            SocialPlatform::LinkedIn => <<<'GUIDE'
+            SocialPlatform::LinkedIn, SocialPlatform::LinkedInPage => <<<'GUIDE'
 - Tom profissional mas acessivel
 - Comece com insight ou dado impactante
 - Compartilhe aprendizados e experiencias profissionais
@@ -149,13 +149,12 @@ GUIDE,
 - Tom adequado ao tipo de conteudo do canal
 GUIDE,
 
-            SocialPlatform::Pinterest => <<<'GUIDE'
-- Descricoes concisas e descritivas
-- Foque em palavras-chave para busca (SEO do Pinterest)
-- Descreva o que o pin oferece (dica, tutorial, inspiracao)
-- Inclua CTA como "clique para saber mais"
-- Tom aspiracional e inspirador
-- Linguagem simples e direta
+            SocialPlatform::GoogleMyBusiness => <<<'GUIDE'
+- Foque em informacoes uteis para clientes locais
+- Destaque ofertas, horarios, novidades ou eventos do estabelecimento
+- Inclua CTA claro (visitar loja, reservar, ligar)
+- Tom profissional e direto
+- Palavras-chave de busca local (cidade, bairro, servico)
 GUIDE,
         };
     }
@@ -291,7 +290,7 @@ Responda APENAS com um array JSON, sem markdown, sem explicações:
 - Emojis moderados e naturais
 - Inclua CTA em cada legenda
 - Hashtags: 5 a 10 por sugestão, sem acentos
-- Plataformas disponíveis: instagram, facebook, linkedin, tiktok, youtube, pinterest
+- Plataformas disponíveis: instagram, facebook, youtube, linkedin, linkedin_page, tiktok, google_my_business
 - Tipos de post: feed, carousel, story, reel, video, pin
 - Se a marca possui mascote, inclua pelo menos 1 sugestão que use o mascote como personagem (storytelling, humor, interação)
 - Se a marca possui fotos de produtos, inclua pelo menos 1 sugestão focada em produto (destaque, review, promoção, comparativo, unboxing)

@@ -6,20 +6,22 @@ enum SocialPlatform: string
 {
     case Instagram = 'instagram';
     case Facebook = 'facebook';
-    case LinkedIn = 'linkedin';
-    case TikTok = 'tiktok';
     case YouTube = 'youtube';
-    case Pinterest = 'pinterest';
+    case LinkedIn = 'linkedin';
+    case LinkedInPage = 'linkedin_page';
+    case TikTok = 'tiktok';
+    case GoogleMyBusiness = 'google_my_business';
 
     public function label(): string
     {
         return match ($this) {
             self::Instagram => 'Instagram',
             self::Facebook => 'Facebook',
-            self::LinkedIn => 'LinkedIn',
-            self::TikTok => 'TikTok',
             self::YouTube => 'YouTube',
-            self::Pinterest => 'Pinterest',
+            self::LinkedIn => 'LinkedIn',
+            self::LinkedInPage => 'LinkedIn Page',
+            self::TikTok => 'TikTok',
+            self::GoogleMyBusiness => 'Google My Business',
         };
     }
 
@@ -28,10 +30,10 @@ enum SocialPlatform: string
         return match ($this) {
             self::Instagram => 'instagram',
             self::Facebook => 'facebook',
-            self::LinkedIn => 'linkedin',
-            self::TikTok => 'tiktok',
             self::YouTube => 'youtube',
-            self::Pinterest => 'pinterest',
+            self::LinkedIn, self::LinkedInPage => 'linkedin',
+            self::TikTok => 'tiktok',
+            self::GoogleMyBusiness => 'google',
         };
     }
 
@@ -40,10 +42,33 @@ enum SocialPlatform: string
         return match ($this) {
             self::Instagram => '#E4405F',
             self::Facebook => '#1877F2',
-            self::LinkedIn => '#0A66C2',
-            self::TikTok => '#000000',
             self::YouTube => '#FF0000',
-            self::Pinterest => '#BD081C',
+            self::LinkedIn, self::LinkedInPage => '#0A66C2',
+            self::TikTok => '#000000',
+            self::GoogleMyBusiness => '#4285F4',
         };
+    }
+
+    /**
+     * Identificador da plataforma no Postiz (__type do settings e slug do OAuth).
+     * Retorna null para plataformas com integração direta (não vão pelo Postiz).
+     */
+    public function postizIdentifier(): ?string
+    {
+        return match ($this) {
+            self::LinkedIn => 'linkedin',
+            self::LinkedInPage => 'linkedin-page',
+            self::TikTok => 'tiktok',
+            self::GoogleMyBusiness => 'googlebusiness',
+            default => null,
+        };
+    }
+
+    /**
+     * Indica se a plataforma publica via Postiz em vez de integração direta.
+     */
+    public function usesPostiz(): bool
+    {
+        return $this->postizIdentifier() !== null;
     }
 }

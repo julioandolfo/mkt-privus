@@ -3,7 +3,7 @@
 return [
     /*
     |--------------------------------------------------------------------------
-    | Meta (Facebook + Instagram)
+    | Meta (Facebook + Instagram) — integração direta
     |--------------------------------------------------------------------------
     | Obtenha em: https://developers.facebook.com/apps/
     | Permissões: pages_show_list, pages_read_engagement, pages_manage_posts,
@@ -27,27 +27,7 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | LinkedIn
-    |--------------------------------------------------------------------------
-    | Obtenha em: https://www.linkedin.com/developers/apps/
-    | Permissões: r_liteprofile, r_organization_social, w_organization_social
-    */
-    'linkedin' => [
-        'client_id' => env('LINKEDIN_CLIENT_ID', ''),
-        'client_secret' => env('LINKEDIN_CLIENT_SECRET', ''),
-        'scopes' => [
-            'openid',
-            'profile',
-            'email',
-            'w_member_social',
-            'r_organization_social',
-            'w_organization_social',
-        ],
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | YouTube (Google)
+    | YouTube (Google) — integração direta
     |--------------------------------------------------------------------------
     | Obtenha em: https://console.cloud.google.com/apis/credentials
     | APIs: YouTube Data API v3
@@ -65,36 +45,8 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | TikTok
+    | LinkedIn, LinkedIn Page, TikTok, Google My Business
     |--------------------------------------------------------------------------
-    | Obtenha em: https://developers.tiktok.com/
-    | Permissões: user.info.basic, video.publish, video.list
+    | Gerenciados via Postiz (services.postiz). Ver app/Services/Social/Postiz.
     */
-    'tiktok' => [
-        'client_key' => env('TIKTOK_CLIENT_KEY', ''),
-        'client_secret' => env('TIKTOK_CLIENT_SECRET', ''),
-        'scopes' => [
-            'user.info.basic',
-            'video.publish',
-            'video.list',
-        ],
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Pinterest
-    |--------------------------------------------------------------------------
-    | Obtenha em: https://developers.pinterest.com/
-    */
-    'pinterest' => [
-        'app_id' => env('PINTEREST_APP_ID', ''),
-        'app_secret' => env('PINTEREST_APP_SECRET', ''),
-        'scopes' => [
-            'boards:read',
-            'boards:write',
-            'pins:read',
-            'pins:write',
-            'user_accounts:read',
-        ],
-    ],
 ];

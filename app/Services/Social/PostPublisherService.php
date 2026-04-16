@@ -5,13 +5,10 @@ namespace App\Services\Social;
 use App\Enums\SocialPlatform;
 use App\Models\Post;
 use App\Models\PostSchedule;
-use App\Models\SocialAccount;
 use App\Services\Social\Publishers\AbstractPublisher;
 use App\Services\Social\Publishers\FacebookPublisher;
 use App\Services\Social\Publishers\InstagramPublisher;
-use App\Services\Social\Publishers\LinkedInPublisher;
-use App\Services\Social\Publishers\PinterestPublisher;
-use App\Services\Social\Publishers\TikTokPublisher;
+use App\Services\Social\Publishers\PostizPublisher;
 use App\Services\Social\Publishers\YouTubePublisher;
 use Illuminate\Support\Facades\Log;
 
@@ -74,10 +71,11 @@ class PostPublisherService
         return match ($platform) {
             SocialPlatform::Instagram => new InstagramPublisher(),
             SocialPlatform::Facebook => new FacebookPublisher(),
-            SocialPlatform::LinkedIn => new LinkedInPublisher(),
-            SocialPlatform::TikTok => new TikTokPublisher(),
             SocialPlatform::YouTube => new YouTubePublisher(),
-            SocialPlatform::Pinterest => new PinterestPublisher(),
+            SocialPlatform::LinkedIn,
+            SocialPlatform::LinkedInPage,
+            SocialPlatform::TikTok,
+            SocialPlatform::GoogleMyBusiness => new PostizPublisher($platform),
         };
     }
 }

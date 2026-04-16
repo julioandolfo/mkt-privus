@@ -14,6 +14,8 @@ class SocialAccount extends Model
     protected $fillable = [
         'brand_id',
         'platform',
+        'source',
+        'postiz_integration_id',
         'platform_user_id',
         'username',
         'display_name',
@@ -46,7 +48,24 @@ class SocialAccount extends Model
         return $this->belongsTo(Brand::class);
     }
 
+    // ===== SCOPES =====
+
+    public function scopeDirect($query)
+    {
+        return $query->where('source', 'direct');
+    }
+
+    public function scopePostiz($query)
+    {
+        return $query->where('source', 'postiz');
+    }
+
     // ===== METHODS =====
+
+    public function isPostizBacked(): bool
+    {
+        return $this->source === 'postiz';
+    }
 
     public function isTokenExpired(): bool
     {

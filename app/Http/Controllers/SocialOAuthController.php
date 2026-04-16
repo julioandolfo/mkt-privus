@@ -26,7 +26,7 @@ class SocialOAuthController extends Controller
      */
     public function redirect(Request $request, string $platform): RedirectResponse|\Illuminate\Http\JsonResponse
     {
-        $validPlatforms = ['facebook', 'instagram', 'linkedin', 'youtube', 'tiktok', 'pinterest'];
+        $validPlatforms = ['facebook', 'instagram', 'youtube'];
         $isPopup = $request->boolean('popup', false);
 
         SystemLog::info('oauth', 'oauth.redirect.start', "Iniciando redirect OAuth para {$platform}", [
@@ -203,19 +203,11 @@ class SocialOAuthController extends Controller
                 $platformNames = [
                     'facebook' => 'Meta',
                     'instagram' => 'Meta',
-                    'linkedin' => 'LinkedIn',
                     'youtube' => 'Google',
-                    'tiktok' => 'TikTok',
-                    'pinterest' => 'Pinterest',
                 ];
                 $name = $platformNames[$originalPlatform ?? $platform] ?? $platform;
 
-                $scopeHints = [
-                    'linkedin' => 'Para gerenciar Company Pages, solicite o produto "Community Management API" no LinkedIn Developer Portal (linkedin.com/developers/apps). Após aprovação, tente conectar novamente.',
-                    'facebook' => 'Verifique as permissões do app no Meta Developer Portal (developers.facebook.com). Algumas permissões requerem revisão do app.',
-                ];
-
-                $hint = $scopeHints[$originalPlatform ?? $platform] ?? "Verifique as permissões do app no painel de desenvolvedor da plataforma.";
+                $hint = "Verifique as permissões do app no painel de desenvolvedor da plataforma. Algumas permissões requerem revisão do app.";
                 $friendlyMessage = "Permissões insuficientes no {$name}. {$hint}";
             }
 
@@ -592,10 +584,8 @@ class SocialOAuthController extends Controller
         $platforms = [
             'facebook' => $this->hasMetaCredentials(),
             'instagram' => $this->hasMetaCredentials(),
-            'linkedin' => !empty(config('social_oauth.linkedin.client_id')) || !empty($this->getSetting('linkedin_client_id')),
             'youtube' => !empty(config('social_oauth.google.client_id')) || !empty($this->getSetting('google_client_id')),
-            'tiktok' => !empty(config('social_oauth.tiktok.client_key')) || !empty($this->getSetting('tiktok_client_key')),
-            'pinterest' => !empty(config('social_oauth.pinterest.app_id')) || !empty($this->getSetting('pinterest_app_id')),
+            'postiz' => !empty(config('services.postiz.api_key')),
         ];
 
         return response()->json($platforms);
@@ -610,18 +600,12 @@ class SocialOAuthController extends Controller
         $platformNames = [
             'facebook' => 'Meta (Facebook)',
             'instagram' => 'Meta (Instagram)',
-            'linkedin' => 'LinkedIn',
             'youtube' => 'Google (YouTube)',
-            'tiktok' => 'TikTok',
-            'pinterest' => 'Pinterest',
         ];
 
         $hasCredentials = match ($oauthPlatform) {
             'facebook' => $this->hasMetaCredentials(),
-            'linkedin' => !empty(config('social_oauth.linkedin.client_id')) || !empty($this->getSetting('linkedin_client_id')),
             'youtube' => !empty(config('social_oauth.google.client_id')) || !empty($this->getSetting('google_client_id')),
-            'tiktok' => !empty(config('social_oauth.tiktok.client_key')) || !empty($this->getSetting('tiktok_client_key')),
-            'pinterest' => !empty(config('social_oauth.pinterest.app_id')) || !empty($this->getSetting('pinterest_app_id')),
             default => false,
         };
 

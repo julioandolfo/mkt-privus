@@ -14,6 +14,7 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\PostizIntegrationController;
 use App\Http\Controllers\SocialAccountController;
 use App\Http\Controllers\SocialOAuthController;
 use App\Http\Controllers\LogsController;
@@ -294,6 +295,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/discovered', [SocialOAuthController::class, 'discoveredAccounts'])->name('discovered');
             Route::post('/save', [SocialOAuthController::class, 'saveAccounts'])->name('save');
             Route::get('/check-credentials', [SocialOAuthController::class, 'checkCredentials'])->name('check');
+        });
+
+        // Postiz (gateway para LinkedIn, LinkedIn Page, TikTok e Google My Business)
+        Route::prefix('postiz')->name('postiz.')->group(function () {
+            Route::get('/oauth/redirect/{platform}', [PostizIntegrationController::class, 'redirect'])->name('oauth.redirect');
+            Route::post('/integrations/sync', [PostizIntegrationController::class, 'sync'])->name('integrations.sync');
+            Route::delete('/integrations/{account}', [PostizIntegrationController::class, 'disconnect'])->name('integrations.disconnect');
         });
     });
 

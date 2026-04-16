@@ -18,15 +18,17 @@ class SocialInsightsService
     {
         $date = $date ?? now()->toDateString();
 
+        // Contas via Postiz não têm API de insights disponível — pular.
+        if ($account->isPostizBacked()) {
+            return null;
+        }
+
         try {
             $platform = $account->platform->value ?? $account->platform;
             $data = match ($platform) {
                 'instagram' => $this->fetchInstagramInsights($account),
                 'facebook' => $this->fetchFacebookInsights($account),
                 'youtube' => $this->fetchYoutubeInsights($account),
-                'tiktok' => $this->fetchTiktokInsights($account),
-                'linkedin' => $this->fetchLinkedinInsights($account),
-                'pinterest' => $this->fetchPinterestInsights($account),
                 default => null,
             };
 
@@ -111,6 +113,7 @@ class SocialInsightsService
     {
         $accounts = SocialAccount::where('brand_id', $brandId)
             ->where('is_active', true)
+            ->direct()
             ->get();
 
         $results = [];
@@ -126,7 +129,7 @@ class SocialInsightsService
      */
     public function syncAll(): array
     {
-        $accounts = SocialAccount::where('is_active', true)->get();
+        $accounts = SocialAccount::where('is_active', true)->direct()->get();
         $results = [];
 
         foreach ($accounts as $account) {
@@ -940,197 +943,4 @@ class SocialInsightsService
         return $data;
     }
 
-    // ================================================================
-    // TIKTOK INSIGHTS
-    // ================================================================
-
-    private function fetchTiktokInsights(SocialAccount $account): array
-    {
-        $token = $account->getFreshToken() ?? $account->access_token;
-
-        $data = [
-            'followers_count' => null,
-            'following_count' => null,
-            'posts_count' => null,
-            'likes' => null,
-            'video_views' => null,
-            'platform_data' => [],
-        ];
-
-        // User info atualizado
-        $user = Http::withToken($token)->get('https://open.tiktokapis.com/v2/user/info/', [
-            'fields' => 'open_id,avatar_url,display_name,username,follower_count,following_count,likes_count,video_count',
-        ]);
-
-        if ($user->successful()) {
-            $u = $user->json('data.user', []);
-            $data['followers_count'] = $u['follower_count'] ?? null;
-            $data['following_count'] = $u['following_count'] ?? null;
-            $data['likes'] = $u['likes_count'] ?? null;
-            $data['posts_count'] = $u['video_count'] ?? null;
-
-            $freshAvatar = $u['avatar_url'] ?? null;
-            if ($freshAvatar) {
-                $account->update(['avatar_url' => $freshAvatar]);
-            }
-        }
-
-        // Video list para engagement recente
-        $videos = Http::withToken($token)->post('https://open.tiktokapis.com/v2/video/list/', [
-            'max_count' => 20,
-        ]);
-
-        $totalViews = 0;
-        $totalVideoLikes = 0;
-        $totalVideoComments = 0;
-        $totalVideoShares = 0;
-        if ($videos->successful()) {
-            foreach ($videos->json('data.videos', []) as $video) {
-                $totalViews += $video['view_count'] ?? 0;
-                $totalVideoLikes += $video['like_count'] ?? 0;
-                $totalVideoComments += $video['comment_count'] ?? 0;
-                $totalVideoShares += $video['share_count'] ?? 0;
-            }
-            $data['video_views'] = $totalViews;
-            $data['comments'] = $totalVideoComments;
-            $data['shares'] = $totalVideoShares;
-            $data['engagement'] = $totalVideoLikes + $totalVideoComments + $totalVideoShares;
-        }
-
-        // Engagement rate
-        if (($data['engagement'] ?? 0) > 0 && ($data['followers_count'] ?? 0) > 0) {
-            $data['engagement_rate'] = round($data['engagement'] / $data['followers_count'] * 100, 2);
-        }
-
-        return $data;
-    }
-
-    // ================================================================
-    // LINKEDIN INSIGHTS
-    // ================================================================
-
-    private function fetchLinkedinInsights(SocialAccount $account): array
-    {
-        $token = $account->getFreshToken() ?? $account->access_token;
-        $orgId = $account->platform_user_id;
-        $type = $account->metadata['type'] ?? 'profile';
-
-        $data = [
-            'followers_count' => null,
-            'impressions' => null,
-            'engagement' => null,
-            'clicks' => null,
-            'platform_data' => [],
-        ];
-
-        if ($type === 'organization') {
-            // Follower statistics
-            $followers = Http::withToken($token)->get("https://api.linkedin.com/v2/organizationalEntityFollowerStatistics", [
-                'q' => 'organizationalEntity',
-                'organizationalEntity' => "urn:li:organization:{$orgId}",
-            ]);
-
-            if ($followers->successful()) {
-                $elements = $followers->json('elements', []);
-                if (!empty($elements)) {
-                    $data['followers_count'] = $elements[0]['followerGains']['organicFollowerCount'] ?? null;
-                    $data['platform_data']['paid_followers'] = $elements[0]['followerGains']['paidFollowerCount'] ?? null;
-                }
-            }
-
-            // Page statistics
-            $pageStats = Http::withToken($token)->get("https://api.linkedin.com/v2/organizationPageStatistics", [
-                'q' => 'organization',
-                'organization' => "urn:li:organization:{$orgId}",
-            ]);
-
-            if ($pageStats->successful()) {
-                $elements = $pageStats->json('elements', []);
-                if (!empty($elements)) {
-                    $views = $elements[0]['totalPageStatistics']['views'] ?? [];
-                    $data['platform_data']['page_views'] = $views['allPageViews']['pageViews'] ?? 0;
-                    $data['platform_data']['unique_visitors'] = $views['allPageViews']['uniquePageViews'] ?? 0;
-                }
-            }
-
-            // Share statistics
-            $shares = Http::withToken($token)->get("https://api.linkedin.com/v2/organizationalEntityShareStatistics", [
-                'q' => 'organizationalEntity',
-                'organizationalEntity' => "urn:li:organization:{$orgId}",
-            ]);
-
-            if ($shares->successful()) {
-                $elements = $shares->json('elements', []);
-                if (!empty($elements)) {
-                    $totals = $elements[0]['totalShareStatistics'] ?? [];
-                    $data['impressions'] = $totals['impressionCount'] ?? null;
-                    $data['engagement'] = $totals['engagement'] ?? null;
-                    $data['clicks'] = $totals['clickCount'] ?? null;
-                    $data['likes'] = $totals['likeCount'] ?? null;
-                    $data['comments'] = $totals['commentCount'] ?? null;
-                    $data['shares'] = $totals['shareCount'] ?? null;
-                }
-            }
-        }
-
-        return $data;
-    }
-
-    // ================================================================
-    // PINTEREST INSIGHTS
-    // ================================================================
-
-    private function fetchPinterestInsights(SocialAccount $account): array
-    {
-        $token = $account->getFreshToken() ?? $account->access_token;
-
-        $data = [
-            'followers_count' => null,
-            'posts_count' => null,
-            'impressions' => null,
-            'saves' => null,
-            'clicks' => null,
-            'platform_data' => [],
-        ];
-
-        // User account
-        $user = Http::withToken($token)->get('https://api.pinterest.com/v5/user_account');
-
-        if ($user->successful()) {
-            $u = $user->json();
-            $data['followers_count'] = $u['follower_count'] ?? null;
-            $data['posts_count'] = $u['pin_count'] ?? null;
-
-            $freshAvatar = $u['profile_image'] ?? null;
-            if ($freshAvatar) {
-                $account->update(['avatar_url' => $freshAvatar]);
-            }
-        }
-
-        // Analytics (ultimos 30 dias)
-        $analytics = Http::withToken($token)->get('https://api.pinterest.com/v5/user_account/analytics', [
-            'start_date' => now()->subDays(1)->format('Y-m-d'),
-            'end_date' => now()->format('Y-m-d'),
-            'metric_types' => 'IMPRESSION,SAVE,PIN_CLICK,OUTBOUND_CLICK',
-        ]);
-
-        if ($analytics->successful()) {
-            $totals = $analytics->json('all.daily_metrics.0', []);
-            $data['impressions'] = $totals['IMPRESSION'] ?? null;
-            $data['saves'] = $totals['SAVE'] ?? null;
-            $data['clicks'] = ($totals['PIN_CLICK'] ?? 0) + ($totals['OUTBOUND_CLICK'] ?? 0);
-            $data['platform_data']['pin_clicks'] = $totals['PIN_CLICK'] ?? 0;
-            $data['platform_data']['outbound_clicks'] = $totals['OUTBOUND_CLICK'] ?? 0;
-
-            // Engagement = saves + clicks
-            $data['engagement'] = ($data['saves'] ?? 0) + ($data['clicks'] ?? 0);
-        }
-
-        // Engagement rate
-        if (($data['engagement'] ?? 0) > 0 && ($data['followers_count'] ?? 0) > 0) {
-            $data['engagement_rate'] = round($data['engagement'] / $data['followers_count'] * 100, 2);
-        }
-
-        return $data;
-    }
 }

@@ -91,6 +91,7 @@ class SocialAccountController extends Controller
                         'platform' => $acc->platform->value,
                         'platform_label' => $acc->platform->label(),
                         'platform_color' => $acc->platform->color(),
+                        'source' => $acc->source ?? 'direct',
                         'username' => $acc->username,
                         'display_name' => $acc->display_name,
                         'avatar_url' => $acc->avatar_url,
@@ -110,14 +111,16 @@ class SocialAccountController extends Controller
             'color' => $p->color(),
         ])->toArray();
 
-        // Verificar credenciais OAuth configuradas
+        // Verificar credenciais OAuth configuradas (plataformas diretas + Postiz)
+        $postizConfigured = !empty(config('services.postiz.api_key'));
         $oauthConfigured = [
             'facebook' => $this->hasOAuthConfig('meta'),
             'instagram' => $this->hasOAuthConfig('meta'),
-            'linkedin' => $this->hasOAuthConfig('linkedin'),
             'youtube' => $this->hasOAuthConfig('google'),
-            'tiktok' => $this->hasOAuthConfig('tiktok'),
-            'pinterest' => $this->hasOAuthConfig('pinterest'),
+            'linkedin' => $postizConfigured,
+            'linkedin_page' => $postizConfigured,
+            'tiktok' => $postizConfigured,
+            'google_my_business' => $postizConfigured,
         ];
 
         // Contas descobertas via OAuth - do BANCO DE DADOS (nao mais sessao)
@@ -534,10 +537,7 @@ class SocialAccountController extends Controller
     {
         $configKeys = match ($provider) {
             'meta' => ['social_oauth.meta.app_id', 'meta_app_id'],
-            'linkedin' => ['social_oauth.linkedin.client_id', 'linkedin_client_id'],
             'google' => ['social_oauth.google.client_id', 'google_client_id'],
-            'tiktok' => ['social_oauth.tiktok.client_key', 'tiktok_client_key'],
-            'pinterest' => ['social_oauth.pinterest.app_id', 'pinterest_app_id'],
             default => [],
         };
 

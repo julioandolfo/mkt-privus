@@ -16,12 +16,9 @@ use Illuminate\Queue\SerializesModels;
  * Busca contas sociais cujo token está prestes a expirar
  * e renova usando o refresh_token de cada plataforma.
  *
- * Fluxo por plataforma:
+ * Fluxo por plataforma direta (LinkedIn/TikTok/GMB vão via Postiz e não precisam desse refresh):
  * - Meta (Facebook/Instagram): fb_exchange_token para user tokens, page tokens não expiram
  * - Google/YouTube: refresh_token -> novo access_token (refresh_token não expira)
- * - LinkedIn: refresh_token -> novo access_token + refresh_token
- * - TikTok: refresh_token -> novo access_token + refresh_token
- * - Pinterest: refresh_token -> novo access_token + refresh_token
  */
 class RefreshSocialTokensJob implements ShouldQueue
 {
@@ -40,6 +37,7 @@ class RefreshSocialTokensJob implements ShouldQueue
         // Buscar contas ativas que precisam de refresh
         // Token expirado OU expira em menos de 15 minutos (cobre Google/YouTube 1h tokens)
         $accounts = SocialAccount::where('is_active', true)
+            ->direct()
             ->whereNotNull('token_expires_at')
             ->whereNotNull('refresh_token')
             ->where('token_expires_at', '<=', now()->addMinutes(15))
