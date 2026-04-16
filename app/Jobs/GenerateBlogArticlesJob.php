@@ -101,8 +101,9 @@ class GenerateBlogArticlesJob implements ShouldQueue
                         ],
                     ]);
 
-                    // Dispatchar job dedicado para gerar a capa em background (com retries)
-                    GenerateBlogCoverJob::dispatch($article->id)->onQueue('content-engine');
+                    // Dispatchar job dedicado para gerar a capa em background (com retries).
+                    // Usa queue default — o worker dedicado 'content-engine' nao estava ativo.
+                    GenerateBlogCoverJob::dispatch($article->id);
 
                     $totalGenerated++;
 

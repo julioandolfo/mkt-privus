@@ -246,12 +246,13 @@ class BlogCalendarService
             ]);
 
             // 3. Dispatchar job dedicado para gerar a capa em background (com retries)
+            // Usa queue default — o worker dedicado 'content-engine' nao estava ativo.
             $meta = $item->metadata ?? [];
             \App\Jobs\GenerateBlogCoverJob::dispatch(
                 $article->id,
                 $meta['cover_width'] ?? 1750,
                 $meta['cover_height'] ?? 650,
-            )->onQueue('content-engine');
+            );
 
             // 4. Vincular artigo à pauta
             $item->update([

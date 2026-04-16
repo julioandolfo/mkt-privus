@@ -22,7 +22,8 @@ class GenerateSmartSuggestionsJob implements ShouldQueue
 
     public function __construct()
     {
-        $this->onQueue('content-engine');
+        // Usa a queue default — a queue dedicada 'content-engine' exigia worker separado
+        // que nao estava ativo, e os jobs ficavam presos sem processamento.
     }
 
     public function handle(ContentEngineService $engine): void
