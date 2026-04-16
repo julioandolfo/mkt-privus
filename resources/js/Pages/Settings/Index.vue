@@ -538,28 +538,23 @@ function deleteUser(user: any) {
 const oauthForm = useForm({
     meta_app_id: props.oauthCredentials?.meta_app_id || '',
     meta_app_secret: '',
-    linkedin_client_id: props.oauthCredentials?.linkedin_client_id || '',
-    linkedin_client_secret: '',
     google_client_id: props.oauthCredentials?.google_client_id || '',
     google_client_secret: '',
     google_ads_developer_token: '',
-    tiktok_client_key: props.oauthCredentials?.tiktok_client_key || '',
-    tiktok_client_secret: '',
-    pinterest_app_id: props.oauthCredentials?.pinterest_app_id || '',
-    pinterest_app_secret: '',
+    postiz_api_key: '',
+    postiz_url: props.oauthCredentials?.postiz_url || 'https://api.postiz.com/public/v1',
+    postiz_webhook_secret: '',
 });
 
 function saveOAuth() {
     oauthForm.put(route('settings.oauth'), {
         preserveScroll: true,
         onSuccess: () => {
-            // Limpar campos de secret após salvar
             oauthForm.meta_app_secret = '';
-            oauthForm.linkedin_client_secret = '';
             oauthForm.google_client_secret = '';
             oauthForm.google_ads_developer_token = '';
-            oauthForm.tiktok_client_secret = '';
-            oauthForm.pinterest_app_secret = '';
+            oauthForm.postiz_api_key = '';
+            oauthForm.postiz_webhook_secret = '';
         },
         onError: () => showSaveMessage('error', 'Erro ao salvar credenciais OAuth. Verifique os campos.'),
     });
@@ -578,17 +573,6 @@ const oauthProviders = [
         helpText: 'Crie um app em developers.facebook.com com permissoes de Pages, Instagram e Marketing API (Ads).',
     },
     {
-        key: 'linkedin',
-        label: 'LinkedIn',
-        color: '#0A66C2',
-        fields: [
-            { key: 'linkedin_client_id', label: 'Client ID', type: 'text' },
-            { key: 'linkedin_client_secret', label: 'Client Secret', type: 'password', isSet: props.oauthCredentials?.linkedin_client_secret_set },
-        ],
-        helpUrl: 'https://www.linkedin.com/developers/apps/',
-        helpText: 'Crie um app no LinkedIn Developers com Sign In with LinkedIn e Community Management API.',
-    },
-    {
         key: 'google',
         label: 'Google (YouTube, Analytics, Ads, Search Console)',
         color: '#4285F4',
@@ -601,26 +585,16 @@ const oauthProviders = [
         helpText: 'Crie credenciais OAuth no Google Cloud Console. Habilite YouTube Data API, Analytics Data API, Google Ads API e Search Console API. O Developer Token do Google Ads é obtido em ads.google.com → Ferramentas → Centro de API.',
     },
     {
-        key: 'tiktok',
-        label: 'TikTok',
-        color: '#000000',
+        key: 'postiz',
+        label: 'Postiz (LinkedIn, TikTok, Google My Business e demais redes)',
+        color: '#7C3AED',
         fields: [
-            { key: 'tiktok_client_key', label: 'Client Key', type: 'text' },
-            { key: 'tiktok_client_secret', label: 'Client Secret', type: 'password', isSet: props.oauthCredentials?.tiktok_client_secret_set },
+            { key: 'postiz_url', label: 'URL da API', type: 'text', hint: 'Cloud: https://api.postiz.com/public/v1. Self-hosted: https://seu-postiz.com/public/v1' },
+            { key: 'postiz_api_key', label: 'API Key', type: 'password', isSet: props.oauthCredentials?.postiz_api_key_set, hint: 'Gerada em Postiz > Settings > Developers > Public API' },
+            { key: 'postiz_webhook_secret', label: 'Webhook Secret (opcional)', type: 'password', isSet: props.oauthCredentials?.postiz_webhook_secret_set, hint: 'Use o mesmo valor no header X-Postiz-Secret do webhook Postiz' },
         ],
-        helpUrl: 'https://developers.tiktok.com/',
-        helpText: 'Registre um app no TikTok for Developers com Login Kit e Content Posting API.',
-    },
-    {
-        key: 'pinterest',
-        label: 'Pinterest',
-        color: '#BD081C',
-        fields: [
-            { key: 'pinterest_app_id', label: 'App ID', type: 'text' },
-            { key: 'pinterest_app_secret', label: 'App Secret', type: 'password', isSet: props.oauthCredentials?.pinterest_app_secret_set },
-        ],
-        helpUrl: 'https://developers.pinterest.com/',
-        helpText: 'Crie um app no Pinterest Developers com Pins e Boards API.',
+        helpUrl: 'https://docs.postiz.com/public-api/introduction',
+        helpText: 'Gera o token em Settings > Developers > Public API. A mesma API Key funciona para LinkedIn, LinkedIn Page, TikTok e Google My Business — evita gerenciar credenciais de cada rede individualmente.',
     },
 ];
 
@@ -1392,32 +1366,52 @@ onMounted(() => {
                             </div>
                         </div>
 
+                        <!-- Webhook Postiz -->
+                        <div class="rounded-2xl bg-purple-900/20 border border-purple-500/30 p-6 mb-6">
+                            <div class="flex items-start justify-between mb-3">
+                                <div>
+                                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                                        <svg class="w-4 h-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                        Webhook Postiz
+                                    </h3>
+                                    <p class="text-xs text-gray-400 mt-1">Configure esta URL no painel do Postiz para receber eventos de publicação em tempo real (opcional, recomendado).</p>
+                                </div>
+                            </div>
+
+                            <label class="block text-[10px] text-gray-400 uppercase tracking-wide mb-1">URL do webhook</label>
+                            <div class="flex items-center gap-2 rounded-lg bg-gray-900 border border-purple-500/30 px-3 py-2.5 mb-3">
+                                <code class="flex-1 text-xs text-purple-300 break-all select-all">{{ oauthCredentials?.postiz_webhook_url || ($page.props.appUrl || '') + '/webhook/postiz' }}</code>
+                                <button type="button"
+                                    @click="(e) => { navigator.clipboard?.writeText(oauthCredentials?.postiz_webhook_url || ($page.props.appUrl || '') + '/webhook/postiz'); showSaveMessage('success', 'URL copiada!'); }"
+                                    class="rounded-md bg-purple-600/30 border border-purple-500/40 px-2.5 py-1 text-[10px] font-medium text-purple-200 hover:bg-purple-600/50 transition shrink-0">
+                                    Copiar
+                                </button>
+                            </div>
+
+                            <div class="text-[11px] text-gray-400 space-y-1">
+                                <p><strong class="text-purple-300">Como configurar:</strong></p>
+                                <p>1. Acesse o painel do Postiz → <code class="text-purple-300">Settings</code> → <code class="text-purple-300">Webhooks</code></p>
+                                <p>2. Cole a URL acima no campo de endpoint</p>
+                                <p>3. (Recomendado) Defina o mesmo valor do <em>Webhook Secret</em> aqui e no header <code class="text-purple-300">X-Postiz-Secret</code> do Postiz</p>
+                                <p class="text-gray-500 italic">Eventos suportados: post publicado, post falhou. O status do agendamento é atualizado automaticamente sem precisar de polling.</p>
+                            </div>
+                        </div>
+
                         <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6 mb-6">
                             <h3 class="text-sm font-semibold text-white mb-3">URLs de Callback (Redirect URI)</h3>
-                            <p class="text-xs text-gray-500 mb-4">Cadastre estas URLs no painel de desenvolvedores de cada plataforma:</p>
+                            <p class="text-xs text-gray-500 mb-4">Cadastre estas URLs no painel de desenvolvedores das plataformas diretas:</p>
 
-                            <h4 class="text-xs font-medium text-gray-400 mb-2 mt-3">Social Media</h4>
+                            <h4 class="text-xs font-medium text-gray-400 mb-2 mt-3">Social Media (integração direta)</h4>
                             <div class="space-y-2 mb-4">
                                 <div class="flex items-center gap-2 rounded-lg bg-gray-800 px-3 py-2">
                                     <span class="text-[10px] text-gray-500 w-20 shrink-0">Meta:</span>
                                     <code class="text-xs text-emerald-400 break-all">{{ $page.props.appUrl || '' }}/social/oauth/callback/facebook</code>
                                 </div>
                                 <div class="flex items-center gap-2 rounded-lg bg-gray-800 px-3 py-2">
-                                    <span class="text-[10px] text-gray-500 w-20 shrink-0">LinkedIn:</span>
-                                    <code class="text-xs text-emerald-400 break-all">{{ $page.props.appUrl || '' }}/social/oauth/callback/linkedin</code>
-                                </div>
-                                <div class="flex items-center gap-2 rounded-lg bg-gray-800 px-3 py-2">
                                     <span class="text-[10px] text-gray-500 w-20 shrink-0">YouTube:</span>
                                     <code class="text-xs text-emerald-400 break-all">{{ $page.props.appUrl || '' }}/social/oauth/callback/youtube</code>
                                 </div>
-                                <div class="flex items-center gap-2 rounded-lg bg-gray-800 px-3 py-2">
-                                    <span class="text-[10px] text-gray-500 w-20 shrink-0">TikTok:</span>
-                                    <code class="text-xs text-emerald-400 break-all">{{ $page.props.appUrl || '' }}/social/oauth/callback/tiktok</code>
-                                </div>
-                                <div class="flex items-center gap-2 rounded-lg bg-gray-800 px-3 py-2">
-                                    <span class="text-[10px] text-gray-500 w-20 shrink-0">Pinterest:</span>
-                                    <code class="text-xs text-emerald-400 break-all">{{ $page.props.appUrl || '' }}/social/oauth/callback/pinterest</code>
-                                </div>
+                                <p class="text-[11px] text-gray-600 italic mt-2">LinkedIn, TikTok e Google My Business não precisam de callback — são gerenciados pelo Postiz.</p>
                             </div>
 
                             <h4 class="text-xs font-medium text-gray-400 mb-2">Analytics</h4>

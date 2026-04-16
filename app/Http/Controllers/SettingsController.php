@@ -152,6 +152,8 @@ class SettingsController extends Controller
             'google_ads_developer_token_set' => !empty(Setting::get('oauth', 'google_ads_developer_token')) || !empty(config('services.google_ads.developer_token')),
             'postiz_api_key_set' => !empty(Setting::get('oauth', 'postiz_api_key')) || !empty(config('services.postiz.api_key')),
             'postiz_url' => Setting::get('oauth', 'postiz_url') ?: config('services.postiz.url', 'https://api.postiz.com/public/v1'),
+            'postiz_webhook_secret_set' => !empty(Setting::get('oauth', 'postiz_webhook_secret')) || !empty(config('services.postiz.webhook_secret')),
+            'postiz_webhook_url' => rtrim(config('app.url'), '/') . '/webhook/postiz',
         ];
 
         return Inertia::render('Settings/Index', [
@@ -347,6 +349,7 @@ class SettingsController extends Controller
             'google_ads_developer_token' => 'nullable|string|max:255',
             'postiz_api_key' => 'nullable|string|max:500',
             'postiz_url' => 'nullable|url|max:500',
+            'postiz_webhook_secret' => 'nullable|string|max:255',
         ]);
 
         // Salvar apenas os que foram preenchidos (não sobrescrever com vazio)

@@ -2,11 +2,13 @@
 
 namespace App\Services\Social\Postiz;
 
+use App\Models\Setting;
 use App\Models\SystemLog;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
+use Throwable;
 
 /**
  * Cliente HTTP para a API pública do Postiz (https://api.postiz.com/public/v1).
@@ -22,13 +24,29 @@ class PostizGateway
         private readonly int $timeout = 30,
     ) {}
 
+    /**
+     * Resolve credenciais priorizando Settings (front-end) → config/env.
+     * Isso permite que o admin configure POSTIZ_API_KEY pela UI de Settings.
+     */
     public static function fromConfig(): self
     {
+        $settingUrl = self::getSetting('postiz_url');
+        $settingKey = self::getSetting('postiz_api_key');
+
         return new self(
-            baseUrl: rtrim(config('services.postiz.url', 'https://api.postiz.com/public/v1'), '/'),
-            apiKey: config('services.postiz.api_key'),
+            baseUrl: rtrim($settingUrl ?: config('services.postiz.url', 'https://api.postiz.com/public/v1'), '/'),
+            apiKey: $settingKey ?: config('services.postiz.api_key'),
             timeout: (int) config('services.postiz.timeout', 30),
         );
+    }
+
+    private static function getSetting(string $key): ?string
+    {
+        try {
+            return Setting::get('oauth', $key);
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     public function isConfigured(): bool

@@ -15,6 +15,7 @@ use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PostizIntegrationController;
+use App\Http\Controllers\PostizWebhookController;
 use App\Http\Controllers\SocialAccountController;
 use App\Http\Controllers\SocialOAuthController;
 use App\Http\Controllers\LogsController;
@@ -56,6 +57,10 @@ Route::get('/analytics/oauth/callback/{platform}', [AnalyticsController::class, 
 
 Route::get('/social/oauth/callback/{platform}', [SocialOAuthController::class, 'callback'])
     ->name('social.oauth.callback');
+
+// Webhook público do Postiz (sem auth; valida secret opcional no header X-Postiz-Secret)
+Route::post('/webhook/postiz', [PostizWebhookController::class, 'handle'])
+    ->name('webhook.postiz');
 
 /*
 |--------------------------------------------------------------------------
