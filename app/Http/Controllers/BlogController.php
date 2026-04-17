@@ -1009,7 +1009,8 @@ class BlogController extends Controller
             'cover_height'     => 'nullable|integer|min:100|max:4000',
         ]);
 
-        $brand = $request->user()?->getActiveBrand();
+        $brandId = session('current_brand_id');
+        $brand   = $brandId ? Brand::find($brandId) : null;
         if (!$brand) {
             return response()->json(['success' => false, 'error' => 'Nenhuma marca ativa selecionada.']);
         }
