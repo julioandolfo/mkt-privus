@@ -966,10 +966,10 @@ class BlogController extends Controller
 
     // ===== AUTOPILOT DE BLOG =====
 
-    public function autopilot(): Response
+    public function autopilot(Request $request): Response
     {
-        $brandId     = session('current_brand_id');
-        $brand       = $brandId ? Brand::find($brandId) : null;
+        $brand       = $request->user()?->getActiveBrand();
+        $brandId     = $brand?->id;
         $cfg         = $brand ? $brand->getContentEngineConfig() : [];
         $connections = $this->getWordPressConnections($brandId);
         $categories  = $brandId
@@ -1009,8 +1009,7 @@ class BlogController extends Controller
             'cover_height'     => 'nullable|integer|min:100|max:4000',
         ]);
 
-        $brandId = session('current_brand_id');
-        $brand   = $brandId ? Brand::find($brandId) : null;
+        $brand = $request->user()?->getActiveBrand();
         if (!$brand) {
             return response()->json(['success' => false, 'error' => 'Nenhuma marca ativa selecionada.']);
         }
