@@ -278,7 +278,7 @@ class ContentSuggestionController extends Controller
             'alt_text' => $suggestion->title,
             'metadata' => [
                 'source' => 'ai_generated',
-                'model' => $imageInfo['model'] ?? 'gpt-image-1',
+                'model' => $imageInfo['model'] ?? 'gpt-image-2',
                 'prompt' => $imageInfo['prompt'] ?? null,
             ],
         ]);

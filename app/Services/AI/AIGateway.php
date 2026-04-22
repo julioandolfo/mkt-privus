@@ -194,9 +194,9 @@ class AIGateway
         $mappedQuality = $qualityMap[$quality] ?? $quality;
 
         $hasRefImages = !empty($referenceImages);
-        // Orquestrador da Responses API (suporta a tool image_generation, que usa gpt-image-1 internamente).
+        // Orquestrador da Responses API (suporta a tool image_generation, que usa gpt-image-2 internamente).
         $orchestratorModel = 'gpt-4o';
-        $usedModel = 'gpt-image-1';
+        $usedModel = 'gpt-image-2';
 
         // Role breakdown das referências — chave para debugar vazamento de logo de terceiros.
         $refRoles = $hasRefImages ? collect($referenceImages)->map(fn($img) => $img['role'] ?? 'user_product')->countBy()->toArray() : [];
@@ -267,7 +267,7 @@ class AIGateway
         if (!$response->successful()) {
             $errorMsg = $response->json()['error']['message'] ?? $response->body();
             Log::warning("Responses API FAILED (orchestrator={$orchestratorModel}), status={$response->status()}: {$errorMsg}");
-            Log::warning("Falling back to direct Images API with gpt-image-1");
+            Log::warning("Falling back to direct Images API with gpt-image-2");
 
             return $this->generateImageFallback($apiKey, $enhancedPrompt, $referenceImages, $mappedSize, $mappedQuality, $brand, $user);
         }
@@ -359,7 +359,7 @@ class AIGateway
                 'Authorization' => "Bearer {$apiKey}",
                 'Content-Type' => 'application/json',
             ])->timeout(180)->post('https://api.openai.com/v1/images/edits', [
-                'model' => 'gpt-image-1',
+                'model' => 'gpt-image-2',
                 'images' => $imagesPayload,
                 'prompt' => $prompt,
                 'n' => 1,
@@ -371,7 +371,7 @@ class AIGateway
                 'Authorization' => "Bearer {$apiKey}",
                 'Content-Type' => 'application/json',
             ])->timeout(180)->post('https://api.openai.com/v1/images/generations', [
-                'model' => 'gpt-image-1',
+                'model' => 'gpt-image-2',
                 'prompt' => $prompt,
                 'n' => 1,
                 'size' => $size,
@@ -404,7 +404,7 @@ class AIGateway
                     'user_id' => $user->id,
                     'brand_id' => $brand?->id,
                     'provider' => 'openai',
-                    'model' => 'gpt-image-1',
+                    'model' => 'gpt-image-2',
                     'feature' => 'image_generation_fallback',
                     'input_tokens' => mb_strlen($prompt),
                     'output_tokens' => 0,
@@ -419,7 +419,7 @@ class AIGateway
             'url' => $imageUrl,
             'revised_prompt' => $imageData['revised_prompt'] ?? $prompt,
             'size' => $size,
-            'model' => 'gpt-image-1',
+            'model' => 'gpt-image-2',
             'stored_path' => $tempPath,
         ];
     }

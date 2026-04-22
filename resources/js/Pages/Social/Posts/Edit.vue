@@ -631,7 +631,7 @@ const statusOptions = [
                                 </div>
                                 <div>
                                     <h3 class="text-lg font-semibold text-white">{{ regenMediaId ? 'Regenerar Imagem' : 'Gerar Nova Imagem' }}</h3>
-                                    <p class="text-xs text-gray-500">gpt-image-1 via Responses API — preserva produtos reais</p>
+                                    <p class="text-xs text-gray-500">gpt-image-2 via Responses API — preserva produtos reais</p>
                                 </div>
                             </div>
                             <button @click="showRegenModal = false" class="text-gray-500 hover:text-white transition">

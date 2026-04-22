@@ -368,7 +368,7 @@ class BlogController extends Controller
     }
 
     /**
-     * Gerar imagem de capa com gpt-image-1 (AJAX)
+     * Gerar imagem de capa com gpt-image-2 (AJAX)
      */
     public function generateCover(Request $request): JsonResponse
     {
