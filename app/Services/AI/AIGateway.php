@@ -267,9 +267,16 @@ class AIGateway
         if (!$response->successful()) {
             $errorMsg = $response->json()['error']['message'] ?? $response->body();
             Log::warning("Responses API FAILED (orchestrator={$orchestratorModel}), status={$response->status()}: {$errorMsg}");
-            Log::warning("Falling back to direct Images API with gpt-image-2");
 
-            return $this->generateImageFallback($apiKey, $enhancedPrompt, $referenceImages, $mappedSize, $mappedQuality, $brand, $user);
+            // Se o erro é falta de verificação de organização para gpt-image-2,
+            // cai direto no Images API com gpt-image-1 (que não exige verificação).
+            $needsOrgVerification = stripos($errorMsg, 'organization must be verified') !== false
+                || stripos($errorMsg, 'verify organization') !== false;
+            $fallbackModel = $needsOrgVerification ? 'gpt-image-1' : 'gpt-image-2';
+
+            Log::warning("Falling back to direct Images API with {$fallbackModel}" . ($needsOrgVerification ? ' (org not verified for gpt-image-2)' : ''));
+
+            return $this->generateImageFallback($apiKey, $enhancedPrompt, $referenceImages, $mappedSize, $mappedQuality, $brand, $user, $fallbackModel);
         }
 
         $data = $response->json();
@@ -344,6 +351,7 @@ class AIGateway
         string $quality,
         ?Brand $brand,
         ?User $user,
+        string $model = 'gpt-image-2',
     ): array {
         // Só usar endpoint /edits se houver imagens de produto do usuário (sem role)
         $hasUserProductImages = !empty($referenceImages) && collect($referenceImages)->contains(fn($img) => empty($img['role']));
@@ -359,7 +367,7 @@ class AIGateway
                 'Authorization' => "Bearer {$apiKey}",
                 'Content-Type' => 'application/json',
             ])->timeout(180)->post('https://api.openai.com/v1/images/edits', [
-                'model' => 'gpt-image-2',
+                'model' => $model,
                 'images' => $imagesPayload,
                 'prompt' => $prompt,
                 'n' => 1,
@@ -371,7 +379,7 @@ class AIGateway
                 'Authorization' => "Bearer {$apiKey}",
                 'Content-Type' => 'application/json',
             ])->timeout(180)->post('https://api.openai.com/v1/images/generations', [
-                'model' => 'gpt-image-2',
+                'model' => $model,
                 'prompt' => $prompt,
                 'n' => 1,
                 'size' => $size,
@@ -381,6 +389,15 @@ class AIGateway
 
         if (!$response->successful()) {
             $errorMsg = $response->json()['error']['message'] ?? $response->body();
+
+            // Se gpt-image-2 falhou por organização não verificada, retry automático com gpt-image-1.
+            $needsOrgVerification = stripos($errorMsg, 'organization must be verified') !== false
+                || stripos($errorMsg, 'verify organization') !== false;
+            if ($model === 'gpt-image-2' && $needsOrgVerification) {
+                Log::warning("gpt-image-2 rejeitado por falta de verificacao — retry automatico com gpt-image-1");
+                return $this->generateImageFallback($apiKey, $prompt, $referenceImages, $size, $quality, $brand, $user, 'gpt-image-1');
+            }
+
             throw new \RuntimeException("Erro na geração de imagem: {$errorMsg}");
         }
 
@@ -404,7 +421,7 @@ class AIGateway
                     'user_id' => $user->id,
                     'brand_id' => $brand?->id,
                     'provider' => 'openai',
-                    'model' => 'gpt-image-2',
+                    'model' => $model,
                     'feature' => 'image_generation_fallback',
                     'input_tokens' => mb_strlen($prompt),
                     'output_tokens' => 0,
@@ -419,7 +436,7 @@ class AIGateway
             'url' => $imageUrl,
             'revised_prompt' => $imageData['revised_prompt'] ?? $prompt,
             'size' => $size,
-            'model' => 'gpt-image-2',
+            'model' => $model,
             'stored_path' => $tempPath,
         ];
     }
