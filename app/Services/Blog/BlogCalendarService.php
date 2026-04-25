@@ -235,7 +235,8 @@ class BlogCalendarService
                 'meta_keywords' => $result['meta_keywords'] ?? '',
                 'tags' => $result['tags'] ?? [],
                 'status' => 'pending_review',
-                'scheduled_publish_at' => $item->scheduled_date,
+                // Agendar para 09:00 do dia (horário de pico de leitura), evita publicar à meia-noite
+                'scheduled_publish_at' => Carbon::parse($item->scheduled_date)->setTime(9, 0, 0),
                 'ai_model_used' => $result['ai_model_used'] ?? null,
                 'tokens_used' => $result['tokens_used'] ?? 0,
                 'ai_metadata' => [

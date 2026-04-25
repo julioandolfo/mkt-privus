@@ -124,14 +124,44 @@ class WordPressPublishService
                 }
             }
 
-            // Adicionar SEO via Yoast/RankMath meta (se disponível)
+            // Adicionar SEO via Yoast E RankMath (envia ambos — só o ativo é usado)
             $seoMeta = [];
+            $focusKeyword = $this->extractFocusKeyword($article->meta_keywords);
+
+            // Yoast SEO
             if ($article->meta_title) {
                 $seoMeta['yoast_wpseo_title'] = $article->meta_title;
             }
             if ($article->meta_description) {
                 $seoMeta['yoast_wpseo_metadesc'] = $article->meta_description;
             }
+            if ($focusKeyword) {
+                $seoMeta['yoast_wpseo_focuskw'] = $focusKeyword;
+            }
+            if ($article->meta_keywords) {
+                $seoMeta['yoast_wpseo_metakeywords'] = $article->meta_keywords;
+            }
+            // Open Graph (Yoast usa esses campos para Facebook/LinkedIn)
+            if ($article->meta_title) {
+                $seoMeta['yoast_wpseo_opengraph-title']  = $article->meta_title;
+                $seoMeta['yoast_wpseo_twitter-title']    = $article->meta_title;
+            }
+            if ($article->meta_description) {
+                $seoMeta['yoast_wpseo_opengraph-description'] = $article->meta_description;
+                $seoMeta['yoast_wpseo_twitter-description']   = $article->meta_description;
+            }
+
+            // RankMath (mesmos dados, chaves diferentes)
+            if ($article->meta_title) {
+                $seoMeta['rank_math_title'] = $article->meta_title;
+            }
+            if ($article->meta_description) {
+                $seoMeta['rank_math_description'] = $article->meta_description;
+            }
+            if ($focusKeyword) {
+                $seoMeta['rank_math_focus_keyword'] = $focusKeyword;
+            }
+
             if (!empty($seoMeta)) {
                 $payload['meta'] = $seoMeta;
             }
@@ -699,6 +729,16 @@ class WordPressPublishService
         }
 
         return null;
+    }
+
+    /**
+     * Extrai a primeira keyword da string como focus keyword (foco SEO).
+     */
+    private function extractFocusKeyword(?string $metaKeywords): ?string
+    {
+        if (!$metaKeywords) return null;
+        $first = trim(explode(',', $metaKeywords)[0] ?? '');
+        return $first ?: null;
     }
 
     /**

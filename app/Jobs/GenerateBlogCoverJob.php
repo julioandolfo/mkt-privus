@@ -78,9 +78,16 @@ class GenerateBlogCoverJob implements ShouldQueue
                 $article->refresh();
                 $cfg = $brand->getContentEngineConfig();
                 if ((bool) ($cfg['blog_auto_approve'] ?? false) && $article->isComplete() && $article->status === 'pending_review') {
-                    $article->update(['status' => 'approved']);
-                    SystemLog::info('blog', 'cover_job.auto_approved', "Artigo #{$article->id} auto-aprovado após gerar capa", [
+                    // Se já tem destino WP + data de publicação, agenda direto (cron a cada 5 min publica)
+                    $canSchedule = $article->wordpress_connection_id && $article->scheduled_publish_at;
+                    $newStatus = $canSchedule ? 'scheduled' : 'approved';
+                    $article->update(['status' => $newStatus]);
+
+                    SystemLog::info('blog', 'cover_job.auto_approved', "Artigo #{$article->id} auto-aprovado após gerar capa (status: {$newStatus})", [
                         'article_id' => $article->id,
+                        'new_status' => $newStatus,
+                        'has_connection' => (bool) $article->wordpress_connection_id,
+                        'scheduled_for' => $article->scheduled_publish_at?->toIso8601String(),
                     ]);
                 }
             } else {

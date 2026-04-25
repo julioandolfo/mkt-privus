@@ -416,29 +416,50 @@ class BlogArticleService
             : "Use o tom de voz da marca conforme o contexto.";
 
         return <<<PROMPT
-Você é um redator profissional de blog e especialista em SEO.
-Gere um artigo completo, bem estruturado e otimizado para mecanismos de busca.
+Você é um redator profissional de blog e especialista em SEO on-page (Google Helpful Content + E-E-A-T).
+Gere um artigo COMPLETO, original e otimizado para ranquear.
 
 Contexto da marca:
 {$brandContext}
 
-Regras:
-- {$toneInstruction}
-- Use HTML semântico (h2, h3, p, ul, ol, strong, em). NÃO use h1 (o título será separado).
-- Estruture com introdução, desenvolvimento em seções (h2/h3) e conclusão
-- Use parágrafos curtos (2-3 frases) para melhor leitura web
-- Inclua listas quando apropriado para escaneabilidade
-- Linguagem natural, evite excesso de palavras-chave (SEO orgânico)
-- Conteúdo original e informativo
+DIRETRIZES DE SEO ON-PAGE (críticas):
+1. **Focus keyword**: a primeira palavra-chave informada é o "focus keyword". Inclua-a:
+   - No título (preferencialmente nos primeiros 60% do título)
+   - Nos primeiros 100 caracteres do corpo (1º parágrafo)
+   - Em pelo menos 1 H2
+   - No meta_title e meta_description
+   - 2-4 vezes ao longo do conteúdo (densidade ~1%, NUNCA force)
+2. **Variações semânticas (LSI)**: use sinônimos e termos relacionados naturalmente.
+3. **Intenção de busca**: identifique se o tema é informacional/comparativo/transacional e ajuste profundidade e CTA.
+4. **Slug-friendly title**: títulos curtos, claros, com a keyword principal — sem clickbait.
 
-Responda OBRIGATORIAMENTE neste formato JSON:
+ESTRUTURA OBRIGATÓRIA DO CONTEÚDO (HTML):
+- {$toneInstruction}
+- Use HTML semântico: h2, h3, p, ul, ol, strong, em, blockquote. NÃO use h1 (o título é separado).
+- Abertura (1-2 parágrafos): apresenta o problema/promessa e contém o focus keyword nos primeiros 100 caracteres.
+- Desenvolvimento: 3-6 seções com H2 descritivos (cada H2 deve passar a ideia mesmo lido isoladamente). Use H3 quando precisar subdividir.
+- Inclua pelo menos 1 lista (ul ou ol) e use <strong> para destacar 2-4 termos-chave (incluindo o focus keyword 1x).
+- Conclusão (h2 "Conclusão" ou similar): resumo em 2-3 frases + CTA suave alinhado à marca.
+- Quando o tema for "como fazer", "o que é", "diferença entre" — adicione uma seção FAQ no final (h2 "Perguntas frequentes" + h3 com cada pergunta + p com resposta de 2-3 frases). Isso captura rich snippets.
+- Parágrafos curtos (2-4 linhas), linguagem natural, sem keyword stuffing.
+- Conteúdo original, informativo e com profundidade suficiente para responder a intenção de busca.
+
+REGRAS DE METADADOS:
+- title: 50-60 caracteres, claro, com focus keyword no começo quando possível
+- meta_title: pode ser igual ao title ou variação — máx 60 chars
+- meta_description: 140-160 chars, persuasiva, com focus keyword e CTA implícito
+- meta_keywords: 3-6 termos separados por vírgula. O PRIMEIRO é o focus keyword.
+- tags: 3-6 tags em minúsculas, separadas, sem espaços extras
+- excerpt: 1-2 frases (máx 200 chars), reescreva — não copie a abertura
+
+Responda OBRIGATORIAMENTE neste formato JSON (apenas JSON, sem markdown):
 {
-  "title": "Título do artigo (50-60 caracteres idealmente)",
-  "content": "<h2>...</h2><p>...</p>... (HTML completo do artigo)",
-  "excerpt": "Resumo em 1-2 frases (máx 200 chars)",
-  "meta_title": "Título SEO (máx 60 chars)",
-  "meta_description": "Meta descrição (120-160 chars)",
-  "meta_keywords": "keyword1, keyword2, keyword3",
+  "title": "Título com focus keyword (50-60 chars)",
+  "content": "<p>Abertura com focus keyword nos primeiros 100 chars...</p><h2>...</h2><p>...</p><ul><li>...</li></ul><h2>Perguntas frequentes</h2><h3>...</h3><p>...</p><h2>Conclusão</h2><p>...</p>",
+  "excerpt": "Resumo único em 1-2 frases (máx 200 chars).",
+  "meta_title": "Título SEO ≤ 60 chars com focus keyword",
+  "meta_description": "Meta descrição persuasiva 140-160 chars com focus keyword e CTA implícito.",
+  "meta_keywords": "focus keyword, sinonimo1, termo relacionado, intencao",
   "tags": ["tag1", "tag2", "tag3"]
 }
 PROMPT;
@@ -446,18 +467,30 @@ PROMPT;
 
     private function buildArticleUserMessage(string $topic, ?string $keywords, ?string $instructions, ?int $wordCount): string
     {
-        $message = "Escreva um artigo sobre: {$topic}\n";
-
+        // Identificar focus keyword (primeira da lista)
+        $focusKeyword = null;
         if ($keywords) {
-            $message .= "Palavras-chave foco: {$keywords}\n";
+            $parts = array_map('trim', explode(',', $keywords));
+            $focusKeyword = $parts[0] ?? null;
+        }
+
+        $message = "Tema do artigo: {$topic}\n";
+
+        if ($focusKeyword) {
+            $message .= "Focus keyword (use conforme as diretrizes): \"{$focusKeyword}\"\n";
+        }
+        if ($keywords) {
+            $message .= "Palavras-chave (a 1ª é o focus): {$keywords}\n";
         }
 
         if ($instructions) {
             $message .= "Instruções adicionais: {$instructions}\n";
         }
 
-        $message .= "Tamanho desejado: aproximadamente {$wordCount} palavras.\n";
-        $message .= "\nGere o artigo completo em JSON conforme o formato solicitado.";
+        // Garantir tamanho mínimo competitivo para SEO (Google favorece conteúdo aprofundado)
+        $minTarget = max($wordCount ?? 800, 900);
+        $message .= "Tamanho-alvo: {$minTarget}-" . ($minTarget + 400) . " palavras (não corte ideias para encurtar).\n";
+        $message .= "\nGere o artigo completo em JSON, seguindo TODAS as diretrizes de SEO on-page.";
 
         return $message;
     }
