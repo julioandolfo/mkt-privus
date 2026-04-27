@@ -165,17 +165,22 @@ class AIGateway
                 $brandHints .= ".";
             }
 
-            // Política: posts sociais modernos NÃO aplicam logo da marca na imagem.
-            // Qualquer logotipo, wordmark ou marca visível (inclusive em fundo/produtos/placas) deve ser removido.
-            $brandHints .= "\n\nNO-LOGO POLICY (MANDATORY):";
-            $brandHints .= "\n- Do not render any logo, wordmark, brand name, monogram, badge, sticker, trademark or company insignia anywhere in the image.";
-            $brandHints .= "\n- Every label slot, product front, bottle, box, tag, shirt, cup, screen, storefront, sign, vehicle, cap and packaging surface must be fully blank or solid-color — treat them as empty surfaces.";
-            $brandHints .= "\n- If a reference image is provided only for style/color/composition guidance, extract the photographic style from it but ignore any logo it contains.";
-            $brandHints .= "\n- Compose the scene purely from the topic and the color palette — never from memory of real companies.";
-
-            // Modo de edição APENAS para imagens de produto do usuário
             if ($hasUserProductRef) {
-                $brandHints .= "\n\nPRODUCT PHOTOS PROVIDED: Keep each product's physical shape, color and texture exactly as in the reference. Any logo, third-party branding or label visible on the reference product MUST be replaced by a clean, blank surface in the output.";
+                // Foto real do produto enviada pelo usuário — preservar TUDO pixel-perfect.
+                // Os rótulos/embalagens/logos do produto SÃO o produto da marca; nao mexer.
+                $brandHints .= "\n\nUSER-PROVIDED PRODUCT PHOTO (PIXEL-PERFECT PRESERVATION):";
+                $brandHints .= "\n- A real product photograph was uploaded by the user. This is the ACTUAL product as it exists in the real world.";
+                $brandHints .= "\n- Preserve EVERYTHING on the product itself exactly as in the reference: labels, packaging text, barcodes, logos, brand marks, typography, colors, shapes, textures, materials, lighting on the product, reflections, shadows on the product. Pixel-perfect.";
+                $brandHints .= "\n- DO NOT redraw, restyle, translate, recolor, blur, simplify or 'clean up' any text, label or graphic on the product. Reproduce them as photographed.";
+                $brandHints .= "\n- You may change ONLY the surrounding scene: background, props, environment, lighting of the scene, secondary decorative elements that are clearly NOT part of the product.";
+                $brandHints .= "\n- Treat the product as an immutable photographic insert — only the world around it can change.";
+            } else {
+                // Sem foto real do produto — politica no-logo para evitar que o modelo invente logos de concorrentes.
+                $brandHints .= "\n\nNO-LOGO POLICY (MANDATORY):";
+                $brandHints .= "\n- Do not render any logo, wordmark, brand name, monogram, badge, sticker, trademark or company insignia anywhere in the image.";
+                $brandHints .= "\n- Every label slot, product front, bottle, box, tag, shirt, cup, screen, storefront, sign, vehicle, cap and packaging surface must be fully blank or solid-color — treat them as empty surfaces.";
+                $brandHints .= "\n- If a reference image is provided only for style/color/composition guidance, extract the photographic style from it but ignore any logo it contains.";
+                $brandHints .= "\n- Compose the scene purely from the topic and the color palette — never from memory of real companies.";
             }
 
             $enhancedPrompt = "{$brandHints}\n\n{$prompt}";
