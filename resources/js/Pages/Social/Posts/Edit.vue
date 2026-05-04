@@ -25,7 +25,21 @@ interface PostData {
     scheduled_at: string | null;
     ai_model_used: string | null;
     ai_prompt: string | null;
+    selected_account_ids?: number[];
     media: PostMedia[];
+}
+
+interface AccountOption {
+    id: number;
+    brand_id: number;
+    brand_name: string;
+    platform: string;
+    platform_label: string;
+    platform_color: string;
+    username: string;
+    display_name: string;
+    avatar_url?: string | null;
+    source?: string;
 }
 
 interface Platform {
@@ -50,7 +64,8 @@ const props = defineProps<{
     post: PostData;
     platforms: Platform[];
     postTypes: PostTypeOption[];
-    accounts: Array<{ id: number; platform: string; platform_label: string; platform_color: string; username: string; display_name: string }>;
+    accounts: AccountOption[];
+    activeBrandId?: number | null;
     aiModels: AIModelOption[];
 }>();
 
@@ -60,11 +75,68 @@ const form = useForm({
     hashtags: props.post.hashtags || [],
     type: props.post.type || 'feed',
     platforms: props.post.platforms || [],
+    account_ids: (props.post.selected_account_ids || []) as number[],
     scheduled_at: props.post.scheduled_at || '',
     status: props.post.status || 'draft',
     media: [] as File[],
     remove_media: [] as number[],
 });
+
+// Cross-brand grouping
+const accountsByBrand = computed(() => {
+    const groups = new Map<number, { brand_id: number; brand_name: string; accounts: AccountOption[] }>();
+    for (const acc of props.accounts) {
+        if (!groups.has(acc.brand_id)) {
+            groups.set(acc.brand_id, { brand_id: acc.brand_id, brand_name: acc.brand_name, accounts: [] });
+        }
+        groups.get(acc.brand_id)!.accounts.push(acc);
+    }
+    const list = Array.from(groups.values());
+    list.sort((a, b) => {
+        if (a.brand_id === props.activeBrandId) return -1;
+        if (b.brand_id === props.activeBrandId) return 1;
+        return a.brand_name.localeCompare(b.brand_name);
+    });
+    return list;
+});
+
+const selectedBrandsCount = computed(() => {
+    const brandIds = new Set<number>();
+    for (const id of form.account_ids) {
+        const acc = props.accounts.find(a => a.id === id);
+        if (acc) brandIds.add(acc.brand_id);
+    }
+    return brandIds.size;
+});
+
+function toggleAccount(accountId: number) {
+    const idx = form.account_ids.indexOf(accountId);
+    if (idx === -1) form.account_ids.push(accountId);
+    else form.account_ids.splice(idx, 1);
+    syncPlatformsFromAccounts();
+}
+
+function toggleAllForBrand(brandId: number) {
+    const group = accountsByBrand.value.find(g => g.brand_id === brandId);
+    if (!group) return;
+    const ids = group.accounts.map(a => a.id);
+    const allSelected = ids.every(id => form.account_ids.includes(id));
+    if (allSelected) {
+        form.account_ids = form.account_ids.filter(id => !ids.includes(id));
+    } else {
+        ids.forEach(id => { if (!form.account_ids.includes(id)) form.account_ids.push(id); });
+    }
+    syncPlatformsFromAccounts();
+}
+
+function syncPlatformsFromAccounts() {
+    const platforms = new Set<string>();
+    for (const id of form.account_ids) {
+        const acc = props.accounts.find(a => a.id === id);
+        if (acc) platforms.add(acc.platform);
+    }
+    form.platforms = Array.from(platforms);
+}
 
 // Existing media from DB
 const existingMedia = ref<PostMedia[]>([...props.post.media]);
@@ -311,6 +383,7 @@ function submit() {
     formData.append('status', form.status);
     if (form.scheduled_at) formData.append('scheduled_at', toLocalISO(form.scheduled_at));
 
+    form.account_ids.forEach((id, i) => formData.append(`account_ids[${i}]`, String(id)));
     form.platforms.forEach((p, i) => formData.append(`platforms[${i}]`, p));
     form.hashtags.forEach((h, i) => formData.append(`hashtags[${i}]`, h));
     form.media.forEach((file, i) => formData.append(`media[${i}]`, file));
@@ -364,8 +437,76 @@ const statusOptions = [
         <div class="max-w-4xl">
             <form @submit.prevent="submit" class="space-y-6">
 
-                <!-- Plataformas -->
+                <!-- Onde publicar (cross-brand) -->
                 <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                    <div class="flex items-start justify-between mb-3">
+                        <div>
+                            <h2 class="text-lg font-semibold text-white mb-1">Onde publicar</h2>
+                            <p class="text-sm text-gray-500">Selecione contas de uma ou mais empresas — o mesmo post vai para todas em paralelo.</p>
+                        </div>
+                        <div v-if="form.account_ids.length > 0" class="text-right shrink-0">
+                            <div class="text-xs text-gray-500">Selecionadas</div>
+                            <div class="text-lg font-semibold text-emerald-400">{{ form.account_ids.length }} <span class="text-xs text-gray-500">conta(s)</span></div>
+                            <div v-if="selectedBrandsCount > 1" class="text-[10px] text-purple-300">{{ selectedBrandsCount }} empresas</div>
+                        </div>
+                    </div>
+
+                    <div v-if="!accounts || accounts.length === 0" class="rounded-xl bg-amber-500/10 border border-amber-500/30 p-4 text-sm text-amber-300">
+                        Nenhuma conta social conectada nas suas empresas.
+                        <Link :href="route('social.accounts.index')" class="underline hover:text-amber-200">Conectar contas</Link>
+                    </div>
+
+                    <div v-else class="space-y-4">
+                        <div v-for="group in accountsByBrand" :key="group.brand_id" class="rounded-xl border border-gray-800 overflow-hidden">
+                            <div class="flex items-center justify-between bg-gray-800/40 px-4 py-2.5 border-b border-gray-800">
+                                <div class="flex items-center gap-2">
+                                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5"/></svg>
+                                    <span class="text-sm font-semibold text-white">{{ group.brand_name }}</span>
+                                    <span v-if="group.brand_id === activeBrandId" class="text-[10px] rounded-full bg-indigo-500/20 border border-indigo-500/40 px-1.5 py-0.5 text-indigo-300">marca ativa</span>
+                                </div>
+                                <button type="button" @click="toggleAllForBrand(group.brand_id)" class="text-[11px] text-indigo-400 hover:text-indigo-300 underline">
+                                    Marcar/desmarcar todas
+                                </button>
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 p-3">
+                                <button v-for="account in group.accounts" :key="account.id"
+                                    type="button"
+                                    @click="toggleAccount(account.id)"
+                                    :class="[
+                                        'flex items-center gap-2.5 rounded-lg border-2 p-2.5 transition-all text-left',
+                                        form.account_ids.includes(account.id)
+                                            ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_14px_rgba(16,185,129,0.35)]'
+                                            : 'border-gray-700 bg-gray-800/30 hover:border-gray-600 hover:bg-gray-800/60',
+                                    ]">
+                                    <div class="relative shrink-0">
+                                        <img v-if="account.avatar_url" :src="account.avatar_url" :alt="account.username"
+                                            class="w-9 h-9 rounded-lg object-cover" />
+                                        <div v-else class="w-9 h-9 rounded-lg flex items-center justify-center text-white text-xs font-bold"
+                                            :style="{ backgroundColor: account.platform_color }">
+                                            {{ (account.username || 'A')[0].toUpperCase() }}
+                                        </div>
+                                        <span class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border border-gray-900 flex items-center justify-center"
+                                            :style="{ backgroundColor: account.platform_color }">
+                                            <span class="text-[7px] font-bold text-white">{{ account.platform_label[0] }}</span>
+                                        </span>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="text-xs font-semibold text-white truncate">{{ account.display_name || account.username }}</div>
+                                        <div class="text-[10px] text-gray-500 truncate">{{ account.platform_label }} · @{{ account.username }}</div>
+                                    </div>
+                                    <svg v-if="form.account_ids.includes(account.id)" class="w-4 h-4 text-emerald-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.5 7.55a1 1 0 0 1-1.42.001l-3.5-3.515a1 1 0 1 1 1.42-1.41l2.79 2.802 6.79-6.836a1 1 0 0 1 1.414-.006z" clip-rule="evenodd"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <InputError :message="form.errors.account_ids" class="mt-2" />
+                </div>
+
+                <!-- Plataformas LEGADO (escondido) -->
+                <div v-if="false" class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
                     <h2 class="text-lg font-semibold text-white mb-4">Plataformas</h2>
                     <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
                         <button

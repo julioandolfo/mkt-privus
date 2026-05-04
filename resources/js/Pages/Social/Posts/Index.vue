@@ -83,6 +83,9 @@ interface Post {
     user_name: string | null;
     media: PostMedia[];
     metrics: PostMetrics | null;
+    is_shared?: boolean;
+    brand_count?: number;
+    brand_names?: string[];
 }
 
 interface TopPost {
@@ -509,6 +512,12 @@ function fmtNumber(n: number): string {
                         </div>
                         <span v-if="post.media.length > 1" class="absolute top-2 right-2 rounded-lg bg-black/60 px-2 py-1 text-xs text-white">+{{ post.media.length - 1 }}</span>
                         <span :class="['absolute top-2 left-2 rounded-lg border px-2 py-1 text-xs font-medium', statusColorClasses[post.status_color] || statusColorClasses.gray]">{{ post.status_label }}</span>
+                        <span v-if="post.is_shared && post.brand_count"
+                            class="absolute top-2 right-2 rounded-lg bg-purple-600/80 border border-purple-400/40 px-2 py-1 text-[10px] font-medium text-white flex items-center gap-1"
+                            :title="post.brand_names?.join(', ') ?? ''">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M13.828 10.172a4 4 0 0 0-5.656 0l-4 4a4 4 0 1 0 5.656 5.656l1.102-1.101m-.758-4.899a4 4 0 0 0 5.656 0l4-4a4 4 0 0 0-5.656-5.656l-1.1 1.1"/></svg>
+                            {{ post.brand_count }} marcas
+                        </span>
                         <span v-if="post.type_label" class="absolute bottom-2 left-2 rounded-lg bg-black/60 px-2 py-1 text-xs text-gray-300">{{ post.type_label }}</span>
                     </div>
 

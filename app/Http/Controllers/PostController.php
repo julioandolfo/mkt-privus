@@ -43,7 +43,7 @@ class PostController extends Controller
             ]);
         }
 
-        $query = Post::with(['media', 'user'])
+        $query = Post::with(['media', 'user', 'brands:id,name'])
             ->forBrand($brand->id)
             ->latest();
 
@@ -85,6 +85,8 @@ class PostController extends Controller
                 'synced_at' => $schedules->max('metrics_synced_at')?->diffForHumans(),
             ] : null;
 
+            $brandsList = $post->brands->pluck('name')->values();
+
             return [
                 'id' => $post->id,
                 'title' => $post->title,
@@ -101,6 +103,9 @@ class PostController extends Controller
                 'created_at' => $post->created_at->format('d/m/Y H:i'),
                 'user_name' => $post->user?->name,
                 'metrics' => $metrics,
+                'is_shared' => $brandsList->count() > 1,
+                'brand_count' => $brandsList->count(),
+                'brand_names' => $brandsList->all(),
                 'media' => $post->media->map(fn($m) => [
                     'id' => $m->id,
                     'type' => $m->type,
@@ -198,29 +203,47 @@ class PostController extends Controller
      */
     public function create(Request $request): Response
     {
-        $brand = $request->user()->getActiveBrand();
-        $accounts = [];
-
-        if ($brand) {
-            $accounts = $brand->socialAccounts()
-                ->where('is_active', true)
-                ->get()
-                ->map(fn($acc) => [
-                    'id' => $acc->id,
-                    'platform' => $acc->platform->value,
-                    'platform_label' => $acc->platform->label(),
-                    'platform_color' => $acc->platform->color(),
-                    'username' => $acc->username,
-                    'display_name' => $acc->display_name,
-                ]);
-        }
-
         return Inertia::render('Social/Posts/Create', [
             'platforms' => $this->getPlatformOptions(),
             'postTypes' => $this->getPostTypeOptions(),
-            'accounts' => $accounts,
+            'accounts' => $this->buildAccessibleAccountsPayload($request),
+            'activeBrandId' => $request->user()->getActiveBrand()?->id,
             'aiModels' => $this->getAIModelOptions(),
         ]);
+    }
+
+    /**
+     * Retorna todas as contas sociais ativas das brands às quais o usuário
+     * tem acesso (via pivô brand_user). Cada item inclui brand_id e brand_name
+     * para a UI agrupar por empresa e o usuário escolher cross-brand.
+     */
+    private function buildAccessibleAccountsPayload(Request $request): array
+    {
+        $brandIds = $request->user()->brands()->pluck('brands.id');
+
+        if ($brandIds->isEmpty()) {
+            return [];
+        }
+
+        return SocialAccount::whereIn('brand_id', $brandIds)
+            ->where('is_active', true)
+            ->with('brand:id,name')
+            ->orderBy('brand_id')
+            ->orderBy('platform')
+            ->get()
+            ->map(fn($acc) => [
+                'id' => $acc->id,
+                'brand_id' => $acc->brand_id,
+                'brand_name' => $acc->brand?->name,
+                'platform' => $acc->platform->value,
+                'platform_label' => $acc->platform->label(),
+                'platform_color' => $acc->platform->color(),
+                'username' => $acc->username,
+                'display_name' => $acc->display_name,
+                'avatar_url' => $acc->avatar_url,
+                'source' => $acc->source ?? 'direct',
+            ])
+            ->toArray();
     }
 
     /**
@@ -240,12 +263,41 @@ class PostController extends Controller
             'hashtags' => 'nullable|array',
             'hashtags.*' => 'string|max:100',
             'type' => 'required|string',
-            'platforms' => 'required|array|min:1',
+            'account_ids' => 'nullable|array',
+            'account_ids.*' => 'integer|exists:social_accounts,id',
+            'platforms' => 'nullable|array',
             'platforms.*' => 'string',
             'scheduled_at' => 'nullable|date|after:2 minutes ago',
             'media' => 'nullable|array|max:10',
             'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,mov,avi,webm|max:102400',
         ]);
+
+        // Resolve as contas selecionadas. Aceita o novo fluxo (account_ids[]) e
+        // faz fallback para o legado (platforms[] + brand ativa) se necessário.
+        $accounts = $this->resolveSelectedAccounts(
+            $request,
+            $validated['account_ids'] ?? null,
+            $validated['platforms'] ?? null,
+            $brand->id,
+        );
+
+        if ($accounts === null) {
+            return redirect()->back()->withErrors([
+                'account_ids' => 'Você não tem acesso a uma das contas selecionadas.',
+            ]);
+        }
+
+        if ($accounts->isEmpty() && empty($validated['platforms'] ?? [])) {
+            return redirect()->back()->withErrors([
+                'account_ids' => 'Selecione pelo menos uma conta para publicar.',
+            ]);
+        }
+
+        $platforms = $accounts->isNotEmpty()
+            ? $accounts->pluck('platform')->map(fn($p) => $p instanceof SocialPlatform ? $p->value : $p)->unique()->values()->all()
+            : ($validated['platforms'] ?? []);
+
+        $brandIds = $accounts->pluck('brand_id')->filter()->unique()->values();
 
         $scheduledAt = !empty($validated['scheduled_at'])
             ? \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'))
@@ -256,16 +308,23 @@ class PostController extends Controller
             : PostStatus::Draft;
 
         $post = Post::create([
-            'brand_id' => $brand->id,
+            'brand_id' => $brandIds->first() ?? $brand->id,
             'user_id' => $request->user()->id,
             'title' => $validated['title'] ?? null,
             'caption' => $validated['caption'],
             'hashtags' => $validated['hashtags'] ?? [],
             'type' => $validated['type'],
             'status' => $status,
-            'platforms' => $validated['platforms'],
+            'platforms' => $platforms,
             'scheduled_at' => $scheduledAt,
         ]);
+
+        // Vincula o post a TODAS as brands envolvidas (cross-brand visibility).
+        if ($brandIds->isNotEmpty()) {
+            $post->brands()->sync($brandIds->all());
+        } else {
+            $post->brands()->sync([$brand->id]);
+        }
 
         // Upload de midias
         if ($request->hasFile('media')) {
@@ -297,20 +356,105 @@ class PostController extends Controller
             }
         }
 
-        // Criar PostSchedules para cada conta conectada (necessario para autopilot)
-        if (!empty($validated['scheduled_at']) && $brand) {
+        // Criar PostSchedules diretamente das contas selecionadas (cross-brand).
+        if (!empty($validated['scheduled_at']) && $accounts->isNotEmpty()) {
+            $this->syncSchedulesFromAccounts($post, $accounts);
+        } elseif (!empty($validated['scheduled_at']) && $accounts->isEmpty() && $brand) {
+            // Fallback legado: platforms[] + brand ativa (chamadas antigas).
             $this->syncPostSchedules($post, $brand->id);
         }
 
         $scheduledCount = $post->schedules()->count();
+        $brandCount = $brandIds->count() ?: 1;
         $msg = 'Post criado com sucesso!';
         if (!empty($validated['scheduled_at']) && $scheduledCount === 0) {
             $msg .= ' Atenção: nenhuma conta social conectada encontrada para publicação automática. Conecte contas em Social > Contas.';
         } elseif (!empty($validated['scheduled_at']) && $scheduledCount > 0) {
-            $msg .= " Agendado para {$scheduledCount} conta(s).";
+            $msg .= $brandCount > 1
+                ? " Agendado para {$scheduledCount} conta(s) em {$brandCount} marca(s)."
+                : " Agendado para {$scheduledCount} conta(s).";
         }
 
         return redirect()->route('social.posts.index')->with('success', $msg);
+    }
+
+    /**
+     * Carrega os SocialAccount IDs informados e valida que todas pertencem
+     * a brands em que o usuário tem acesso (via pivô brand_user).
+     *
+     * Retorna:
+     *  - Collection de SocialAccount (vazia se nada selecionado e fluxo legado)
+     *  - null se houve violação de permissão (caller deve abortar)
+     */
+    private function resolveSelectedAccounts(
+        Request $request,
+        ?array $accountIds,
+        ?array $platforms,
+        int $activeBrandId,
+    ): ?\Illuminate\Support\Collection {
+        if (empty($accountIds)) {
+            return collect();
+        }
+
+        $userBrandIds = $request->user()->brands()->pluck('brands.id')->all();
+        $accounts = SocialAccount::whereIn('id', $accountIds)
+            ->where('is_active', true)
+            ->get();
+
+        // Permissão: cada conta selecionada deve pertencer a uma brand do usuário.
+        foreach ($accounts as $account) {
+            if (!in_array($account->brand_id, $userBrandIds, true)) {
+                return null;
+            }
+        }
+
+        return $accounts;
+    }
+
+    /**
+     * Cria/atualiza PostSchedules a partir da lista de contas selecionadas.
+     * Cada conta vira um schedule, com platform vindo do próprio SocialAccount.
+     */
+    private function syncSchedulesFromAccounts(Post $post, \Illuminate\Support\Collection $accounts): void
+    {
+        $scheduledAt = $post->scheduled_at;
+
+        if (!$scheduledAt) {
+            return;
+        }
+
+        // Remove schedules de contas que não estão mais selecionadas (apenas pendentes).
+        PostSchedule::where('post_id', $post->id)
+            ->whereIn('status', ['pending', 'publishing'])
+            ->whereNotIn('social_account_id', $accounts->pluck('id'))
+            ->delete();
+
+        foreach ($accounts as $account) {
+            $existing = PostSchedule::where('post_id', $post->id)
+                ->where('social_account_id', $account->id)
+                ->whereIn('status', ['pending', 'publishing'])
+                ->first();
+
+            if ($existing) {
+                $existing->update(['scheduled_at' => $scheduledAt]);
+                continue;
+            }
+
+            PostSchedule::create([
+                'post_id'           => $post->id,
+                'social_account_id' => $account->id,
+                'platform'          => $account->platform->value,
+                'status'            => 'pending',
+                'scheduled_at'      => $scheduledAt,
+                'attempts'          => 0,
+                'max_attempts'      => 3,
+            ]);
+        }
+
+        Log::info("PostSchedule cross-brand: {$accounts->count()} schedule(s) sincronizados para post #{$post->id}", [
+            'scheduled_at' => $scheduledAt,
+            'brands' => $accounts->pluck('brand_id')->unique()->values()->all(),
+        ]);
     }
 
     /**
@@ -320,24 +464,15 @@ class PostController extends Controller
     {
         $this->authorizePost($request, $post);
 
-        $post->load('media');
+        $post->load(['media', 'schedules']);
 
-        $brand = $request->user()->getActiveBrand();
-        $accounts = [];
-
-        if ($brand) {
-            $accounts = $brand->socialAccounts()
-                ->where('is_active', true)
-                ->get()
-                ->map(fn($acc) => [
-                    'id' => $acc->id,
-                    'platform' => $acc->platform->value,
-                    'platform_label' => $acc->platform->label(),
-                    'platform_color' => $acc->platform->color(),
-                    'username' => $acc->username,
-                    'display_name' => $acc->display_name,
-                ]);
-        }
+        // Pré-marcação: ids das contas que já têm schedules vivos.
+        $selectedAccountIds = $post->schedules
+            ->whereIn('status', ['pending', 'publishing', 'published'])
+            ->pluck('social_account_id')
+            ->unique()
+            ->values()
+            ->all();
 
         return Inertia::render('Social/Posts/Edit', [
             'post' => [
@@ -351,6 +486,7 @@ class PostController extends Controller
                 'scheduled_at' => $post->scheduled_at?->format('Y-m-d\TH:i'),
                 'ai_model_used' => $post->ai_model_used,
                 'ai_prompt' => $post->ai_prompt,
+                'selected_account_ids' => $selectedAccountIds,
                 'media' => $post->media->map(fn($m) => [
                     'id' => $m->id,
                     'type' => $m->type,
@@ -362,7 +498,8 @@ class PostController extends Controller
             ],
             'platforms' => $this->getPlatformOptions(),
             'postTypes' => $this->getPostTypeOptions(),
-            'accounts' => $accounts,
+            'accounts' => $this->buildAccessibleAccountsPayload($request),
+            'activeBrandId' => $request->user()->getActiveBrand()?->id,
             'aiModels' => $this->getAIModelOptions(),
         ]);
     }
@@ -380,7 +517,9 @@ class PostController extends Controller
             'hashtags' => 'nullable|array',
             'hashtags.*' => 'string|max:100',
             'type' => 'required|string',
-            'platforms' => 'required|array|min:1',
+            'account_ids' => 'nullable|array',
+            'account_ids.*' => 'integer|exists:social_accounts,id',
+            'platforms' => 'nullable|array',
             'platforms.*' => 'string',
             'scheduled_at' => 'nullable|date',
             'status' => 'nullable|string',
@@ -389,6 +528,25 @@ class PostController extends Controller
             'remove_media' => 'nullable|array',
             'remove_media.*' => 'integer',
         ]);
+
+        $brand = $request->user()->getActiveBrand();
+
+        $accounts = $this->resolveSelectedAccounts(
+            $request,
+            $validated['account_ids'] ?? null,
+            $validated['platforms'] ?? null,
+            $brand?->id ?? 0,
+        );
+
+        if ($accounts === null) {
+            return redirect()->back()->withErrors([
+                'account_ids' => 'Você não tem acesso a uma das contas selecionadas.',
+            ]);
+        }
+
+        $platforms = $accounts->isNotEmpty()
+            ? $accounts->pluck('platform')->map(fn($p) => $p instanceof SocialPlatform ? $p->value : $p)->unique()->values()->all()
+            : ($validated['platforms'] ?? $post->platforms ?? []);
 
         $scheduledAt = !empty($validated['scheduled_at'])
             ? \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'))
@@ -405,10 +563,18 @@ class PostController extends Controller
             'caption' => $validated['caption'],
             'hashtags' => $validated['hashtags'] ?? [],
             'type' => $validated['type'],
-            'platforms' => $validated['platforms'],
+            'platforms' => $platforms,
             'scheduled_at' => $scheduledAt,
             'status' => $status,
         ]);
+
+        // Re-sincroniza pivô brands se contas explícitas foram fornecidas.
+        if ($accounts->isNotEmpty()) {
+            $brandIds = $accounts->pluck('brand_id')->filter()->unique()->values()->all();
+            if (!empty($brandIds)) {
+                $post->brands()->sync($brandIds);
+            }
+        }
 
         // Remover midias
         if (!empty($validated['remove_media'])) {
@@ -456,8 +622,10 @@ class PostController extends Controller
 
         // Sincronizar PostSchedules se há agendamento
         if (!empty($validated['scheduled_at'])) {
-            $brand = $request->user()->getActiveBrand();
-            if ($brand) {
+            if ($accounts->isNotEmpty()) {
+                $this->syncSchedulesFromAccounts($post, $accounts);
+            } elseif ($brand) {
+                // Fallback legado: platforms[] sem account_ids[].
                 $this->syncPostSchedules($post, $brand->id);
             }
         }
@@ -1711,9 +1879,18 @@ class PostController extends Controller
 
     private function authorizePost(Request $request, Post $post): void
     {
-        $brand = $request->user()->getActiveBrand();
+        // Edição compartilhada: usuário precisa apenas ter acesso a alguma das
+        // brands em que o post está vinculado (via pivô post_brand).
+        $userBrandIds = $request->user()->brands()->pluck('brands.id')->all();
+        $postBrandIds = $post->brands()->pluck('brands.id')->all();
 
-        if (!$brand || $post->brand_id !== $brand->id) {
+        // Compatibilidade: se o post ainda não foi migrado para a pivô (raro),
+        // cai no brand_id legado.
+        if (empty($postBrandIds) && $post->brand_id) {
+            $postBrandIds = [$post->brand_id];
+        }
+
+        if (empty(array_intersect($userBrandIds, $postBrandIds))) {
             abort(403, 'Acesso negado.');
         }
     }

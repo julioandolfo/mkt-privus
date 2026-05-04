@@ -8,6 +8,7 @@ use App\Enums\SocialPlatform;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -43,9 +44,21 @@ class Post extends Model
 
     // ===== RELATIONSHIPS =====
 
+    /**
+     * Brand "criadora" do post — usada como referência inicial e para auditoria.
+     * A visibilidade real é determinada pela relação brands() (N-N via post_brand).
+     */
     public function brand(): BelongsTo
     {
         return $this->belongsTo(Brand::class);
+    }
+
+    /**
+     * Brands em que o post está visível/agendado. Posts cross-brand têm múltiplas.
+     */
+    public function brands(): BelongsToMany
+    {
+        return $this->belongsToMany(Brand::class, 'post_brand')->withTimestamps();
     }
 
     public function user(): BelongsTo
@@ -65,9 +78,13 @@ class Post extends Model
 
     // ===== SCOPES =====
 
+    /**
+     * Filtra posts visíveis para uma brand. Usa a pivô post_brand para suportar
+     * posts cross-brand (publicados simultaneamente em várias empresas).
+     */
     public function scopeForBrand($query, int $brandId)
     {
-        return $query->where('brand_id', $brandId);
+        return $query->whereHas('brands', fn($q) => $q->where('brands.id', $brandId));
     }
 
     public function scopeDrafts($query)
