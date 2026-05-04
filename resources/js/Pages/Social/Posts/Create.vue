@@ -49,6 +49,7 @@ const form = useForm({
 const mediaInput = ref<HTMLInputElement | null>(null);
 const mediaPreviews = ref<Array<{ file: File; url: string; type: string }>>([]);
 const dragOver = ref(false);
+const mediaError = ref('');
 
 // AI Generation (legenda)
 const aiModalOpen = ref(false);
@@ -178,19 +179,62 @@ function onDrop(event: DragEvent) {
 }
 
 function addFiles(files: File[]) {
-    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime', 'video/x-msvideo'];
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
+    const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'avi', 'webm', 'm4v'];
+    const videoExtensions = ['mp4', 'mov', 'avi', 'webm', 'm4v'];
     const maxSize = 50 * 1024 * 1024; // 50MB
+    const errors: string[] = [];
+
+    console.log('[media] addFiles chamado com', files.length, 'arquivo(s)', files.map(f => ({
+        name: f.name,
+        type: f.type || '(vazio)',
+        sizeMB: (f.size / 1024 / 1024).toFixed(2),
+    })));
 
     for (const file of files) {
-        if (!validTypes.includes(file.type)) continue;
-        if (file.size > maxSize) continue;
-        if (mediaPreviews.value.length >= 10) break;
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        const mimeOk = validTypes.includes(file.type);
+        const extOk = validExtensions.includes(ext);
 
-        const url = URL.createObjectURL(file);
-        const type = file.type.startsWith('video/') ? 'video' : 'image';
-        mediaPreviews.value.push({ file, url, type });
-        form.media.push(file);
+        if (!mimeOk && !extOk) {
+            const reason = `Tipo nao suportado: ${file.name} (mime=${file.type || 'vazio'}, ext=${ext || 'nenhuma'})`;
+            console.warn('[media] rejeitado:', reason);
+            errors.push(`"${file.name}" - formato nao suportado (${file.type || 'sem tipo'})`);
+            continue;
+        }
+
+        if (file.size > maxSize) {
+            const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+            console.warn(`[media] rejeitado por tamanho: ${file.name} = ${sizeMB}MB (max 50MB)`);
+            errors.push(`"${file.name}" - ${sizeMB}MB excede o limite de 50MB`);
+            continue;
+        }
+
+        if (mediaPreviews.value.length >= 10) {
+            console.warn('[media] limite de 10 arquivos atingido, ignorando restantes');
+            errors.push('Limite de 10 arquivos por post atingido');
+            break;
+        }
+
+        try {
+            const url = URL.createObjectURL(file);
+            const isVideo = file.type.startsWith('video/') || videoExtensions.includes(ext);
+            const type = isVideo ? 'video' : 'image';
+            mediaPreviews.value.push({ file, url, type });
+            form.media.push(file);
+            console.log(`[media] adicionado: ${file.name} como ${type}`);
+        } catch (e) {
+            console.error('[media] erro ao criar preview:', e);
+            errors.push(`"${file.name}" - falha ao gerar preview`);
+        }
     }
+
+    mediaError.value = errors.length ? errors.join(' | ') : '';
+    console.log('[media] estado atual:', {
+        previews: mediaPreviews.value.length,
+        formMedia: form.media.length,
+        errors: errors.length,
+    });
 }
 
 function removeMedia(index: number) {
@@ -527,12 +571,12 @@ const toneOptions = [
                             <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                         </svg>
                         <p class="text-sm text-gray-400">Arraste arquivos aqui ou <span class="text-indigo-400">clique para selecionar</span></p>
-                        <p class="text-xs text-gray-600 mt-1">JPG, PNG, GIF, WEBP, MP4 - Máx. 50MB por arquivo</p>
+                        <p class="text-xs text-gray-600 mt-1">JPG, PNG, GIF, WEBP, MP4, MOV, WEBM, AVI - Máx. 50MB por arquivo</p>
                         <input
                             ref="mediaInput"
                             type="file"
                             multiple
-                            accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime"
+                            accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/x-msvideo,video/webm,.mp4,.mov,.avi,.webm,.m4v"
                             class="hidden"
                             @change="onFileSelect"
                         />
@@ -569,6 +613,12 @@ const toneOptions = [
                                 Vídeo
                             </span>
                         </div>
+                    </div>
+                    <div v-if="mediaError" class="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-300 flex items-start gap-2">
+                        <svg class="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                        </svg>
+                        <span>{{ mediaError }}</span>
                     </div>
                     <InputError :message="form.errors.media" class="mt-2" />
                 </div>
