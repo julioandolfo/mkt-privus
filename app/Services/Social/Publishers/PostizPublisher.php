@@ -159,23 +159,26 @@ class PostizPublisher extends AbstractPublisher
     {
         $base = ['__type' => $postizType];
 
+        // data_get é null-safe: aceita $post->metadata sendo null sem disparar
+        // "Trying to access array offset on null" warning.
+        $meta = $post->metadata;
+        $autoAddMusic = data_get($meta, 'tiktok.autoAddMusic', 'no');
+
         return match ($postizType) {
             'linkedin' => $base,
             'linkedin-page' => $base + [
-                'post_as_images_carousel' => (bool) ($post->metadata['linkedin']['carousel'] ?? false),
-                'carousel_name' => $post->metadata['linkedin']['carousel_name'] ?? '',
+                'post_as_images_carousel' => (bool) data_get($meta, 'linkedin.carousel', false),
+                'carousel_name' => data_get($meta, 'linkedin.carousel_name', ''),
             ],
             'tiktok' => $base + [
-                'privacy_level' => $post->metadata['tiktok']['privacy_level'] ?? 'PUBLIC_TO_EVERYONE',
-                'duet' => (bool) ($post->metadata['tiktok']['duet'] ?? true),
-                'stitch' => (bool) ($post->metadata['tiktok']['stitch'] ?? true),
-                'comment' => (bool) ($post->metadata['tiktok']['comment'] ?? true),
-                'autoAddMusic' => in_array($post->metadata['tiktok']['autoAddMusic'] ?? 'no', ['yes', 'no'], true)
-                    ? $post->metadata['tiktok']['autoAddMusic']
-                    : 'no',
-                'brand_content_toggle' => (bool) ($post->metadata['tiktok']['brand_content_toggle'] ?? false),
-                'brand_organic_toggle' => (bool) ($post->metadata['tiktok']['brand_organic_toggle'] ?? false),
-                'content_posting_method' => $post->metadata['tiktok']['content_posting_method'] ?? 'DIRECT_POST',
+                'privacy_level' => data_get($meta, 'tiktok.privacy_level', 'PUBLIC_TO_EVERYONE'),
+                'duet' => (bool) data_get($meta, 'tiktok.duet', true),
+                'stitch' => (bool) data_get($meta, 'tiktok.stitch', true),
+                'comment' => (bool) data_get($meta, 'tiktok.comment', true),
+                'autoAddMusic' => in_array($autoAddMusic, ['yes', 'no'], true) ? $autoAddMusic : 'no',
+                'brand_content_toggle' => (bool) data_get($meta, 'tiktok.brand_content_toggle', false),
+                'brand_organic_toggle' => (bool) data_get($meta, 'tiktok.brand_organic_toggle', false),
+                'content_posting_method' => data_get($meta, 'tiktok.content_posting_method', 'DIRECT_POST'),
             ],
             'gmb' => $base,
             default => $base,
