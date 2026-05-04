@@ -244,7 +244,7 @@ class PostController extends Controller
             'platforms.*' => 'string',
             'scheduled_at' => 'nullable|date|after:2 minutes ago',
             'media' => 'nullable|array|max:10',
-            'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,mov,avi|max:51200',
+            'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,mov,avi,webm|max:102400',
         ]);
 
         $scheduledAt = !empty($validated['scheduled_at'])
@@ -385,7 +385,7 @@ class PostController extends Controller
             'scheduled_at' => 'nullable|date',
             'status' => 'nullable|string',
             'media' => 'nullable|array|max:10',
-            'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,mov,avi|max:51200',
+            'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,mov,avi,webm|max:102400',
             'remove_media' => 'nullable|array',
             'remove_media.*' => 'integer',
         ]);

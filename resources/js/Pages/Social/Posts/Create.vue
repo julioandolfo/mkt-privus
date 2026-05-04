@@ -182,7 +182,7 @@ function addFiles(files: File[]) {
     const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
     const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'avi', 'webm', 'm4v'];
     const videoExtensions = ['mp4', 'mov', 'avi', 'webm', 'm4v'];
-    const maxSize = 50 * 1024 * 1024; // 50MB
+    const maxSize = 100 * 1024 * 1024; // 100MB
     const errors: string[] = [];
 
     console.log('[media] addFiles chamado com', files.length, 'arquivo(s)', files.map(f => ({
@@ -206,7 +206,7 @@ function addFiles(files: File[]) {
         if (file.size > maxSize) {
             const sizeMB = (file.size / 1024 / 1024).toFixed(1);
             console.warn(`[media] rejeitado por tamanho: ${file.name} = ${sizeMB}MB (max 50MB)`);
-            errors.push(`"${file.name}" - ${sizeMB}MB excede o limite de 50MB`);
+            errors.push(`"${file.name}" - ${sizeMB}MB excede o limite de 100MB`);
             continue;
         }
 
@@ -571,7 +571,7 @@ const toneOptions = [
                             <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                         </svg>
                         <p class="text-sm text-gray-400">Arraste arquivos aqui ou <span class="text-indigo-400">clique para selecionar</span></p>
-                        <p class="text-xs text-gray-600 mt-1">JPG, PNG, GIF, WEBP, MP4, MOV, WEBM, AVI - Máx. 50MB por arquivo</p>
+                        <p class="text-xs text-gray-600 mt-1">JPG, PNG, GIF, WEBP, MP4, MOV, WEBM, AVI - Máx. 100MB por arquivo</p>
                         <input
                             ref="mediaInput"
                             type="file"
