@@ -229,7 +229,15 @@ class PostizGateway
     private function throwApiError(string $prefix, Response $response): never
     {
         $body = $response->json() ?? ['raw' => substr($response->body(), 0, 500)];
-        $message = $response->json('message') ?? $response->json('error') ?? $prefix;
+        $rawMessage = $response->json('message') ?? $response->json('error') ?? $prefix;
+
+        // Postiz retorna message como array em erros de validação:
+        //   { "message": ["posts.0.settings.autoAddMusic must be one of..."] }
+        // Achata pra string pra evitar "Array to string conversion" e expor o
+        // erro real no PostSchedule.error_message.
+        $message = is_array($rawMessage)
+            ? implode(' | ', array_map(fn($m) => is_scalar($m) ? (string) $m : json_encode($m), $rawMessage))
+            : (string) $rawMessage;
 
         SystemLog::error('social', 'postiz.api.error', $prefix, [
             'status' => $response->status(),

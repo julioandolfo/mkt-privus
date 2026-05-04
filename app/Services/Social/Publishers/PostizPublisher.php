@@ -170,6 +170,9 @@ class PostizPublisher extends AbstractPublisher
                 'duet' => (bool) ($post->metadata['tiktok']['duet'] ?? true),
                 'stitch' => (bool) ($post->metadata['tiktok']['stitch'] ?? true),
                 'comment' => (bool) ($post->metadata['tiktok']['comment'] ?? true),
+                'autoAddMusic' => in_array($post->metadata['tiktok']['autoAddMusic'] ?? 'no', ['yes', 'no'], true)
+                    ? $post->metadata['tiktok']['autoAddMusic']
+                    : 'no',
                 'brand_content_toggle' => (bool) ($post->metadata['tiktok']['brand_content_toggle'] ?? false),
                 'brand_organic_toggle' => (bool) ($post->metadata['tiktok']['brand_organic_toggle'] ?? false),
                 'content_posting_method' => $post->metadata['tiktok']['content_posting_method'] ?? 'DIRECT_POST',
