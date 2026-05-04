@@ -101,17 +101,36 @@ class PostizGateway
      */
     public function uploadFromUrl(string $publicUrl): array
     {
+        SystemLog::info('social', 'postiz.upload.start', "Postiz: upload via URL", [
+            'url' => $publicUrl,
+        ]);
+
         $response = $this->client()->post('/upload-from-url', [
             'url' => $publicUrl,
         ]);
 
         if (!$response->successful()) {
-            $this->throwApiError('Falha ao enviar mídia via URL para Postiz', $response);
+            $this->throwApiError("Falha ao enviar mídia via URL para Postiz (url={$publicUrl})", $response);
         }
 
         $data = $response->json();
+
+        if (!is_array($data)) {
+            SystemLog::error('social', 'postiz.upload.invalid_body', 'Postiz upload-from-url retornou body não-JSON', [
+                'url' => $publicUrl,
+                'status' => $response->status(),
+                'raw_body' => substr($response->body(), 0, 500),
+            ]);
+            throw new RuntimeException("Postiz upload-from-url retornou body inválido (url={$publicUrl}, status={$response->status()}).");
+        }
+
         if (empty($data['id']) || empty($data['path'])) {
-            throw new RuntimeException('Postiz upload-from-url não retornou id/path.');
+            SystemLog::error('social', 'postiz.upload.missing_fields', 'Postiz upload-from-url sem id/path', [
+                'url' => $publicUrl,
+                'response_keys' => array_keys($data),
+                'response_sample' => array_slice($data, 0, 5, true),
+            ]);
+            throw new RuntimeException("Postiz upload-from-url não retornou id/path (url={$publicUrl}). A URL precisa ser pública e acessível pelo Postiz Cloud.");
         }
 
         return ['id' => $data['id'], 'path' => $data['path']];
