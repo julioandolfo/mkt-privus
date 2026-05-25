@@ -255,9 +255,9 @@ function onDrop(event: DragEvent) {
 }
 
 function addFiles(files: File[]) {
-    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
-    const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'avi', 'webm', 'm4v'];
-    const videoExtensions = ['mp4', 'mov', 'avi', 'webm', 'm4v'];
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4'];
+    const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4'];
+    const videoExtensions = ['mp4'];
     const maxSize = 100 * 1024 * 1024; // 100MB
     const errors: string[] = [];
 
@@ -734,7 +734,7 @@ const toneOptions = [
                             ref="mediaInput"
                             type="file"
                             multiple
-                            accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/x-msvideo,video/webm,.mp4,.mov,.avi,.webm,.m4v"
+                            accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,.mp4"
                             class="hidden"
                             @change="onFileSelect"
                         />
