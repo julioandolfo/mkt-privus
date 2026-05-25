@@ -937,6 +937,127 @@ class PostController extends Controller
     }
 
     /**
+     * Reenvia apenas as contas cujo schedule mais recente falhou — sem tocar nas
+     * que já publicaram (evita duplicar o post nas redes que deram certo).
+     */
+    public function republishFailed(Request $request, Post $post): \Illuminate\Http\JsonResponse
+    {
+        $this->authorizePost($request, $post);
+
+        if ($post->status->value === 'publishing') {
+            return response()->json(['message' => 'Este post já está sendo publicado.'], 422);
+        }
+
+        // Contas cujo schedule mais recente está 'failed'.
+        $failedAccountIds = $post->schedules()
+            ->get()
+            ->groupBy(fn($s) => $s->social_account_id ?: ('platform:' . ($s->platform->value ?? $s->platform)))
+            ->map(fn($group) => $group->sortByDesc('id')->first())
+            ->filter(fn($s) => $s->status === 'failed' && $s->social_account_id)
+            ->pluck('social_account_id')
+            ->unique()
+            ->values();
+
+        if ($failedAccountIds->isEmpty()) {
+            return response()->json(['message' => 'Nenhuma publicação falhada para reenviar.'], 422);
+        }
+
+        $accounts = SocialAccount::whereIn('id', $failedAccountIds)
+            ->where('is_active', true)
+            ->get();
+
+        if ($accounts->isEmpty()) {
+            return response()->json([
+                'message' => 'As contas que falharam não estão mais conectadas/ativas. Reconecte em Social > Contas.',
+            ], 422);
+        }
+
+        $now = now();
+        $post->update(['status' => 'publishing', 'scheduled_at' => $now]);
+
+        $results = [];
+
+        foreach ($accounts as $account) {
+            $schedule = PostSchedule::where('post_id', $post->id)
+                ->where('social_account_id', $account->id)
+                ->latest('id')
+                ->first();
+
+            if ($schedule && $schedule->status === 'published') {
+                continue;
+            }
+
+            if ($schedule) {
+                $schedule->update([
+                    'status'            => 'publishing',
+                    'scheduled_at'      => $now,
+                    'attempts'          => $schedule->attempts + 1,
+                    'last_attempted_at' => $now,
+                    'error_message'     => null,
+                ]);
+            } else {
+                $schedule = PostSchedule::create([
+                    'post_id'           => $post->id,
+                    'social_account_id' => $account->id,
+                    'platform'          => $account->platform->value,
+                    'status'            => 'publishing',
+                    'scheduled_at'      => $now,
+                    'attempts'          => 1,
+                    'max_attempts'      => 3,
+                    'last_attempted_at' => $now,
+                ]);
+            }
+
+            try {
+                \App\Jobs\PublishPostJob::dispatchSync($schedule);
+                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => true];
+            } catch (\Throwable $e) {
+                $schedule->markAsFailed("Erro na republicação: {$e->getMessage()}");
+                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => false, 'error' => $e->getMessage()];
+                \App\Models\SystemLog::error('social', 'post.republish_failed.error', "Erro ao reenviar post #{$post->id} em {$account->platform->value}", [
+                    'post_id'    => $post->id,
+                    'account_id' => $account->id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $succeeded = collect($results)->where('ok', true)->count();
+        $failed = collect($results)->where('ok', false);
+
+        \App\Models\SystemLog::info('social', 'post.republish_failed', "Reenvio das falhas do post #{$post->id}: {$succeeded}/" . count($results) . " conta(s) OK", [
+            'post_id'   => $post->id,
+            'results'   => $results,
+            'user_id'   => $request->user()->id,
+        ]);
+
+        // Recalcula status — mantém "Publicado" em sucesso parcial (preserva published_at original).
+        $post->refresh();
+        $allSchedules = $post->schedules()->get();
+        $anyPublished = $allSchedules->contains(fn($s) => $s->status === 'published');
+        $allFinal = $allSchedules->every(fn($s) => in_array($s->status, ['published', 'failed']));
+
+        if ($anyPublished && $allFinal) {
+            $post->update(['status' => PostStatus::Published, 'published_at' => $post->published_at ?? now()]);
+        } elseif ($allFinal && !$anyPublished) {
+            $post->update(['status' => PostStatus::Failed]);
+        }
+
+        if ($failed->isNotEmpty()) {
+            $errorSummary = $failed->map(fn($r) => "{$r['platform']}: {$r['error']}")->implode('; ');
+            return response()->json([
+                'message' => $succeeded > 0
+                    ? "Reenviado em {$succeeded} conta(s), mas ainda falhou em {$failed->count()}: {$errorSummary}"
+                    : "Falha ao reenviar: {$errorSummary}",
+            ], $succeeded > 0 ? 200 : 422);
+        }
+
+        return response()->json([
+            'message' => "Reenviado com sucesso em {$succeeded} conta(s)!",
+        ]);
+    }
+
+    /**
      * Cria ou atualiza os PostSchedules para cada conta conectada correspondente às plataformas do post.
      * Somente cria schedules pendentes (não toca os que já foram published/publishing).
      */
