@@ -646,6 +646,7 @@ class InstagramPublisher extends AbstractPublisher
                 'waited_s'    => $waited,
                 'status_code' => $statusCode,
                 'is_video'    => $isVideo,
+                'poll_error'  => $pollResponse->json('error'),
             ]);
 
             if ($statusCode === 'FINISHED') {
@@ -661,6 +662,20 @@ class InstagramPublisher extends AbstractPublisher
 
             if ($statusCode === 'EXPIRED') {
                 return $this->fail($post, 'Container expirou antes de ser publicado.');
+            }
+
+            // Imagens: a Graph API frequentemente NÃO retorna status_code para
+            // containers de imagem (ficam prontos imediatamente). Sem um status
+            // utilizável, seguimos para a publicação — o publishContainer re-tenta
+            // caso o container ainda não esteja pronto (subcode 2207027). Sem isso,
+            // toda imagem cairia no timeout aguardando um "FINISHED" que nunca vem.
+            if (!$isVideo && ($statusCode === null || $statusCode === '')) {
+                SystemLog::info('social', 'ig.container.image_ready', "Instagram: container de imagem sem status_code, seguindo para publicação", [
+                    'post_id'     => $post->id,
+                    'creation_id' => $creationId,
+                    'waited_s'    => $waited,
+                ]);
+                return null;
             }
 
             // IN_PROGRESS ou status desconhecido — continuar aguardando
