@@ -3,7 +3,6 @@
 namespace App\Services\Social;
 
 use App\Enums\SocialPlatform;
-use App\Models\Post;
 use App\Models\PostSchedule;
 use App\Services\Social\Publishers\AbstractPublisher;
 use App\Services\Social\Publishers\FacebookPublisher;
@@ -31,9 +30,14 @@ class PostPublisherService
         }
 
         if (!$account) {
-            // Publicacao sem conta vinculada - simular publicacao direta
-            Log::info("Autopilot: Publicando post #{$post->id} sem conta vinculada na plataforma {$schedule->platform->label()}");
-            return $this->publishWithoutAccount($post, $schedule->platform);
+            // Sem conta vinculada não há como publicar de fato. Falhar honestamente
+            // em vez de simular sucesso (que marcava o post como publicado sem enviar nada).
+            $msg = "Nenhuma conta {$schedule->platform->label()} conectada a esta publicação. Reconecte a conta em Social > Contas.";
+            Log::warning("Autopilot: schedule #{$schedule->id} sem conta vinculada — publicação abortada", [
+                'post_id'  => $post->id,
+                'platform' => $schedule->platform->value,
+            ]);
+            return PublishResult::fail($msg);
         }
 
         $publisher = $this->resolvePublisher($schedule->platform);
@@ -43,24 +47,6 @@ class PostPublisherService
         }
 
         return $publisher->publish($post, $account);
-    }
-
-    /**
-     * Publica sem conta social vinculada (apenas simula com log).
-     * Util quando o usuario cria schedule sem ter conta conectada.
-     */
-    private function publishWithoutAccount(Post $post, SocialPlatform $platform): PublishResult
-    {
-        Log::info("Autopilot [{$platform->label()}]: Publicação simulada (sem conta)", [
-            'post_id' => $post->id,
-            'caption_preview' => mb_substr($post->caption, 0, 50),
-        ]);
-
-        usleep(300000); // Simular latencia
-
-        $fakeId = strtolower($platform->value) . '_sim_' . uniqid();
-
-        return PublishResult::ok($fakeId);
     }
 
     /**

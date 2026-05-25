@@ -77,6 +77,7 @@ interface Post {
     status_label: string;
     status_color: string;
     platforms: string[];
+    failed_platforms?: { platform: string; platform_label: string; error: string | null }[];
     scheduled_at: string | null;
     published_at: string | null;
     created_at: string;
@@ -533,6 +534,21 @@ function fmtNumber(n: number): string {
                             </span>
                         </div>
 
+                        <!-- Alerta de falha por rede (publicação parcial) -->
+                        <div v-if="post.failed_platforms && post.failed_platforms.length" class="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-2">
+                            <div class="flex items-start gap-1.5">
+                                <svg class="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                <div class="min-w-0">
+                                    <p class="text-[11px] font-semibold text-red-300">
+                                        Não publicado em {{ post.failed_platforms.map(f => f.platform_label).join(', ') }}
+                                    </p>
+                                    <p v-for="f in post.failed_platforms" :key="f.platform" class="text-[10px] text-red-400/80 truncate" :title="f.error || ''">
+                                        {{ f.platform_label }}: {{ f.error || 'Erro desconhecido' }}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Metrics Bar (for published posts) -->
                         <div v-if="post.metrics" class="rounded-xl bg-gray-800/50 border border-gray-700/50 p-2.5 mb-3">
                             <div class="grid grid-cols-4 gap-2 text-center">
@@ -655,9 +671,17 @@ function fmtNumber(n: number): string {
                                 </td>
                                 <!-- Status -->
                                 <td class="px-3 py-3">
-                                    <span :class="['rounded-lg border px-2 py-1 text-[10px] font-medium', statusColorClasses[post.status_color] || statusColorClasses.gray]">
-                                        {{ post.status_label }}
-                                    </span>
+                                    <div class="flex items-center gap-1.5">
+                                        <span :class="['rounded-lg border px-2 py-1 text-[10px] font-medium', statusColorClasses[post.status_color] || statusColorClasses.gray]">
+                                            {{ post.status_label }}
+                                        </span>
+                                        <span v-if="post.failed_platforms && post.failed_platforms.length"
+                                            class="inline-flex items-center gap-0.5 rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-medium text-red-300"
+                                            :title="post.failed_platforms.map(f => `${f.platform_label}: ${f.error || 'Erro desconhecido'}`).join('\n')">
+                                            <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                            {{ post.failed_platforms.length }}
+                                        </span>
+                                    </div>
                                 </td>
                                 <!-- Platforms -->
                                 <td class="px-3 py-3">

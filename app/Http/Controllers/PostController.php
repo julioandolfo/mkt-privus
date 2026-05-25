@@ -87,6 +87,22 @@ class PostController extends Controller
 
             $brandsList = $post->brands->pluck('name')->values();
 
+            // Status real por conta: pega o schedule mais recente de cada conta/plataforma
+            // e expõe os que falharam. Permite à UI sinalizar falha por rede mesmo quando
+            // o post está marcado como "Publicado" (publicação parcial).
+            $failedPlatforms = $post->schedules()
+                ->get()
+                ->groupBy(fn($s) => $s->social_account_id ?: ('platform:' . ($s->platform->value ?? $s->platform)))
+                ->map(fn($group) => $group->sortByDesc('id')->first())
+                ->filter(fn($s) => $s->status === 'failed')
+                ->map(fn($s) => [
+                    'platform' => $s->platform instanceof SocialPlatform ? $s->platform->value : (string) $s->platform,
+                    'platform_label' => $s->platform instanceof SocialPlatform ? $s->platform->label() : (string) $s->platform,
+                    'error' => $s->error_message,
+                ])
+                ->values()
+                ->all();
+
             return [
                 'id' => $post->id,
                 'title' => $post->title,
@@ -98,6 +114,7 @@ class PostController extends Controller
                 'status_label' => $post->status->label(),
                 'status_color' => $post->status->color(),
                 'platforms' => $post->platforms ?? [],
+                'failed_platforms' => $failedPlatforms,
                 'scheduled_at' => $post->scheduled_at?->format('d/m/Y H:i'),
                 'published_at' => $post->published_at?->format('d/m/Y H:i'),
                 'created_at' => $post->created_at->format('d/m/Y H:i'),
