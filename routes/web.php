@@ -157,6 +157,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/{post}/publish-now', [PostController::class, 'publishNow'])->name('publish-now');
             Route::post('/{post}/cancel-publish', [PostController::class, 'cancelPublish'])->name('cancel-publish');
             Route::post('/{post}/republish', [PostController::class, 'republish'])->name('republish');
+            Route::post('/{post}/republish-failed', [PostController::class, 'republishFailed'])->name('republish-failed');
             Route::get('/{post}/analyze-media', [PostController::class, 'analyzeMedia'])->name('analyze-media');
             Route::post('/{post}/regenerate-image', [PostController::class, 'regenerateImage'])->name('regenerate-image');
             Route::post('/sync-metrics', [PostController::class, 'syncMetrics'])->name('sync-metrics');
