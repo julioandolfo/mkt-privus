@@ -744,7 +744,16 @@ class PostController extends Controller
             // Executar publicação síncrona (não depende do queue worker)
             try {
                 \App\Jobs\PublishPostJob::dispatchSync($schedule);
-                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => true];
+                // dispatchSync não lança ao falhar o publish — o job marca o schedule
+                // como 'failed' e retorna. Confere o status real em vez de assumir sucesso.
+                $schedule->refresh();
+                $ok = $schedule->status === 'published';
+                $results[] = [
+                    'account'  => $account->username,
+                    'platform' => $account->platform->value,
+                    'ok'       => $ok,
+                    'error'    => $ok ? null : ($schedule->error_message ?? 'Falha desconhecida'),
+                ];
             } catch (\Throwable $e) {
                 $schedule->markAsFailed("Erro na publicação: {$e->getMessage()}");
                 $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => false, 'error' => $e->getMessage()];
@@ -887,7 +896,16 @@ class PostController extends Controller
 
             try {
                 \App\Jobs\PublishPostJob::dispatchSync($schedule);
-                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => true];
+                // dispatchSync não lança ao falhar o publish — o job marca o schedule
+                // como 'failed' e retorna. Confere o status real em vez de assumir sucesso.
+                $schedule->refresh();
+                $ok = $schedule->status === 'published';
+                $results[] = [
+                    'account'  => $account->username,
+                    'platform' => $account->platform->value,
+                    'ok'       => $ok,
+                    'error'    => $ok ? null : ($schedule->error_message ?? 'Falha desconhecida'),
+                ];
             } catch (\Throwable $e) {
                 $schedule->markAsFailed("Erro na republicação: {$e->getMessage()}");
                 $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => false, 'error' => $e->getMessage()];
@@ -1010,7 +1028,16 @@ class PostController extends Controller
 
             try {
                 \App\Jobs\PublishPostJob::dispatchSync($schedule);
-                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => true];
+                // dispatchSync não lança ao falhar o publish — o job marca o schedule
+                // como 'failed' e retorna. Confere o status real em vez de assumir sucesso.
+                $schedule->refresh();
+                $ok = $schedule->status === 'published';
+                $results[] = [
+                    'account'  => $account->username,
+                    'platform' => $account->platform->value,
+                    'ok'       => $ok,
+                    'error'    => $ok ? null : ($schedule->error_message ?? 'Falha desconhecida'),
+                ];
             } catch (\Throwable $e) {
                 $schedule->markAsFailed("Erro na republicação: {$e->getMessage()}");
                 $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => false, 'error' => $e->getMessage()];
