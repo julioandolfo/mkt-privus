@@ -298,12 +298,16 @@ function onDrop(e: DragEvent) {
 }
 
 function addFiles(files: File[]) {
-    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime', 'video/x-msvideo'];
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4'];
+    const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4'];
     for (const file of files) {
-        if (!validTypes.includes(file.type) || file.size > 50 * 1024 * 1024) continue;
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        const ok = validTypes.includes(file.type) || validExtensions.includes(ext);
+        if (!ok || file.size > 50 * 1024 * 1024) continue;
         if (existingMedia.value.length + mediaPreviews.value.length >= 10) break;
         const url = URL.createObjectURL(file);
-        mediaPreviews.value.push({ file, url, type: file.type.startsWith('video/') ? 'video' : 'image' });
+        const isVideo = file.type.startsWith('video/') || ext === 'mp4';
+        mediaPreviews.value.push({ file, url, type: isVideo ? 'video' : 'image' });
         form.media.push(file);
     }
 }
@@ -628,7 +632,7 @@ const statusOptions = [
                             <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                         </svg>
                         <p class="text-sm text-gray-400">Adicionar mais arquivos</p>
-                        <input ref="mediaInput" type="file" multiple accept="image/jpeg,image/png,image/gif,image/webp,video/mp4" class="hidden" @change="onFileSelect" />
+                        <input ref="mediaInput" type="file" multiple accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,.mp4" class="hidden" @change="onFileSelect" />
                     </div>
                 </div>
 

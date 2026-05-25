@@ -286,7 +286,7 @@ class PostController extends Controller
             'platforms.*' => 'string',
             'scheduled_at' => 'nullable|date|after:2 minutes ago',
             'media' => 'nullable|array|max:10',
-            'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,mov,avi,webm|max:102400',
+            'media.*' => 'file|extensions:jpg,jpeg,png,gif,webp,mp4|max:102400',
         ]);
 
         // Resolve as contas selecionadas. Aceita o novo fluxo (account_ids[]) e
@@ -351,7 +351,14 @@ class PostController extends Controller
             foreach ($request->file('media') as $index => $file) {
                 $path = $file->store("posts/{$post->id}", 'public');
                 $mimeType = $file->getMimeType();
-                $isVideo = str_starts_with($mimeType, 'video/');
+                // Classifica por extensão também: alguns .mp4 chegam com mime vazio/genérico
+                // e cairiam erroneamente como imagem (quebrando a publicação no Instagram).
+                $isVideo = str_starts_with((string) $mimeType, 'video/')
+                    || strtolower($file->getClientOriginalExtension()) === 'mp4';
+
+                if ($isVideo && !str_starts_with((string) $mimeType, 'video/')) {
+                    $mimeType = 'video/mp4';
+                }
 
                 // Normalizar vídeo para Reels (1080×1920, H.264+AAC)
                 if ($isVideo && $isReel && $normalizer->isAvailable()) {
@@ -541,7 +548,7 @@ class PostController extends Controller
             'scheduled_at' => 'nullable|date',
             'status' => 'nullable|string',
             'media' => 'nullable|array|max:10',
-            'media.*' => 'file|mimes:jpg,jpeg,png,gif,webp,mp4,mov,avi,webm|max:102400',
+            'media.*' => 'file|extensions:jpg,jpeg,png,gif,webp,mp4|max:102400',
             'remove_media' => 'nullable|array',
             'remove_media.*' => 'integer',
         ]);
@@ -616,7 +623,14 @@ class PostController extends Controller
             foreach ($request->file('media') as $index => $file) {
                 $path = $file->store("posts/{$post->id}", 'public');
                 $mimeType = $file->getMimeType();
-                $isVideo = str_starts_with($mimeType, 'video/');
+                // Classifica por extensão também: alguns .mp4 chegam com mime vazio/genérico
+                // e cairiam erroneamente como imagem (quebrando a publicação no Instagram).
+                $isVideo = str_starts_with((string) $mimeType, 'video/')
+                    || strtolower($file->getClientOriginalExtension()) === 'mp4';
+
+                if ($isVideo && !str_starts_with((string) $mimeType, 'video/')) {
+                    $mimeType = 'video/mp4';
+                }
 
                 if ($isVideo && $isReel && $normalizer->isAvailable()) {
                     $path = $this->normalizeVideoForReels($normalizer, $path);
@@ -744,7 +758,16 @@ class PostController extends Controller
             // Executar publicação síncrona (não depende do queue worker)
             try {
                 \App\Jobs\PublishPostJob::dispatchSync($schedule);
-                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => true];
+                // dispatchSync não lança ao falhar o publish — o job marca o schedule
+                // como 'failed' e retorna. Confere o status real em vez de assumir sucesso.
+                $schedule->refresh();
+                $ok = $schedule->status === 'published';
+                $results[] = [
+                    'account'  => $account->username,
+                    'platform' => $account->platform->value,
+                    'ok'       => $ok,
+                    'error'    => $ok ? null : ($schedule->error_message ?? 'Falha desconhecida'),
+                ];
             } catch (\Throwable $e) {
                 $schedule->markAsFailed("Erro na publicação: {$e->getMessage()}");
                 $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => false, 'error' => $e->getMessage()];
@@ -887,7 +910,16 @@ class PostController extends Controller
 
             try {
                 \App\Jobs\PublishPostJob::dispatchSync($schedule);
-                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => true];
+                // dispatchSync não lança ao falhar o publish — o job marca o schedule
+                // como 'failed' e retorna. Confere o status real em vez de assumir sucesso.
+                $schedule->refresh();
+                $ok = $schedule->status === 'published';
+                $results[] = [
+                    'account'  => $account->username,
+                    'platform' => $account->platform->value,
+                    'ok'       => $ok,
+                    'error'    => $ok ? null : ($schedule->error_message ?? 'Falha desconhecida'),
+                ];
             } catch (\Throwable $e) {
                 $schedule->markAsFailed("Erro na republicação: {$e->getMessage()}");
                 $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => false, 'error' => $e->getMessage()];
@@ -1010,7 +1042,16 @@ class PostController extends Controller
 
             try {
                 \App\Jobs\PublishPostJob::dispatchSync($schedule);
-                $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => true];
+                // dispatchSync não lança ao falhar o publish — o job marca o schedule
+                // como 'failed' e retorna. Confere o status real em vez de assumir sucesso.
+                $schedule->refresh();
+                $ok = $schedule->status === 'published';
+                $results[] = [
+                    'account'  => $account->username,
+                    'platform' => $account->platform->value,
+                    'ok'       => $ok,
+                    'error'    => $ok ? null : ($schedule->error_message ?? 'Falha desconhecida'),
+                ];
             } catch (\Throwable $e) {
                 $schedule->markAsFailed("Erro na republicação: {$e->getMessage()}");
                 $results[] = ['account' => $account->username, 'platform' => $account->platform->value, 'ok' => false, 'error' => $e->getMessage()];
