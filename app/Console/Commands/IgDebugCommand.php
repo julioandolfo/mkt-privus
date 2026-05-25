@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Post;
 use App\Models\SystemLog;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -17,7 +18,8 @@ class IgDebugCommand extends Command
     protected $signature = 'ig:debug
         {post : ID do post}
         {--full : Mostrar o context JSON completo de cada log}
-        {--limit=80 : Máximo de logs a exibir}';
+        {--limit=80 : Máximo de logs a exibir}
+        {--skip-http : Não testar a URL pública da mídia via HTTP}';
 
     protected $description = 'Diagnóstico de publicação social de um post (mídia, schedules e logs)';
 
@@ -56,17 +58,21 @@ class IgDebugCommand extends Command
 
         $rows = [];
         $warnings = [];
+        $checkHttp = !$this->option('skip-http');
 
         foreach ($post->media->sortBy('order') as $media) {
             $exists = $media->file_path ? Storage::disk('public')->exists($media->file_path) : false;
             $url = rtrim((string) config('app.url'), '/') . '/storage/' . ltrim((string) $media->file_path, '/');
             $ext = strtolower(pathinfo((string) $media->file_path, PATHINFO_EXTENSION));
 
+            $http = $checkHttp ? $this->probeUrl($url) : ['label' => '(pulado)', 'ok' => true, 'note' => null];
+
             $rows[] = [
                 $media->id,
                 $media->type,
                 $ext ?: '-',
                 $exists ? 'sim' : 'NÃO',
+                $http['label'],
                 $url,
             ];
 
@@ -80,9 +86,12 @@ class IgDebugCommand extends Command
                 $warnings[] = "Mídia #{$media->id}: arquivo NÃO existe no disco public ({$media->file_path}). "
                     . 'A URL pública dará 404 e o Instagram não consegue baixar.';
             }
+            if ($http['note']) {
+                $warnings[] = "Mídia #{$media->id}: {$http['note']}";
+            }
         }
 
-        $this->table(['ID', 'type', 'ext', 'no disco?', 'public_url'], $rows);
+        $this->table(['ID', 'type', 'ext', 'no disco?', 'HTTP', 'public_url'], $rows);
 
         foreach ($warnings as $w) {
             $this->warn('⚠ ' . $w);
@@ -162,6 +171,32 @@ class IgDebugCommand extends Command
 
         $this->newLine();
         $this->line('Dica: --full mostra o context completo; --limit=200 traz mais logs.');
+    }
+
+    /**
+     * Testa a URL pública como o Instagram faria: status HTTP + content-type.
+     */
+    private function probeUrl(string $url): array
+    {
+        try {
+            $resp = Http::timeout(8)->withHeaders(['User-Agent' => 'PrivusBot/ig-debug'])->head($url);
+            $status = $resp->status();
+            $ctype = strtolower((string) $resp->header('Content-Type'));
+            $short = trim(explode(';', $ctype)[0]) ?: '?';
+
+            $note = null;
+            if ($status >= 400) {
+                $note = "URL pública retornou HTTP {$status} — o Instagram não consegue baixar a mídia "
+                    . '(confira php artisan storage:link e se o arquivo existe no disco).';
+            } elseif (!str_starts_with($ctype, 'image/') && !str_starts_with($ctype, 'video/')) {
+                $note = "URL pública retornou '{$short}' em vez de imagem/vídeo "
+                    . '(provável storage:link quebrado servindo HTML). O Instagram trava processando e dá timeout.';
+            }
+
+            return ['label' => "{$status} {$short}", 'ok' => $note === null, 'note' => $note];
+        } catch (\Throwable $e) {
+            return ['label' => 'ERRO', 'ok' => false, 'note' => 'Falha ao acessar a URL pública: ' . $e->getMessage()];
+        }
     }
 
     /**
