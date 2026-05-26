@@ -632,11 +632,11 @@ class InstagramPublisher extends AbstractPublisher
             $waited += 2;
         }
 
-        $authErrors = 0;
+        $unreadable = 0; // polls consecutivos sem status legível (vazio ou erro de auth)
 
         while ($waited < $maxWait) {
             $pollResponse = Http::get(self::BASE_URL . "/{$creationId}", [
-                'fields'       => 'status_code,status',
+                'fields'       => 'status_code',
                 'access_token' => $token,
             ]);
 
@@ -657,8 +657,13 @@ class InstagramPublisher extends AbstractPublisher
             }
 
             if ($statusCode === 'ERROR') {
-                $errDetail  = $pollResponse->json('status') ?? 'Unknown processing error';
-                $extraHint  = $this->getVideoProcessingHint($errDetail, $pollResponse->json());
+                // Detalhe do erro vem no campo `status` (busca à parte para não
+                // arriscar o poll principal com campos extras).
+                $errDetail = Http::get(self::BASE_URL . "/{$creationId}", [
+                    'fields'       => 'status',
+                    'access_token' => $token,
+                ])->json('status') ?? 'Erro de processamento desconhecido';
+                $extraHint   = $this->getVideoProcessingHint($errDetail, $pollResponse->json());
                 $fullMessage = "Erro ao processar mídia no Instagram: {$errDetail}{$extraHint}";
                 return $this->fail($post, $fullMessage, $pollResponse->json());
             }
@@ -667,43 +672,52 @@ class InstagramPublisher extends AbstractPublisher
                 return $this->fail($post, 'Container expirou antes de ser publicado.');
             }
 
-            // Imagens: a Graph API frequentemente NÃO retorna status_code para
-            // containers de imagem (ficam prontos imediatamente). Sem um status
-            // utilizável, seguimos para a publicação — o publishContainer re-tenta
-            // caso o container ainda não esteja pronto (subcode 2207027). Sem isso,
-            // toda imagem cairia no timeout aguardando um "FINISHED" que nunca vem.
-            if (!$isVideo && ($statusCode === null || $statusCode === '')) {
-                SystemLog::info('social', 'ig.container.image_ready', "Instagram: container de imagem sem status_code, seguindo para publicação", [
-                    'post_id'     => $post->id,
-                    'creation_id' => $creationId,
-                    'waited_s'    => $waited,
-                ]);
-                return null;
-            }
+            // Status não legível: ou a Graph API não retornou status_code (comum
+            // em imagem), ou devolveu erro de autorização ao LER o status (code
+            // 100/subcode 33) mesmo com o token tendo permissão de PUBLICAR. Como
+            // a leitura do status é só uma otimização, seguimos para a publicação
+            // — o publishContainer re-tenta se o container ainda não estiver pronto
+            // (subcode 2207027). Imagem publica de imediato; vídeo espera uma folga
+            // mínima para o processamento antes de tentar.
+            if ($statusCode === null || $statusCode === '') {
+                $unreadable++;
 
-            // Erro de autorização ao LER o status (code 190 = token expirado;
-            // code 100/subcode 33 = sem permissão para ler o container). O token
-            // até cria/publica (instagram_content_publish), mas não lê o status
-            // (precisa instagram_basic). Não adianta esperar os 120s — falha já
-            // com mensagem acionável. Tolera 2 ocorrências por transiência.
-            $errCode = $pollError['code'] ?? null;
-            $errSub  = $pollError['error_subcode'] ?? null;
-            if ($pollError && ($errCode === 190 || ($errCode === 100 && $errSub === 33))) {
-                if (++$authErrors >= 3) {
-                    $detail = $pollError['message'] ?? 'Authorization Error';
-                    return $this->fail(
-                        $post,
-                        "Não foi possível ler o status do container no Instagram ({$detail}, code {$errCode}"
-                        . ($errSub ? "/subcode {$errSub}" : '') . '). A conta não tem permissão de leitura. '
-                        . 'Reconecte a conta do Instagram concedendo todas as permissões (instagram_basic + instagram_content_publish).',
-                        $pollError
-                    );
+                if (!$isVideo) {
+                    SystemLog::info('social', 'ig.container.image_ready', "Instagram: container de imagem sem status_code, seguindo para publicação", [
+                        'post_id'     => $post->id,
+                        'creation_id' => $creationId,
+                        'waited_s'    => $waited,
+                    ]);
+                    return null;
                 }
+
+                if ($unreadable >= 3 && $waited >= 25) {
+                    SystemLog::warning('social', 'ig.container.status_unreadable', "Instagram: status do container ilegível (vídeo), seguindo para publicação após {$waited}s", [
+                        'post_id'     => $post->id,
+                        'creation_id' => $creationId,
+                        'waited_s'    => $waited,
+                        'poll_error'  => $pollError,
+                    ]);
+                    return null;
+                }
+            } else {
+                $unreadable = 0; // status legível (ex.: IN_PROGRESS)
             }
 
-            // IN_PROGRESS ou status desconhecido — continuar aguardando
+            // IN_PROGRESS ou ainda sem leitura — continuar aguardando
             sleep($interval);
             $waited += $interval;
+        }
+
+        // Esgotou o tempo. Para vídeo, melhor tentar publicar (provavelmente já
+        // processou) do que falhar — o publishContainer re-tenta se não estiver pronto.
+        if ($isVideo) {
+            SystemLog::warning('social', 'ig.container.poll_timeout', "Instagram: tempo de espera esgotado, tentando publicar mesmo assim", [
+                'post_id'     => $post->id,
+                'creation_id' => $creationId,
+                'waited_s'    => $waited,
+            ]);
+            return null;
         }
 
         return $this->fail($post, "Timeout ({$waited}s) aguardando processamento de mídia no Instagram.");
