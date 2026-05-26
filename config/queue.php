@@ -40,7 +40,10 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            // Deve ser MAIOR que o maior timeout de job (PublishPostJob = 280s),
+            // senão um job de vídeo ainda em execução é considerado abandonado e
+            // reprocessado — publicando o post duas vezes.
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 320),
             'after_commit' => false,
         ],
 
@@ -68,7 +71,8 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 90),
+            // Maior que o timeout do PublishPostJob (280s) — ver nota na conexão 'database'.
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 320),
             'block_for' => null,
             'after_commit' => false,
         ],
