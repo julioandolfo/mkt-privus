@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Post;
+use App\Models\PostSchedule;
 use App\Models\SystemLog;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
@@ -16,7 +17,7 @@ use Illuminate\Support\Facades\Storage;
 class IgDebugCommand extends Command
 {
     protected $signature = 'ig:debug
-        {post : ID do post}
+        {post? : ID do post (omita para listar as falhas recentes)}
         {--full : Mostrar o context JSON completo de cada log}
         {--limit=80 : Máximo de logs a exibir}
         {--skip-http : Não testar a URL pública da mídia via HTTP}';
@@ -25,6 +26,10 @@ class IgDebugCommand extends Command
 
     public function handle(): int
     {
+        if ($this->argument('post') === null) {
+            return $this->listRecentFailures();
+        }
+
         $postId = (int) $this->argument('post');
         $post = Post::with(['media', 'schedules.socialAccount'])->find($postId);
 
@@ -42,6 +47,39 @@ class IgDebugCommand extends Command
         $this->renderMedia($post);
         $this->renderSchedules($post);
         $this->renderLogs($post);
+
+        return Command::SUCCESS;
+    }
+
+    /**
+     * Lista os schedules que falharam recentemente, com o ID do post, para
+     * o usuário descobrir qual post inspecionar com `ig:debug <id>`.
+     */
+    private function listRecentFailures(): int
+    {
+        $failures = PostSchedule::with('post:id,title')
+            ->where('status', 'failed')
+            ->orderByDesc('id')
+            ->limit(20)
+            ->get();
+
+        if ($failures->isEmpty()) {
+            $this->info('Nenhum schedule com falha recente.');
+            return Command::SUCCESS;
+        }
+
+        $this->info('Falhas recentes (use o post_id em: php artisan ig:debug <id>)');
+        $this->table(
+            ['post_id', 'título', 'plataforma', 'tent.', 'quando', 'erro'],
+            $failures->map(fn($s) => [
+                $s->post_id,
+                mb_substr((string) ($s->post?->title ?? '-'), 0, 28),
+                $s->platform->value ?? $s->platform,
+                $s->attempts . '/' . $s->max_attempts,
+                $s->updated_at?->format('d/m H:i') ?? '-',
+                mb_substr((string) $s->error_message, 0, 50),
+            ])->toArray()
+        );
 
         return Command::SUCCESS;
     }
