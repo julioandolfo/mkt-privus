@@ -632,6 +632,8 @@ class InstagramPublisher extends AbstractPublisher
             $waited += 2;
         }
 
+        $authErrors = 0;
+
         while ($waited < $maxWait) {
             $pollResponse = Http::get(self::BASE_URL . "/{$creationId}", [
                 'fields'       => 'status_code,status',
@@ -639,6 +641,7 @@ class InstagramPublisher extends AbstractPublisher
             ]);
 
             $statusCode = $pollResponse->json('status_code');
+            $pollError  = $pollResponse->json('error');
 
             SystemLog::info('social', 'ig.container.poll', "Instagram: aguardando container ({$waited}s)", [
                 'post_id'     => $post->id,
@@ -646,7 +649,7 @@ class InstagramPublisher extends AbstractPublisher
                 'waited_s'    => $waited,
                 'status_code' => $statusCode,
                 'is_video'    => $isVideo,
-                'poll_error'  => $pollResponse->json('error'),
+                'poll_error'  => $pollError,
             ]);
 
             if ($statusCode === 'FINISHED') {
@@ -676,6 +679,26 @@ class InstagramPublisher extends AbstractPublisher
                     'waited_s'    => $waited,
                 ]);
                 return null;
+            }
+
+            // Erro de autorização ao LER o status (code 190 = token expirado;
+            // code 100/subcode 33 = sem permissão para ler o container). O token
+            // até cria/publica (instagram_content_publish), mas não lê o status
+            // (precisa instagram_basic). Não adianta esperar os 120s — falha já
+            // com mensagem acionável. Tolera 2 ocorrências por transiência.
+            $errCode = $pollError['code'] ?? null;
+            $errSub  = $pollError['error_subcode'] ?? null;
+            if ($pollError && ($errCode === 190 || ($errCode === 100 && $errSub === 33))) {
+                if (++$authErrors >= 3) {
+                    $detail = $pollError['message'] ?? 'Authorization Error';
+                    return $this->fail(
+                        $post,
+                        "Não foi possível ler o status do container no Instagram ({$detail}, code {$errCode}"
+                        . ($errSub ? "/subcode {$errSub}" : '') . '). A conta não tem permissão de leitura. '
+                        . 'Reconecte a conta do Instagram concedendo todas as permissões (instagram_basic + instagram_content_publish).',
+                        $pollError
+                    );
+                }
             }
 
             // IN_PROGRESS ou status desconhecido — continuar aguardando
