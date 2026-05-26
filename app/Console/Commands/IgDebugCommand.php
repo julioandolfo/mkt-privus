@@ -46,9 +46,64 @@ class IgDebugCommand extends Command
 
         $this->renderMedia($post);
         $this->renderSchedules($post);
+        $this->renderInstagramToken($post);
         $this->renderLogs($post);
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * Mostra os scopes reais do token do Instagram (via debug_token). Sem
+     * instagram_basic o token publica mas não lê o status do container —
+     * causa do "Authorization Error (code 100/33)" e do timeout em Reels.
+     */
+    private function renderInstagramToken(Post $post): void
+    {
+        if ($this->option('skip-http')) {
+            return;
+        }
+
+        $account = $post->schedules
+            ->first(fn($s) => (($s->platform->value ?? $s->platform) === 'instagram') && $s->socialAccount)
+            ?->socialAccount;
+
+        if (!$account) {
+            return;
+        }
+
+        $this->info("--- Token Instagram (@{$account->username}) ---");
+
+        $token = $account->getFreshToken() ?? $account->access_token;
+        if (!$token) {
+            $this->warn('Conta sem token de acesso.');
+            $this->newLine();
+            return;
+        }
+
+        try {
+            $data = Http::timeout(10)->get('https://graph.facebook.com/debug_token', [
+                'input_token'  => $token,
+                'access_token' => $token,
+            ])->json('data') ?? [];
+
+            $scopes = $data['scopes'] ?? [];
+            $this->line('Tipo: ' . ($data['type'] ?? '?') . '   válido: ' . (($data['is_valid'] ?? false) ? 'sim' : 'NÃO'));
+            $this->line('Scopes: ' . (empty($scopes) ? '(nenhum retornado)' : implode(', ', $scopes)));
+
+            foreach (['instagram_basic', 'instagram_content_publish'] as $needed) {
+                $has = in_array($needed, $scopes, true);
+                $this->line(($has ? '  [ok] ' : '  [FALTA] ') . $needed);
+            }
+
+            if (!in_array('instagram_basic', $scopes, true)) {
+                $this->warn('⚠ Sem instagram_basic: o token publica mas NÃO lê o status do container '
+                    . '(é a causa do Authorization Error/timeout). Reconecte a conta do Instagram.');
+            }
+        } catch (\Throwable $e) {
+            $this->warn('Falha ao consultar debug_token: ' . $e->getMessage());
+        }
+
+        $this->newLine();
     }
 
     /**
