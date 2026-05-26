@@ -174,7 +174,7 @@ class InstagramPublisher extends AbstractPublisher
             return $waitResult;
         }
 
-        return $this->publishContainer($post, $igUserId, $token, $creationId);
+        return $this->publishContainer($post, $igUserId, $token, $creationId, $isVideo || $isReel);
     }
 
     // ===== Carrossel =====
@@ -279,14 +279,19 @@ class InstagramPublisher extends AbstractPublisher
 
     // ===== Publicar container =====
 
-    private function publishContainer(Post $post, string $igUserId, string $token, string $creationId): PublishResult
+    private function publishContainer(Post $post, string $igUserId, string $token, string $creationId, bool $isVideo = false): PublishResult
     {
         SystemLog::info('social', 'ig.publish.container', "Instagram: publicando container", [
             'post_id'     => $post->id,
             'creation_id' => $creationId,
+            'is_video'    => $isVideo,
         ]);
 
-        $maxRetries   = 5;
+        // Vídeo processa mais devagar e nesta conta não dá para ler o status do
+        // container (Authorization Error). O próprio media_publish retornando
+        // 2207027 ("Media ID is not available") é o sinal de "ainda processando",
+        // então re-tentamos com mais paciência para vídeo (~80s no total).
+        $maxRetries   = $isVideo ? 8 : 5;
         $retryDelay   = 3;
         $lastResponse = null;
 
@@ -691,8 +696,8 @@ class InstagramPublisher extends AbstractPublisher
                     return null;
                 }
 
-                if ($unreadable >= 3 && $waited >= 25) {
-                    SystemLog::warning('social', 'ig.container.status_unreadable', "Instagram: status do container ilegível (vídeo), seguindo para publicação após {$waited}s", [
+                if ($unreadable >= 2) {
+                    SystemLog::warning('social', 'ig.container.status_unreadable', "Instagram: status do container ilegível (vídeo), seguindo para publicação (publishContainer re-tenta até processar)", [
                         'post_id'     => $post->id,
                         'creation_id' => $creationId,
                         'waited_s'    => $waited,

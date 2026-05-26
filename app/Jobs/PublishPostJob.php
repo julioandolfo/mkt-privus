@@ -31,9 +31,12 @@ class PublishPostJob implements ShouldQueue
     public $backoff = [60, 300, 900];
 
     /**
-     * Timeout do job em segundos.
+     * Timeout do job em segundos. Precisa cobrir o pior caso de vídeo/Reels:
+     * normalização + criação do container + re-tentativas de media_publish
+     * (~80s) enquanto o Instagram processa. Deve ser MENOR que o retry_after
+     * da fila (config/queue.php) para não reprocessar/duplicar.
      */
-    public $timeout = 120;
+    public $timeout = 280;
 
     public function __construct(
         public readonly PostSchedule $schedule,
