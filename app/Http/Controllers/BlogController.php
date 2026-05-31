@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AnalyticsConnection;
 use App\Models\BlogArticle;
+use App\Models\BlogAutopilot;
 use App\Models\BlogCalendarItem;
 use App\Models\BlogCategory;
 use App\Models\Brand;
@@ -964,39 +965,89 @@ class BlogController extends Controller
         return response()->json(['success' => true, 'deleted' => $deleted, 'message' => "{$deleted} pauta(s) removida(s)."]);
     }
 
-    // ===== AUTOPILOT DE BLOG =====
+    // ===== AUTOPILOT DE BLOG (múltiplos pilotos por marca) =====
 
     public function autopilot(Request $request): Response
     {
-        $brand       = $request->user()?->getActiveBrand();
-        $brandId     = $brand?->id;
-        $cfg         = $brand ? $brand->getContentEngineConfig() : [];
-        $connections = $this->getWordPressConnections($brandId);
-        $categories  = $brandId
-            ? BlogCategory::forBrand($brandId)->orderBy('name')->get(['id', 'name'])
+        $brand   = $request->user()?->getActiveBrand();
+        $brandId = $brand?->id;
+
+        $autopilots = $brandId
+            ? BlogAutopilot::forBrand($brandId)->orderBy('id')->get()->map(fn($a) => $this->formatAutopilot($a))->values()
             : collect();
 
         return Inertia::render('Blog/Autopilot', [
-            'config'      => [
-                'enabled'          => (bool) ($cfg['blog_autopilot_enabled'] ?? false),
-                'posts_per_week'   => (int)  ($cfg['blog_posts_per_week']   ?? 2),
-                'connection_id'    => !empty($cfg['blog_connection_id']) ? (int) $cfg['blog_connection_id'] : null,
-                'category_id'      => !empty($cfg['blog_category_id'])  ? (int) $cfg['blog_category_id']  : null,
-                'require_approval' => (bool) ($cfg['blog_require_approval'] ?? true),
-                'auto_approve'     => (bool) ($cfg['blog_auto_approve'] ?? false),
-                'tone'             => $cfg['blog_tone']           ?? '',
-                'instructions'     => $cfg['blog_instructions']   ?? '',
-                'cover_width'      => (int)  ($cfg['blog_cover_width']  ?? 1750),
-                'cover_height'     => (int)  ($cfg['blog_cover_height'] ?? 650),
-            ],
-            'connections' => $connections,
-            'categories'  => $categories,
+            'autopilots'  => $autopilots,
+            'connections' => $this->getWordPressConnections($brandId),
+            'categories'  => $brandId
+                ? BlogCategory::forBrand($brandId)->orderBy('name')->get(['id', 'name'])
+                : collect(),
         ]);
     }
 
-    public function saveAutopilot(Request $request): JsonResponse
+    public function storeAutopilot(Request $request): JsonResponse
     {
-        $validated = $request->validate([
+        $brand = $request->user()?->getActiveBrand();
+        if (!$brand) {
+            return response()->json(['success' => false, 'error' => 'Nenhuma marca ativa selecionada.'], 422);
+        }
+
+        $validated = $this->validateAutopilotInput($request);
+        $autopilot = BlogAutopilot::create(array_merge($validated, ['brand_id' => $brand->id]));
+
+        SystemLog::info('blog', 'autopilot.created', "Autopilot \"{$autopilot->name}\" criado", [
+            'brand_id'     => $brand->id,
+            'autopilot_id' => $autopilot->id,
+        ]);
+
+        return response()->json(['success' => true, 'autopilot' => $this->formatAutopilot($autopilot)]);
+    }
+
+    public function updateAutopilot(Request $request, BlogAutopilot $autopilot): JsonResponse
+    {
+        $this->authorizeAutopilot($request, $autopilot);
+
+        $validated = $this->validateAutopilotInput($request);
+        $autopilot->update($validated);
+
+        return response()->json(['success' => true, 'autopilot' => $this->formatAutopilot($autopilot->fresh())]);
+    }
+
+    public function destroyAutopilot(Request $request, BlogAutopilot $autopilot): JsonResponse
+    {
+        $this->authorizeAutopilot($request, $autopilot);
+
+        $autopilot->delete();
+
+        SystemLog::info('blog', 'autopilot.deleted', "Autopilot #{$autopilot->id} removido", [
+            'brand_id'     => $autopilot->brand_id,
+            'autopilot_id' => $autopilot->id,
+        ]);
+
+        return response()->json(['success' => true]);
+    }
+
+    public function runAutopilot(Request $request, BlogAutopilot $autopilot): JsonResponse
+    {
+        $this->authorizeAutopilot($request, $autopilot);
+
+        GenerateBlogAutopilotJob::dispatch($autopilot->id)->onQueue('default');
+
+        SystemLog::info('blog', 'autopilot.manual_run', "Autopilot \"{$autopilot->name}\" disparado manualmente", [
+            'brand_id'     => $autopilot->brand_id,
+            'autopilot_id' => $autopilot->id,
+            'user_id'      => $request->user()->id,
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Autopilot iniciado! As pautas serão geradas em instantes.']);
+    }
+
+    private function validateAutopilotInput(Request $request): array
+    {
+        return $request->validate([
+            'name'             => 'required|string|max:120',
+            'keywords'         => 'nullable|array|max:30',
+            'keywords.*'       => 'string|max:100',
             'enabled'          => 'boolean',
             'posts_per_week'   => 'integer|min:1|max:7',
             'connection_id'    => 'nullable|integer|exists:analytics_connections,id',
@@ -1008,45 +1059,34 @@ class BlogController extends Controller
             'cover_width'      => 'nullable|integer|min:100|max:4000',
             'cover_height'     => 'nullable|integer|min:100|max:4000',
         ]);
-
-        $brand = $request->user()?->getActiveBrand();
-        if (!$brand) {
-            return response()->json(['success' => false, 'error' => 'Nenhuma marca ativa selecionada.']);
-        }
-
-        $brand->updateContentEngineConfig([
-            'blog_autopilot_enabled'  => $validated['enabled']          ?? false,
-            'blog_posts_per_week'     => $validated['posts_per_week']   ?? 2,
-            'blog_connection_id'      => $validated['connection_id']    ?? null,
-            'blog_category_id'        => $validated['category_id']      ?? null,
-            'blog_require_approval'   => $validated['require_approval'] ?? true,
-            'blog_auto_approve'       => $validated['auto_approve']     ?? false,
-            'blog_tone'               => $validated['tone']             ?? '',
-            'blog_instructions'       => $validated['instructions']     ?? '',
-            'blog_cover_width'        => $validated['cover_width']      ?? 1750,
-            'blog_cover_height'       => $validated['cover_height']     ?? 650,
-        ]);
-
-        SystemLog::info('blog', 'autopilot.config_saved', 'Configurações de autopilot de blog salvas', [
-            'brand_id' => $brand->id,
-            'enabled'  => $validated['enabled'] ?? false,
-        ]);
-
-        return response()->json(['success' => true, 'message' => 'Configurações salvas com sucesso.']);
     }
 
-    public function runAutopilot(Request $request): JsonResponse
+    private function authorizeAutopilot(Request $request, BlogAutopilot $autopilot): void
     {
-        $brandId = session('current_brand_id');
+        $brand = $request->user()?->getActiveBrand();
+        if (!$brand || $autopilot->brand_id !== $brand->id) {
+            abort(403, 'Você não tem acesso a este autopilot.');
+        }
+    }
 
-        GenerateBlogAutopilotJob::dispatch()->onQueue('default');
-
-        SystemLog::info('blog', 'autopilot.manual_run', 'Autopilot de blog disparado manualmente', [
-            'brand_id' => $brandId,
-            'user_id'  => Auth::id(),
-        ]);
-
-        return response()->json(['success' => true, 'message' => 'Autopilot iniciado! As pautas serão geradas em instantes.']);
+    private function formatAutopilot(BlogAutopilot $a): array
+    {
+        return [
+            'id'               => $a->id,
+            'name'             => $a->name,
+            'keywords'         => $a->keywords ?? [],
+            'enabled'          => $a->enabled,
+            'posts_per_week'   => $a->posts_per_week,
+            'connection_id'    => $a->connection_id,
+            'category_id'      => $a->category_id,
+            'require_approval' => $a->require_approval,
+            'auto_approve'     => $a->auto_approve,
+            'tone'             => $a->tone ?? '',
+            'instructions'     => $a->instructions ?? '',
+            'cover_width'      => $a->cover_width,
+            'cover_height'     => $a->cover_height,
+            'last_run_at'      => $a->last_run_at?->format('d/m/Y H:i'),
+        ];
     }
 
     // ===== PRIVATE =====
