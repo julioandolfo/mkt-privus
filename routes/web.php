@@ -534,10 +534,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/connections/{connection}', [BlogController::class, 'destroyConnection'])->name('connections.destroy');
         Route::get('/connections/{connection}/categories', [BlogController::class, 'connectionCategories'])->name('connections.categories');
 
-        // Autopilot de blog
+        // Autopilot de blog (múltiplos pilotos por marca)
         Route::get('/autopilot', [BlogController::class, 'autopilot'])->name('autopilot');
-        Route::post('/autopilot', [BlogController::class, 'saveAutopilot'])->name('autopilot.save');
-        Route::post('/autopilot/run', [BlogController::class, 'runAutopilot'])->name('autopilot.run');
+        Route::post('/autopilot', [BlogController::class, 'storeAutopilot'])->name('autopilot.store');
+        Route::put('/autopilot/{autopilot}', [BlogController::class, 'updateAutopilot'])->name('autopilot.update');
+        Route::delete('/autopilot/{autopilot}', [BlogController::class, 'destroyAutopilot'])->name('autopilot.destroy');
+        Route::post('/autopilot/{autopilot}/run', [BlogController::class, 'runAutopilot'])->name('autopilot.run');
 
         // Calendário editorial — ANTES das rotas com {article}
         Route::get('/calendar', [BlogController::class, 'calendar'])->name('calendar');

@@ -225,19 +225,24 @@ class IgDebugCommand extends Command
 
         $limit = max(1, (int) $this->option('limit'));
 
+        // Pega os MAIS RECENTES (desc + limit) e reordena cronologicamente para exibir.
         $logs = SystemLog::where('channel', 'social')
             ->where('context->post_id', $post->id)
-            ->orderBy('id')
+            ->orderByDesc('id')
             ->limit($limit)
-            ->get();
+            ->get()
+            ->sortBy('id')
+            ->values();
 
         if ($logs->isEmpty()) {
             // Fallback: alguns logs guardam post_id aninhado; busca textual no JSON.
             $logs = SystemLog::where('channel', 'social')
                 ->where('context', 'like', '%"post_id":' . $post->id . '%')
-                ->orderBy('id')
+                ->orderByDesc('id')
                 ->limit($limit)
-                ->get();
+                ->get()
+                ->sortBy('id')
+                ->values();
         }
 
         if ($logs->isEmpty()) {
