@@ -233,6 +233,8 @@ class BlogCalendarService
                 'meta_title' => $result['meta_title'] ?? '',
                 'meta_description' => $result['meta_description'] ?? '',
                 'meta_keywords' => $result['meta_keywords'] ?? '',
+                'focus_keyword' => $result['focus_keyword'] ?? null,
+                'cover_alt_text' => $result['cover_alt_text'] ?? null,
                 'tags' => $result['tags'] ?? [],
                 'status' => 'pending_review',
                 // Agendar para 09:00 do dia (horário de pico de leitura), evita publicar à meia-noite

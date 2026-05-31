@@ -87,7 +87,12 @@ class WordPressPublishService
             // 1. Upload da imagem de capa (se existir)
             $featuredMediaId = null;
             if ($article->cover_image_path) {
-                $mediaResult = $this->uploadMedia($connection, $article->cover_image_path, $article->title);
+                $mediaResult = $this->uploadMedia(
+                    $connection,
+                    $article->cover_image_path,
+                    $article->title,
+                    $article->cover_alt_text ?: $article->title,
+                );
                 if ($mediaResult['success'] ?? false) {
                     $featuredMediaId = $mediaResult['media_id'];
                 }
@@ -126,7 +131,8 @@ class WordPressPublishService
 
             // Adicionar SEO via Yoast E RankMath (envia ambos — só o ativo é usado)
             $seoMeta = [];
-            $focusKeyword = $this->extractFocusKeyword($article->meta_keywords);
+            $focusKeyword = $article->focus_keyword
+                ?: $this->extractFocusKeyword($article->meta_keywords);
 
             // Yoast SEO
             if ($article->meta_title) {
@@ -263,9 +269,11 @@ class WordPressPublishService
     }
 
     /**
-     * Upload de mídia para o WordPress
+     * Upload de mídia para o WordPress. Quando $altText é informado, faz uma
+     * 2ª chamada para gravar alt_text/caption/title na mídia (a API REST não
+     * aceita esses campos no POST inicial multipart-binary).
      */
-    public function uploadMedia(AnalyticsConnection $connection, string $filePath, string $title = ''): array
+    public function uploadMedia(AnalyticsConnection $connection, string $filePath, string $title = '', ?string $altText = null): array
     {
         $config = $connection->config ?? [];
         $baseUrl = $this->getBaseUrl($config);
@@ -289,16 +297,34 @@ class WordPressPublishService
                 ->withBody(file_get_contents($fullPath), $mimeType)
                 ->post("{$baseUrl}/wp-json/wp/v2/media");
 
-            if ($response->successful()) {
-                $media = $response->json();
-                return [
-                    'success' => true,
-                    'media_id' => $media['id'] ?? null,
-                    'media_url' => $media['source_url'] ?? null,
-                ];
+            if (!$response->successful()) {
+                return ['success' => false, 'error' => $response->json('message') ?? 'Erro no upload'];
             }
 
-            return ['success' => false, 'error' => $response->json('message') ?? 'Erro no upload'];
+            $media = $response->json();
+            $mediaId = $media['id'] ?? null;
+
+            // 2ª chamada para gravar alt_text (SEO de imagem). Não-fatal: se falhar,
+            // a mídia já foi subida e o post pode usá-la como featured_media.
+            if ($mediaId && ($altText || $title)) {
+                try {
+                    Http::withBasicAuth($auth['user'], $auth['pass'])
+                        ->timeout(15)
+                        ->asJson()
+                        ->post("{$baseUrl}/wp-json/wp/v2/media/{$mediaId}", array_filter([
+                            'alt_text' => $altText,
+                            'title'    => $title ?: null,
+                        ]));
+                } catch (\Throwable) {
+                    // ignora — alt_text é desejável, mas não bloqueia a publicação
+                }
+            }
+
+            return [
+                'success'   => true,
+                'media_id'  => $mediaId,
+                'media_url' => $media['source_url'] ?? null,
+            ];
         } catch (\Throwable $e) {
             return ['success' => false, 'error' => $e->getMessage()];
         }

@@ -90,6 +90,8 @@ class GenerateBlogArticlesJob implements ShouldQueue
                         'meta_title' => $result['meta_title'] ?? '',
                         'meta_description' => $result['meta_description'] ?? '',
                         'meta_keywords' => $result['meta_keywords'] ?? '',
+                        'focus_keyword' => $result['focus_keyword'] ?? null,
+                        'cover_alt_text' => $result['cover_alt_text'] ?? null,
                         'tags' => $result['tags'] ?? [],
                         'status' => 'pending_review',
                         'ai_model_used' => $result['ai_model_used'] ?? null,
