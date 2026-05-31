@@ -31,10 +31,11 @@ class BlogArticleService
         ?User $user = null,
         AIModel $model = AIModel::GPT4oMini,
     ): array {
-        $brandContext = $brand->getAIContext();
+        $brandContext  = $brand->getAIContext();
+        $internalLinks = $this->buildInternalLinksContext($brand);
 
-        $systemPrompt = $this->buildArticleSystemPrompt($brandContext, $tone);
-        $userMessage = $this->buildArticleUserMessage($topic, $keywords, $instructions, $wordCount);
+        $systemPrompt = $this->buildArticleSystemPrompt($brandContext, $tone, $internalLinks);
+        $userMessage  = $this->buildArticleUserMessage($topic, $keywords, $instructions, $wordCount, $internalLinks);
 
         try {
             $response = $this->aiGateway->chat(
@@ -51,26 +52,55 @@ class BlogArticleService
 
             $parsed = $this->parseArticleResponse($response['content']);
 
+            // Auto-linkar menções a URLs/produtos da marca que a IA não linkou
+            $content = $parsed['content'] ?? '';
+            $autoLink = $this->autoLinkBrandReferences($content, $internalLinks);
+            $content = $autoLink['html'];
+
+            // Focus keyword (preferência: campo explícito; cai para 1º de meta_keywords)
+            $focusKeyword = $parsed['focus_keyword'] ?? '';
+            if ($focusKeyword === '' && !empty($parsed['meta_keywords'])) {
+                $focusKeyword = trim(explode(',', $parsed['meta_keywords'])[0] ?? '');
+            }
+
+            // Validar uso real do focus keyword (loga, não bloqueia)
+            $validation = $this->validateFocusKeyword($focusKeyword, $content);
+
             $totalTokens = ($response['input_tokens'] ?? 0) + ($response['output_tokens'] ?? 0);
 
             SystemLog::info('blog', 'article.generated', "Artigo gerado com IA para marca #{$brand->id}: {$parsed['title']}", [
-                'brand_id' => $brand->id,
-                'topic' => $topic,
-                'tokens' => $totalTokens,
-                'model' => $model->value,
+                'brand_id'        => $brand->id,
+                'topic'           => $topic,
+                'tokens'          => $totalTokens,
+                'model'           => $model->value,
+                'focus_keyword'   => $focusKeyword,
+                'links_in_prompt' => count($internalLinks),
+                'links_inserted'  => $autoLink['links_inserted'],
+                'focus_in_h2'     => $validation['in_h2'],
+                'focus_in_first_100' => $validation['in_first_100'],
             ]);
 
+            foreach ($validation['warnings'] as $w) {
+                SystemLog::warning('blog', 'article.focus_warning', $w, [
+                    'brand_id'      => $brand->id,
+                    'topic'         => $topic,
+                    'focus_keyword' => $focusKeyword,
+                ]);
+            }
+
             return [
-                'success' => true,
-                'title' => $parsed['title'],
-                'content' => $parsed['content'],
-                'excerpt' => $parsed['excerpt'],
-                'meta_title' => $parsed['meta_title'],
+                'success'          => true,
+                'title'            => $parsed['title'],
+                'content'          => $content,
+                'excerpt'          => $parsed['excerpt'],
+                'meta_title'       => $parsed['meta_title'],
                 'meta_description' => $parsed['meta_description'],
-                'meta_keywords' => $parsed['meta_keywords'],
-                'tags' => $parsed['tags'],
-                'ai_model_used' => $model->value,
-                'tokens_used' => $totalTokens,
+                'meta_keywords'    => $parsed['meta_keywords'],
+                'focus_keyword'    => $focusKeyword !== '' ? $focusKeyword : null,
+                'cover_alt_text'   => $parsed['cover_alt_text'] ?? null,
+                'tags'             => $parsed['tags'],
+                'ai_model_used'    => $model->value,
+                'tokens_used'      => $totalTokens,
             ];
         } catch (\Throwable $e) {
             SystemLog::error('blog', 'article.generation_error', "Erro ao gerar artigo: {$e->getMessage()}", [
@@ -409,11 +439,17 @@ class BlogArticleService
         return $images;
     }
 
-    private function buildArticleSystemPrompt(string $brandContext, ?string $tone): string
+    private function buildArticleSystemPrompt(string $brandContext, ?string $tone, array $internalLinks = []): string
     {
         $toneInstruction = $tone
             ? "Use o tom de voz: {$tone}."
             : "Use o tom de voz da marca conforme o contexto.";
+
+        $linksBlock = empty($internalLinks)
+            ? "- Nenhum link interno disponível: foque em qualidade de conteúdo."
+            : "- Use de 2 a 4 links internos para as URLs da marca listadas no usuário, escolhendo as mais relevantes para o tema."
+              . " Use TEXTO-ÂNCORA DESCRITIVO (ex.: 'nosso catálogo de canetas personalizadas'), nunca 'clique aqui'."
+              . " Distribua os links no meio do conteúdo, NÃO em H2/H3 nem na conclusão. Não repita o mesmo link.";
 
         return <<<PROMPT
 Você é um redator profissional de blog e especialista em SEO on-page (Google Helpful Content + E-E-A-T).
@@ -433,9 +469,12 @@ DIRETRIZES DE SEO ON-PAGE (críticas):
 3. **Intenção de busca**: identifique se o tema é informacional/comparativo/transacional e ajuste profundidade e CTA.
 4. **Slug-friendly title**: títulos curtos, claros, com a keyword principal — sem clickbait.
 
+LINKS INTERNOS (cruciais para SEO):
+{$linksBlock}
+
 ESTRUTURA OBRIGATÓRIA DO CONTEÚDO (HTML):
 - {$toneInstruction}
-- Use HTML semântico: h2, h3, p, ul, ol, strong, em, blockquote. NÃO use h1 (o título é separado).
+- Use HTML semântico: h2, h3, p, ul, ol, strong, em, blockquote, a. NÃO use h1 (o título é separado).
 - Abertura (1-2 parágrafos): apresenta o problema/promessa e contém o focus keyword nos primeiros 100 caracteres.
 - Desenvolvimento: 3-6 seções com H2 descritivos (cada H2 deve passar a ideia mesmo lido isoladamente). Use H3 quando precisar subdividir.
 - Inclua pelo menos 1 lista (ul ou ol) e use <strong> para destacar 2-4 termos-chave (incluindo o focus keyword 1x).
@@ -449,23 +488,27 @@ REGRAS DE METADADOS:
 - meta_title: pode ser igual ao title ou variação — máx 60 chars
 - meta_description: 140-160 chars, persuasiva, com focus keyword e CTA implícito
 - meta_keywords: 3-6 termos separados por vírgula. O PRIMEIRO é o focus keyword.
+- focus_keyword: repita aqui APENAS o focus keyword (o mesmo do 1º item de meta_keywords).
+- cover_alt_text: descrição curta (até 120 chars) do que a imagem de capa deve mostrar; inclua o focus keyword quando soar natural. Será usada como alt text no WordPress.
 - tags: 3-6 tags em minúsculas, separadas, sem espaços extras
 - excerpt: 1-2 frases (máx 200 chars), reescreva — não copie a abertura
 
 Responda OBRIGATORIAMENTE neste formato JSON (apenas JSON, sem markdown):
 {
   "title": "Título com focus keyword (50-60 chars)",
-  "content": "<p>Abertura com focus keyword nos primeiros 100 chars...</p><h2>...</h2><p>...</p><ul><li>...</li></ul><h2>Perguntas frequentes</h2><h3>...</h3><p>...</p><h2>Conclusão</h2><p>...</p>",
+  "content": "<p>Abertura com focus keyword nos primeiros 100 chars...</p><h2>...</h2><p>... com <a href=\"URL_DA_MARCA\">texto-âncora descritivo</a> ...</p><ul><li>...</li></ul><h2>Perguntas frequentes</h2><h3>...</h3><p>...</p><h2>Conclusão</h2><p>...</p>",
   "excerpt": "Resumo único em 1-2 frases (máx 200 chars).",
   "meta_title": "Título SEO ≤ 60 chars com focus keyword",
   "meta_description": "Meta descrição persuasiva 140-160 chars com focus keyword e CTA implícito.",
   "meta_keywords": "focus keyword, sinonimo1, termo relacionado, intencao",
+  "focus_keyword": "focus keyword",
+  "cover_alt_text": "Descrição da imagem de capa (até 120 chars), inclui o focus keyword se natural.",
   "tags": ["tag1", "tag2", "tag3"]
 }
 PROMPT;
     }
 
-    private function buildArticleUserMessage(string $topic, ?string $keywords, ?string $instructions, ?int $wordCount): string
+    private function buildArticleUserMessage(string $topic, ?string $keywords, ?string $instructions, ?int $wordCount, array $internalLinks = []): string
     {
         // Identificar focus keyword (primeira da lista)
         $focusKeyword = null;
@@ -487,9 +530,17 @@ PROMPT;
             $message .= "Instruções adicionais: {$instructions}\n";
         }
 
+        if (!empty($internalLinks)) {
+            $message .= "\nURLs da marca disponíveis para link interno (escolha 2-4 que façam sentido para o tema, use texto-âncora descritivo):\n";
+            foreach ($internalLinks as $link) {
+                $type = $link['type'] ?? 'site';
+                $message .= "- [{$type}] {$link['label']} → {$link['url']}\n";
+            }
+        }
+
         // Garantir tamanho mínimo competitivo para SEO (Google favorece conteúdo aprofundado)
         $minTarget = max($wordCount ?? 800, 900);
-        $message .= "Tamanho-alvo: {$minTarget}-" . ($minTarget + 400) . " palavras (não corte ideias para encurtar).\n";
+        $message .= "\nTamanho-alvo: {$minTarget}-" . ($minTarget + 400) . " palavras (não corte ideias para encurtar).\n";
         $message .= "\nGere o artigo completo em JSON, seguindo TODAS as diretrizes de SEO on-page.";
 
         return $message;
@@ -560,13 +611,15 @@ PROMPT;
 
         if (is_array($parsed) && !empty($parsed['title'])) {
             return [
-                'title' => $parsed['title'] ?? 'Artigo sem título',
-                'content' => $parsed['content'] ?? '',
-                'excerpt' => $parsed['excerpt'] ?? '',
-                'meta_title' => $parsed['meta_title'] ?? $parsed['title'] ?? '',
+                'title'            => $parsed['title'] ?? 'Artigo sem título',
+                'content'          => $parsed['content'] ?? '',
+                'excerpt'          => $parsed['excerpt'] ?? '',
+                'meta_title'       => $parsed['meta_title'] ?? $parsed['title'] ?? '',
                 'meta_description' => $parsed['meta_description'] ?? '',
-                'meta_keywords' => $parsed['meta_keywords'] ?? '',
-                'tags' => $parsed['tags'] ?? [],
+                'meta_keywords'    => $parsed['meta_keywords'] ?? '',
+                'focus_keyword'    => $parsed['focus_keyword'] ?? '',
+                'cover_alt_text'   => $parsed['cover_alt_text'] ?? '',
+                'tags'             => $parsed['tags'] ?? [],
             ];
         }
 
@@ -577,13 +630,205 @@ PROMPT;
         }
 
         return [
-            'title' => $title,
-            'content' => $content,
-            'excerpt' => Str::limit(strip_tags($content), 200),
-            'meta_title' => Str::limit($title, 60),
+            'title'            => $title,
+            'content'          => $content,
+            'excerpt'          => Str::limit(strip_tags($content), 200),
+            'meta_title'       => Str::limit($title, 60),
             'meta_description' => Str::limit(strip_tags($content), 160),
-            'meta_keywords' => '',
-            'tags' => [],
+            'meta_keywords'    => '',
+            'focus_keyword'    => '',
+            'cover_alt_text'   => '',
+            'tags'             => [],
         ];
+    }
+
+    // ===== Helpers SEO =====
+
+    /**
+     * Monta a lista de URLs internas da marca disponíveis para link no artigo.
+     * Filtra apenas http(s), evita duplicatas e limita a 8 entradas para não
+     * inflar o prompt.
+     *
+     * @return array<int, array{label:string,url:string,type:string}>
+     */
+    private function buildInternalLinksContext(Brand $brand): array
+    {
+        $urls = method_exists($brand, 'getAllUrls') ? $brand->getAllUrls() : [];
+        $out = [];
+        $seen = [];
+
+        foreach ($urls as $entry) {
+            $url = trim((string) ($entry['url'] ?? ''));
+            if ($url === '' || !preg_match('#^https?://#i', $url)) {
+                continue;
+            }
+            $normalized = rtrim(strtolower($url), '/');
+            if (isset($seen[$normalized])) {
+                continue;
+            }
+            $label = trim((string) ($entry['label'] ?? ''));
+            if ($label === '') {
+                $label = (string) ($entry['type'] ?? 'site');
+            }
+            $out[] = [
+                'label' => $label,
+                'url'   => $url,
+                'type'  => (string) ($entry['type'] ?? 'site'),
+            ];
+            $seen[$normalized] = true;
+            if (count($out) >= 8) {
+                break;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Auto-linka menções aos labels da marca em <a href="URL"> caso a IA ainda
+     * não tenha linkado. Não toca em <a>, <h1-h6>, <code> e <pre> existentes;
+     * insere no máximo uma ocorrência por URL.
+     *
+     * @param array<int, array{label:string,url:string}> $links
+     * @return array{html:string, links_inserted: array<int, array{label:string,url:string}>}
+     */
+    private function autoLinkBrandReferences(string $html, array $links): array
+    {
+        if ($html === '' || empty($links)) {
+            return ['html' => $html, 'links_inserted' => []];
+        }
+
+        $previous = libxml_use_internal_errors(true);
+        $dom = new \DOMDocument('1.0', 'UTF-8');
+        $wrapper = '<?xml encoding="UTF-8"?><div id="autolink-root">' . $html . '</div>';
+
+        $loaded = $dom->loadHTML($wrapper, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+
+        if (!$loaded) {
+            return ['html' => $html, 'links_inserted' => []];
+        }
+
+        $root = $dom->getElementById('autolink-root');
+        if (!$root) {
+            return ['html' => $html, 'links_inserted' => []];
+        }
+
+        $skipTags = ['a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre'];
+        $inserted = [];
+
+        foreach ($links as $link) {
+            $label = trim((string) ($link['label'] ?? ''));
+            $url   = trim((string) ($link['url'] ?? ''));
+            if ($label === '' || $url === '' || mb_strlen($label) < 3) {
+                continue;
+            }
+
+            // Se a IA já linkou para essa URL, não duplica.
+            $xpath = new \DOMXPath($dom);
+            $existing = $xpath->query(".//a[@href='" . addslashes($url) . "']", $root);
+            if ($existing && $existing->length > 0) {
+                continue;
+            }
+
+            $pattern = '/(?<![\p{L}\p{N}\-])(' . preg_quote($label, '/') . ')(?![\p{L}\p{N}\-])/ui';
+
+            foreach ($this->collectTextNodes($root, $skipTags) as $textNode) {
+                if (preg_match($pattern, $textNode->nodeValue, $m, PREG_OFFSET_CAPTURE)) {
+                    $matchPos = $m[1][1];
+                    $matchLen = strlen($m[1][0]);
+
+                    $before  = substr($textNode->nodeValue, 0, $matchPos);
+                    $matched = $m[1][0];
+                    $after   = substr($textNode->nodeValue, $matchPos + $matchLen);
+
+                    $parent = $textNode->parentNode;
+                    $anchor = $dom->createElement('a');
+                    $anchor->setAttribute('href', $url);
+                    $anchor->appendChild($dom->createTextNode($matched));
+
+                    if ($before !== '') {
+                        $parent->insertBefore($dom->createTextNode($before), $textNode);
+                    }
+                    $parent->insertBefore($anchor, $textNode);
+                    if ($after !== '') {
+                        $parent->insertBefore($dom->createTextNode($after), $textNode);
+                    }
+                    $parent->removeChild($textNode);
+
+                    $inserted[] = ['label' => $matched, 'url' => $url];
+                    break;
+                }
+            }
+        }
+
+        $newHtml = '';
+        foreach ($root->childNodes as $child) {
+            $newHtml .= $dom->saveHTML($child);
+        }
+
+        return ['html' => $newHtml, 'links_inserted' => $inserted];
+    }
+
+    /**
+     * @return array<int, \DOMText>
+     */
+    private function collectTextNodes(\DOMNode $node, array $skipTags): array
+    {
+        $results = [];
+        foreach ($node->childNodes as $child) {
+            if ($child instanceof \DOMElement && in_array(strtolower($child->tagName), $skipTags, true)) {
+                continue;
+            }
+            if ($child instanceof \DOMText) {
+                if (trim($child->nodeValue) !== '') {
+                    $results[] = $child;
+                }
+                continue;
+            }
+            if ($child instanceof \DOMElement) {
+                $results = array_merge($results, $this->collectTextNodes($child, $skipTags));
+            }
+        }
+        return $results;
+    }
+
+    /**
+     * Verifica se o focus keyword aparece em pelo menos um H2 e nos primeiros
+     * 100 caracteres do conteúdo. Retorna avisos (não bloqueia o artigo).
+     *
+     * @return array{warnings: array<int,string>, in_h2: bool, in_first_100: bool}
+     */
+    private function validateFocusKeyword(string $focusKeyword, string $content): array
+    {
+        if ($focusKeyword === '') {
+            return ['warnings' => [], 'in_h2' => false, 'in_first_100' => false];
+        }
+
+        $kwLower = mb_strtolower($focusKeyword);
+
+        $inH2 = false;
+        if (preg_match_all('/<h2[^>]*>(.*?)<\/h2>/is', $content, $matches)) {
+            foreach ($matches[1] as $h2Content) {
+                if (str_contains(mb_strtolower(strip_tags($h2Content)), $kwLower)) {
+                    $inH2 = true;
+                    break;
+                }
+            }
+        }
+
+        $first100   = mb_substr(trim(strip_tags($content)), 0, 100);
+        $inFirst100 = str_contains(mb_strtolower($first100), $kwLower);
+
+        $warnings = [];
+        if (!$inH2) {
+            $warnings[] = "Focus keyword \"{$focusKeyword}\" não aparece em nenhum H2.";
+        }
+        if (!$inFirst100) {
+            $warnings[] = "Focus keyword \"{$focusKeyword}\" não aparece nos primeiros 100 caracteres do conteúdo.";
+        }
+
+        return ['warnings' => $warnings, 'in_h2' => $inH2, 'in_first_100' => $inFirst100];
     }
 }

@@ -14,8 +14,8 @@ class BlogArticle extends Model
 
     protected $fillable = [
         'brand_id', 'user_id', 'wordpress_connection_id', 'blog_category_id',
-        'title', 'slug', 'excerpt', 'content', 'cover_image_path',
-        'meta_title', 'meta_description', 'meta_keywords',
+        'title', 'slug', 'excerpt', 'content', 'cover_image_path', 'cover_alt_text',
+        'meta_title', 'meta_description', 'meta_keywords', 'focus_keyword',
         'tags', 'status',
         'wp_post_id', 'wp_post_url', 'published_at', 'scheduled_publish_at',
         'ai_model_used', 'tokens_used', 'ai_metadata',
@@ -186,39 +186,84 @@ class BlogArticle extends Model
     }
 
     /**
-     * Calcula uma pontuação SEO simples (0-100)
+     * Calcula uma pontuação SEO (0-100). Cobre presença e tamanho dos campos,
+     * uso do focus keyword no conteúdo (H2 + abertura) e quantidade de links
+     * embutidos. Score só chega a 100 quando o básico E o uso real do focus
+     * estão presentes — evita inflar quando faltam as coisas que importam.
      */
     public function seoScore(): int
     {
         $score = 0;
 
-        if ($this->meta_title) $score += 15;
-        if ($this->meta_description) $score += 15;
-        if ($this->meta_keywords) $score += 10;
-        if ($this->excerpt) $score += 10;
-        if ($this->cover_image_path) $score += 10;
+        // Presença dos campos (40 pts)
+        if ($this->meta_title)          $score += 10;
+        if ($this->meta_description)    $score += 10;
+        if ($this->focus_keyword || $this->meta_keywords) $score += 5;
+        if ($this->excerpt)             $score += 5;
+        if ($this->cover_image_path)    $score += 5;
+        if ($this->cover_alt_text)      $score += 5;
 
-        // Título entre 30-60 caracteres
+        // Tamanhos ideais (15 pts)
         $titleLen = mb_strlen($this->title ?? '');
-        if ($titleLen >= 30 && $titleLen <= 60) $score += 10;
-        elseif ($titleLen > 0) $score += 5;
+        if ($titleLen >= 30 && $titleLen <= 60) $score += 7;
+        elseif ($titleLen > 0)                  $score += 3;
 
-        // Meta description entre 120-160 caracteres
         $descLen = mb_strlen($this->meta_description ?? '');
-        if ($descLen >= 120 && $descLen <= 160) $score += 10;
-        elseif ($descLen > 0) $score += 5;
+        if ($descLen >= 120 && $descLen <= 160) $score += 8;
+        elseif ($descLen > 0)                   $score += 4;
 
-        // Conteúdo com pelo menos 300 palavras
-        if ($this->word_count >= 800) $score += 10;
-        elseif ($this->word_count >= 300) $score += 5;
+        // Conteúdo & organização (15 pts)
+        if ($this->word_count >= 900)      $score += 10;
+        elseif ($this->word_count >= 500)  $score += 6;
+        elseif ($this->word_count >= 300)  $score += 3;
+        if (!empty($this->tags))           $score += 3;
+        if ($this->blog_category_id)       $score += 2;
 
-        // Tags definidas
-        if (!empty($this->tags)) $score += 5;
+        // Uso real do focus keyword (20 pts) — o que de fato faz ranquear
+        $focus = $this->effectiveFocusKeyword();
+        if ($focus && $this->content) {
+            $kwLower = mb_strtolower($focus);
 
-        // Categoria definida
-        if ($this->blog_category_id) $score += 5;
+            if (preg_match_all('/<h2[^>]*>(.*?)<\/h2>/is', $this->content, $matches)) {
+                foreach ($matches[1] as $h2Content) {
+                    if (str_contains(mb_strtolower(strip_tags($h2Content)), $kwLower)) {
+                        $score += 10;
+                        break;
+                    }
+                }
+            }
+
+            $first100 = mb_substr(trim(strip_tags($this->content)), 0, 100);
+            if (str_contains(mb_strtolower($first100), $kwLower)) {
+                $score += 10;
+            }
+        }
+
+        // Links no conteúdo (10 pts) — internos para a marca / âncoras descritivas
+        if ($this->content) {
+            preg_match_all('/<a\s+[^>]*href=["\'][^"\']+["\'][^>]*>/i', $this->content, $linkMatches);
+            $linkCount = count($linkMatches[0] ?? []);
+            if ($linkCount >= 3)      $score += 10;
+            elseif ($linkCount >= 1)  $score += 5;
+        }
 
         return min(100, $score);
+    }
+
+    /**
+     * Focus keyword efetivo: prioriza o campo dedicado; cai para o 1º item
+     * de meta_keywords (compatibilidade com artigos antigos).
+     */
+    public function effectiveFocusKeyword(): ?string
+    {
+        if (!empty($this->focus_keyword)) {
+            return $this->focus_keyword;
+        }
+        if (is_string($this->meta_keywords) && $this->meta_keywords !== '') {
+            $first = trim(explode(',', $this->meta_keywords)[0] ?? '');
+            return $first !== '' ? $first : null;
+        }
+        return null;
     }
 
     /**
