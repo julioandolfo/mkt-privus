@@ -68,6 +68,7 @@ class GenerateBlogArticlesJob implements ShouldQueue
                         topic: $topic['title'] ?? 'Artigo para ' . $brand->name,
                         keywords: $topic['keywords'] ?? null,
                         wordCount: $topic['estimated_word_count'] ?? 800,
+                        connection: $connection,
                     );
 
                     if (!($result['success'] ?? false)) {
