@@ -213,6 +213,9 @@ class BlogCalendarService
                 tone: $item->tone,
                 instructions: $item->description . ($item->instructions ? "\n" . $item->instructions : ''),
                 wordCount: $item->estimated_word_count ?? 800,
+                connection: $item->wordpress_connection_id
+                    ? \App\Models\AnalyticsConnection::find($item->wordpress_connection_id)
+                    : null,
             );
 
             if (!($result['success'] ?? false)) {

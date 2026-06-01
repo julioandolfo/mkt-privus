@@ -16,10 +16,14 @@ class BlogArticleService
 {
     public function __construct(
         private readonly AIGateway $aiGateway,
+        private readonly WordPressContentDiscoveryService $wpDiscovery,
     ) {}
 
     /**
-     * Gera um artigo completo com IA (título, conteúdo HTML, excerpt, SEO)
+     * Gera um artigo completo com IA (título, conteúdo HTML, excerpt, SEO).
+     * Se uma $connection do WordPress for fornecida, descobre páginas,
+     * categorias e produtos (WooCommerce) do site e os oferece como
+     * candidatos de link interno — ranqueados por relevância ao tema.
      */
     public function generateArticle(
         Brand $brand,
@@ -30,9 +34,20 @@ class BlogArticleService
         ?int $wordCount = 800,
         ?User $user = null,
         AIModel $model = AIModel::GPT4oMini,
+        ?AnalyticsConnection $connection = null,
     ): array {
-        $brandContext  = $brand->getAIContext();
-        $internalLinks = $this->buildInternalLinksContext($brand);
+        $brandContext = $brand->getAIContext();
+
+        $brandLinks = $this->buildInternalLinksContext($brand);
+        $wpLinks    = $connection
+            ? $this->rankLinkCandidates(
+                $this->wpDiscovery->fetchLinkCandidates($connection),
+                $topic,
+                $keywords,
+                15,
+            )
+            : [];
+        $internalLinks = $this->mergeLinkCandidates($brandLinks, $wpLinks, 20);
 
         $systemPrompt = $this->buildArticleSystemPrompt($brandContext, $tone, $internalLinks);
         $userMessage  = $this->buildArticleUserMessage($topic, $keywords, $instructions, $wordCount, $internalLinks);
@@ -677,6 +692,83 @@ PROMPT;
             ];
             $seen[$normalized] = true;
             if (count($out) >= 8) {
+                break;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Ranqueia candidatos do WordPress (páginas/categorias/produtos) por
+     * relevância ao tema, contando quantos tokens do tema/keywords aparecem
+     * no label. Retorna os top $max. Quando não há tokens úteis, devolve os
+     * primeiros $max preservando a ordem original.
+     */
+    private function rankLinkCandidates(array $candidates, string $topic, ?string $keywords, int $max = 15): array
+    {
+        if (empty($candidates)) {
+            return [];
+        }
+
+        $stopwords = ['para', 'como', 'sobre', 'qual', 'quais', 'mais', 'melhor', 'tipo', 'tipos', 'guia', 'dica', 'dicas', 'voce', 'sua', 'seu', 'que', 'com', 'sem', 'por', 'dos', 'das', 'uma', 'uns', 'umas', 'pelo', 'pelos', 'pela', 'pelas', 'isso', 'eles', 'elas', 'esse', 'essa', 'aquele', 'aquela', 'esta', 'este', 'aqui'];
+
+        $rawTokens = preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($topic . ' ' . (string) $keywords)) ?: [];
+        $tokens = [];
+        foreach ($rawTokens as $t) {
+            if (mb_strlen($t) >= 3 && !in_array($t, $stopwords, true)) {
+                $tokens[$t] = true;
+            }
+        }
+        $tokens = array_keys($tokens);
+
+        if (empty($tokens)) {
+            return array_slice($candidates, 0, $max);
+        }
+
+        $scored = [];
+        foreach ($candidates as $index => $c) {
+            $label = mb_strtolower((string) ($c['label'] ?? ''));
+            $score = 0;
+            foreach ($tokens as $t) {
+                if ($label !== '' && str_contains($label, $t)) {
+                    $score++;
+                }
+            }
+            $scored[] = ['candidate' => $c, 'score' => $score, 'order' => $index];
+        }
+
+        // Ordena por score desc; em empate, mantém ordem original (estabilidade).
+        usort($scored, fn ($a, $b) => $b['score'] <=> $a['score'] ?: $a['order'] <=> $b['order']);
+
+        return array_map(fn ($x) => $x['candidate'], array_slice($scored, 0, $max));
+    }
+
+    /**
+     * Mescla URLs curadas da marca + descobertas do WordPress, deduplicando
+     * por URL e respeitando o teto $max. As URLs da marca vêm primeiro
+     * (prioridade curada), depois as do WP ranqueadas.
+     *
+     * @param array<int, array{label:string,url:string,type:string}> $brandLinks
+     * @param array<int, array{label:string,url:string,type:string}> $wpLinks
+     */
+    private function mergeLinkCandidates(array $brandLinks, array $wpLinks, int $max): array
+    {
+        $out = [];
+        $seen = [];
+
+        foreach (array_merge($brandLinks, $wpLinks) as $link) {
+            $url = trim((string) ($link['url'] ?? ''));
+            if ($url === '') {
+                continue;
+            }
+            $key = rtrim(strtolower($url), '/');
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $out[] = $link;
+            if (count($out) >= $max) {
                 break;
             }
         }
