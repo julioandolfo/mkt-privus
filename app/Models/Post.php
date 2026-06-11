@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBrand;
 use App\Enums\PostStatus;
 use App\Enums\PostType;
 use App\Enums\SocialPlatform;
@@ -14,6 +15,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Post extends Model
 {
+    use BelongsToBrand;
+
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
@@ -85,6 +88,22 @@ class Post extends Model
     public function scopeForBrand($query, int $brandId)
     {
         return $query->whereHas('brands', fn($q) => $q->where('brands.id', $brandId));
+    }
+
+    /**
+     * Escopo global de marca (BelongsToBrand): a visibilidade de posts é
+     * determinada pela pivô post_brand (cross-brand), com fallback ao
+     * brand_id criador para posts antigos sem pivô.
+     */
+    public function applyBrandScopeConstraint(\Illuminate\Database\Eloquent\Builder $query, ?int $brandId): void
+    {
+        if ($brandId === null) {
+            $query->whereRaw('1 = 0');
+            return;
+        }
+
+        $query->whereHas('brands', fn($q) => $q->where('brands.id', $brandId))
+            ->orWhere('posts.brand_id', $brandId);
     }
 
     public function scopeDrafts($query)

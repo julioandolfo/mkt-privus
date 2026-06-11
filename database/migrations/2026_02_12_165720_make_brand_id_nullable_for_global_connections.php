@@ -16,6 +16,12 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // Migration usa SQL específico de MySQL (information_schema, ALTER ... MODIFY).
+        // Em outros drivers (ex: sqlite nos testes) não há o que fazer.
+        if (DB::getDriverName() !== 'mysql') {
+            return;
+        }
+
         // Timeout para evitar lock em tabelas grandes
         DB::statement('SET SESSION lock_wait_timeout = 60');
 

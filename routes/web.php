@@ -87,13 +87,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-    // Marcas
-    Route::resource('brands', BrandsController::class)->except(['show']);
-    Route::post('/brands/{brand}/switch', [BrandsController::class, 'switchBrand'])->name('brands.switch');
-    Route::post('/brands/{brand}/assets', [BrandsController::class, 'uploadAsset'])->name('brands.assets.upload');
-    Route::delete('/brands/{brand}/assets/{asset}', [BrandsController::class, 'deleteAsset'])->name('brands.assets.delete');
-    Route::post('/brands/{brand}/assets/{asset}/primary', [BrandsController::class, 'setPrimaryAsset'])->name('brands.assets.primary');
-    Route::post('/brands/{brand}/reset-ai-history', [BrandsController::class, 'resetAiHistory'])->name('brands.reset-ai-history');
+    // Marcas (autorização via BrandPolicy)
+    Route::resource('brands', BrandsController::class)->only(['index', 'create', 'store']);
+    Route::get('/brands/{brand}/edit', [BrandsController::class, 'edit'])->name('brands.edit')->middleware('can:update,brand');
+    Route::match(['put', 'patch'], '/brands/{brand}', [BrandsController::class, 'update'])->name('brands.update')->middleware('can:update,brand');
+    Route::delete('/brands/{brand}', [BrandsController::class, 'destroy'])->name('brands.destroy')->middleware('can:delete,brand');
+    Route::post('/brands/{brand}/switch', [BrandsController::class, 'switchBrand'])->name('brands.switch')->middleware('can:view,brand');
+    Route::post('/brands/{brand}/assets', [BrandsController::class, 'uploadAsset'])->name('brands.assets.upload')->middleware('can:update,brand');
+    Route::delete('/brands/{brand}/assets/{asset}', [BrandsController::class, 'deleteAsset'])->name('brands.assets.delete')->middleware('can:update,brand');
+    Route::post('/brands/{brand}/assets/{asset}/primary', [BrandsController::class, 'setPrimaryAsset'])->name('brands.assets.primary')->middleware('can:update,brand');
+    Route::post('/brands/{brand}/reset-ai-history', [BrandsController::class, 'resetAiHistory'])->name('brands.reset-ai-history')->middleware('can:update,brand');
 
     // Perfil (Breeze)
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

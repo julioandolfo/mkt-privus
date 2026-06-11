@@ -2,12 +2,18 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBrand;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class AnalyticsConnection extends Model
 {
+    use BelongsToBrand;
+
+    /** Registros com brand_id NULL são globais e permanecem visíveis para todas as marcas */
+    public bool $brandScopeIncludesNull = true;
+
     protected $fillable = [
         'brand_id', 'user_id', 'platform', 'name', 'external_id', 'external_name',
         'access_token', 'refresh_token', 'token_expires_at', 'config', 'metadata',

@@ -20,7 +20,11 @@ class BrandsController extends Controller
     public function index(Request $request): Response
     {
         $brands = $request->user()->brands()
-            ->withCount('posts', 'socialAccounts')
+            ->withCount([
+                // Remove o escopo de marca ativa para contar corretamente em todas as marcas do usuário
+                'posts' => fn ($q) => $q->withoutGlobalScope('brand'),
+                'socialAccounts' => fn ($q) => $q->withoutGlobalScope('brand'),
+            ])
             ->orderBy('name')
             ->get();
 
