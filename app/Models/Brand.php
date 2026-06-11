@@ -50,6 +50,11 @@ class Brand extends Model
             ->withTimestamps();
     }
 
+    public function invitations(): HasMany
+    {
+        return $this->hasMany(BrandInvitation::class);
+    }
+
     public function posts(): HasMany
     {
         return $this->hasMany(Post::class);

@@ -152,6 +152,17 @@ class BrandsController extends Controller
 
         return Inertia::render('Brands/Edit', [
             'brand' => $brand,
+            'members' => $brand->users()->orderBy('name')->get()->map(fn ($user) => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->pivot->role,
+            ]),
+            'invitations' => $brand->invitations()
+                ->whereNull('accepted_at')
+                ->where('expires_at', '>', now())
+                ->orderBy('created_at')
+                ->get(['id', 'email', 'role', 'expires_at']),
         ]);
     }
 

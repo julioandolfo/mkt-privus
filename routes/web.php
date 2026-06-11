@@ -115,6 +115,10 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
     Route::delete('/brands/{brand}/invitations/{invitation}', [\App\Http\Controllers\BrandInvitationsController::class, 'destroy'])->name('brands.invitations.destroy')->middleware('can:update,brand');
     Route::get('/invitations/{token}', [\App\Http\Controllers\BrandInvitationsController::class, 'accept'])->name('invitations.accept');
 
+    // Membros da marca (alterar papel / remover)
+    Route::put('/brands/{brand}/members/{member}', [\App\Http\Controllers\BrandMembersController::class, 'update'])->name('brands.members.update')->middleware('can:update,brand');
+    Route::delete('/brands/{brand}/members/{member}', [\App\Http\Controllers\BrandMembersController::class, 'destroy'])->name('brands.members.destroy')->middleware('can:update,brand');
+
     // Perfil (Breeze)
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
