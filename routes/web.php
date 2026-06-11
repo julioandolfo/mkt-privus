@@ -77,15 +77,27 @@ Route::post('/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])
 Route::post('/email/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])->name('email.webhook.sendpulse');
 Route::post('/sms/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])->name('sms.webhook.sendpulse');
 
+// Webhook de assinaturas do Mercado Pago (valida x-signature quando secret configurado)
+Route::post('/webhook/mercadopago', [\App\Http\Controllers\MercadoPagoWebhookController::class, 'handle'])
+    ->middleware('throttle:120,1')
+    ->name('webhook.mercadopago');
+
 /*
 |--------------------------------------------------------------------------
 | Rotas autenticadas
 |--------------------------------------------------------------------------
 */
-Route::middleware(['auth', 'verified'])->group(function () {
+Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
 
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+
+    // Assinatura / Billing (Mercado Pago)
+    Route::prefix('billing')->name('billing.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\BillingController::class, 'index'])->name('index');
+        Route::post('/subscribe/{plan}', [\App\Http\Controllers\BillingController::class, 'subscribe'])->name('subscribe');
+        Route::post('/cancel', [\App\Http\Controllers\BillingController::class, 'cancel'])->name('cancel');
+    });
 
     // Marcas (autorização via BrandPolicy)
     Route::resource('brands', BrandsController::class)->only(['index', 'create', 'store']);

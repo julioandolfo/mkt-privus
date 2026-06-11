@@ -53,6 +53,13 @@ class BrandsController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        // Limite de marcas do plano (no-op com billing desabilitado)
+        if (!app(\App\Services\Billing\UsageService::class)->canCreateBrand($request->user())) {
+            return redirect()
+                ->route('billing.index')
+                ->with('error', 'Você atingiu o limite de marcas do seu plano. Faça upgrade para criar mais marcas.');
+        }
+
         $this->safeLog('info', 'BrandsController@store: Iniciando criação de marca', [
             'user_id' => $request->user()->id,
             'input_keys' => array_keys($request->all()),

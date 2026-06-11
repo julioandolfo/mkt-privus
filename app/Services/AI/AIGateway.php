@@ -35,6 +35,11 @@ class AIGateway
         string $feature = 'chat',
         array $options = [],
     ): array {
+        // Limite mensal de tokens de IA do plano (no-op com billing desabilitado)
+        if ($user) {
+            app(\App\Services\Billing\UsageService::class)->assertCanUseAi($user, $brand);
+        }
+
         // Injetar contexto da marca no system prompt
         if ($brand) {
             $brandContext = $brand->getAIContext();
@@ -145,6 +150,11 @@ class AIGateway
         string $quality = 'auto',
         ?array $referenceImages = null,
     ): array {
+        // Limite mensal de tokens de IA do plano (no-op com billing desabilitado)
+        if ($user) {
+            app(\App\Services\Billing\UsageService::class)->assertCanUseAi($user, $brand);
+        }
+
         $apiKey = $this->resolveApiKey(AIProvider::OpenAI);
 
         if (!$apiKey) {

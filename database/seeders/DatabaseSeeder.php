@@ -60,5 +60,8 @@ class DatabaseSeeder extends Seeder
 
         // Seed templates de metricas sociais
         \App\Models\SocialMetricTemplate::seedDefaults();
+
+        // Planos de assinatura (SaaS)
+        $this->call(PlanSeeder::class);
     }
 }

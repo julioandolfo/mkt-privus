@@ -64,6 +64,11 @@ class User extends Authenticatable
         return $this->hasMany(ChatConversation::class);
     }
 
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(Subscription::class);
+    }
+
     // ===== METHODS =====
 
     /**
@@ -103,5 +108,19 @@ class User extends Authenticatable
         $pivot = $this->brands()->where('brand_id', $brand->id)->first()?->pivot;
 
         return $pivot ? BrandRole::from($pivot->role) : null;
+    }
+
+    /**
+     * Assinatura válida (ativa ou em trial). Com billing desabilitado,
+     * todo usuário é considerado assinante.
+     */
+    public function hasValidSubscription(): bool
+    {
+        if (!config('billing.enabled')) {
+            return true;
+        }
+
+        return app(\App\Services\Billing\UsageService::class)
+            ->activeSubscription($this) !== null;
     }
 }
