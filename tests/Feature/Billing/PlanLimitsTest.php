@@ -82,6 +82,17 @@ class PlanLimitsTest extends TestCase
         $this->assertTrue($usage->canUseAi($user));
     }
 
+    public function test_sms_limit_is_enforced(): void
+    {
+        config(['billing.enabled' => true]);
+
+        [, $brand] = $this->subscribedOwner(['monthly_sms' => 100]);
+
+        $usage = app(UsageService::class);
+        $this->assertTrue($usage->canSendSms($brand, 50));
+        $this->assertFalse($usage->canSendSms($brand, 150));
+    }
+
     public function test_member_consumes_owner_quota(): void
     {
         config(['billing.enabled' => true]);

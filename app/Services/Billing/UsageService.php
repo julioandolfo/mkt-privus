@@ -8,6 +8,7 @@ use App\Models\AiUsageLog;
 use App\Models\Brand;
 use App\Models\EmailCampaign;
 use App\Models\Plan;
+use App\Models\SmsCampaign;
 use App\Models\Subscription;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -151,6 +152,20 @@ class UsageService
             ->sum('total_sent');
     }
 
+    public function smsSentThisMonth(User $user): int
+    {
+        $brandIds = $this->ownedBrandIds($user);
+
+        if (empty($brandIds)) {
+            return 0;
+        }
+
+        return (int) SmsCampaign::withoutBrandScope()
+            ->whereIn('brand_id', $brandIds)
+            ->where('started_at', '>=', now()->startOfMonth())
+            ->sum('total_sent');
+    }
+
     // ===== CHECKS =====
 
     public function canCreateBrand(User $user): bool
@@ -206,6 +221,28 @@ class UsageService
         }
     }
 
+    public function canSendSms(Brand $brand, int $count): bool
+    {
+        $owner = $this->billingOwnerFor($brand);
+
+        if (!$owner) {
+            return !$this->enabled();
+        }
+
+        $limit = $this->limitFor($owner, 'monthly_sms');
+
+        return $limit === null || ($this->smsSentThisMonth($owner) + $count) <= $limit;
+    }
+
+    public function assertCanSendSms(Brand $brand, int $count): void
+    {
+        if (!$this->canSendSms($brand, $count)) {
+            throw new QuotaExceededException(
+                'O limite mensal de envio de SMS do seu plano foi atingido. Faça upgrade para continuar enviando campanhas.'
+            );
+        }
+    }
+
     /**
      * Resumo de uso x limites para a página de assinatura
      */
@@ -222,6 +259,7 @@ class UsageService
             'brands' => $metric('max_brands', $this->brandsCount($user)),
             'users' => $metric('max_users', $this->membersCount($user)),
             'monthly_emails' => $metric('monthly_emails', $this->emailsSentThisMonth($user)),
+            'monthly_sms' => $metric('monthly_sms', $this->smsSentThisMonth($user)),
             'monthly_ai_tokens' => $metric('monthly_ai_tokens', $this->aiTokensThisMonth($user)),
         ];
     }

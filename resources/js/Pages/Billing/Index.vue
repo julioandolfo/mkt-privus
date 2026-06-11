@@ -46,6 +46,7 @@ const usageLabels: Record<string, string> = {
     brands: 'Marcas',
     users: 'Usuários',
     monthly_emails: 'E-mails este mês',
+    monthly_sms: 'SMS este mês',
     monthly_ai_tokens: 'Tokens de IA este mês',
 };
 

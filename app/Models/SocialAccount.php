@@ -13,10 +13,29 @@ class SocialAccount extends Model
 {
     use BelongsToBrand;
 
-    /** Registros com brand_id NULL são globais e permanecem visíveis para todas as marcas */
-    public bool $brandScopeIncludesNull = true;
-
     use HasFactory;
+
+    /**
+     * Escopo global de marca (BelongsToBrand): contas órfãs (brand_id NULL,
+     * ex: marca excluída) só ficam visíveis para o dono (user_id) — ou para
+     * todos quando legadas (user_id NULL).
+     */
+    public function applyBrandScopeConstraint(Builder $query, ?int $brandId): void
+    {
+        if ($brandId !== null) {
+            $query->where('social_accounts.brand_id', $brandId);
+        } else {
+            $query->whereRaw('1 = 0');
+        }
+
+        $query->orWhere(function (Builder $orphans) {
+            $orphans->whereNull('social_accounts.brand_id')
+                ->where(function (Builder $owner) {
+                    $owner->whereNull('social_accounts.user_id')
+                        ->orWhere('social_accounts.user_id', \Illuminate\Support\Facades\Auth::id());
+                });
+        });
+    }
 
     /**
      * Global scope: esconde rows cujo platform não está mais presente no enum
@@ -33,6 +52,7 @@ class SocialAccount extends Model
 
     protected $fillable = [
         'brand_id',
+        'user_id',
         'platform',
         'source',
         'postiz_integration_id',

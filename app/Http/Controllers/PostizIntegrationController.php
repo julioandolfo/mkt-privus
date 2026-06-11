@@ -143,6 +143,7 @@ class PostizIntegrationController extends Controller
                 } else {
                     SocialAccount::create(array_merge($fromSource, [
                         'brand_id' => $brand->id,
+                        'user_id' => auth()->id(),
                         'is_active' => !($integration['disabled'] ?? false),
                         'metadata' => $postizMetadata,
                     ]));

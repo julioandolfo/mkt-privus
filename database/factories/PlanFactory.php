@@ -27,6 +27,7 @@ class PlanFactory extends Factory
                 'max_brands' => 1,
                 'max_users' => 2,
                 'monthly_emails' => 10000,
+                'monthly_sms' => 1000,
                 'monthly_ai_tokens' => 500000,
             ],
             'is_active' => true,

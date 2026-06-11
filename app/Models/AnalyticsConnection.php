@@ -11,8 +11,27 @@ class AnalyticsConnection extends Model
 {
     use BelongsToBrand;
 
-    /** Registros com brand_id NULL são globais e permanecem visíveis para todas as marcas */
-    public bool $brandScopeIncludesNull = true;
+    /**
+     * Escopo global de marca (BelongsToBrand): conexões globais (brand_id NULL)
+     * só ficam visíveis para o dono (user_id) — ou para todos quando legadas
+     * (user_id NULL).
+     */
+    public function applyBrandScopeConstraint(\Illuminate\Database\Eloquent\Builder $query, ?int $brandId): void
+    {
+        if ($brandId !== null) {
+            $query->where('analytics_connections.brand_id', $brandId);
+        } else {
+            $query->whereRaw('1 = 0');
+        }
+
+        $query->orWhere(function ($orphans) {
+            $orphans->whereNull('analytics_connections.brand_id')
+                ->where(function ($owner) {
+                    $owner->whereNull('analytics_connections.user_id')
+                        ->orWhere('analytics_connections.user_id', \Illuminate\Support\Facades\Auth::id());
+                });
+        });
+    }
 
     protected $fillable = [
         'brand_id', 'user_id', 'platform', 'name', 'external_id', 'external_name',

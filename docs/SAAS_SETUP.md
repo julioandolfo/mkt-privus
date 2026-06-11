@@ -82,14 +82,28 @@ em navegação).
   painel do SendPulse como `https://seu-dominio/webhook/sendpulse?token=<valor>`.
 - Webhook Mercado Pago: valida HMAC `x-signature` quando o secret está configurado.
 
-## 5. Pendências conhecidas (próximos passos)
+## 5. Equipe (membros e convites)
 
-- UI de gerenciamento de membros/convites na tela de edição de marca
-  (backend pronto; rotas: `brands.invitations.store`/`destroy`).
-- Registros "globais" (`brand_id NULL`) de conexões são visíveis a todos os
-  usuários — atribuir dono (user_id) a conexões descobertas via OAuth.
-- Tabela `settings` é global (não por marca/conta).
-- Limite mensal de SMS (`monthly_sms`) ainda não tem enforcement.
-- Substituir scripts SQL manuais da raiz por comandos/jobs de auto-recuperação.
-- Observabilidade: alertas de falha de fila (ex: Sentry + Horizon) recomendados
-  antes de operar com clientes pagantes.
+A seção **Equipe** na edição da marca (`/brands/{id}/edit`) permite a
+Owner/Admin: convidar por e-mail (papéis admin/editor/viewer), alterar papel,
+remover membros e revogar convites pendentes. O papel Owner é imutável.
+
+## 6. Operação
+
+- `email:fix-stuck` roda a cada 15 minutos (campanhas travadas em "sending").
+- `system:alert-failed-jobs` roda de hora em hora: registra em SystemLog e
+  envia e-mail para `ADMIN_ALERT_EMAIL` (se configurado) quando novos jobs
+  falham na fila.
+- Scripts SQL/PHP de diagnóstico históricos foram movidos para
+  `scripts/legacy/` (apenas referência; não usar em produção).
+
+## 7. Pendências conhecidas (próximos passos)
+
+- Tabela `settings` é global (não por marca/conta) — chaves de IA/OAuth são
+  da plataforma, repassadas via limites de plano.
+- Conexões/contas "globais" legadas (`brand_id NULL` e `user_id NULL`) seguem
+  visíveis a todos; novas criações já registram o dono (`user_id`).
+- Dados analíticos (`analytics_data_points`/`daily_summaries`) com
+  `brand_id NULL` (conexões globais) seguem o comportamento legado.
+- Observabilidade mais profunda (ex: Sentry/Horizon) recomendada conforme a
+  base de clientes crescer.
