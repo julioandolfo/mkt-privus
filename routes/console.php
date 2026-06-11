@@ -222,3 +222,15 @@ Schedule::call(function () {
         $wpService->publish($article);
     }
 })->name('blog.publish-scheduled')->everyFiveMinutes()->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Operação / Auto-recuperação
+|--------------------------------------------------------------------------
+*/
+
+// Corrigir campanhas de e-mail travadas em "sending" - a cada 15 minutos
+Schedule::command('email:fix-stuck')->everyFifteenMinutes()->withoutOverlapping();
+
+// Alertar admin sobre jobs falhados - de hora em hora
+Schedule::command('system:alert-failed-jobs')->hourly()->withoutOverlapping();

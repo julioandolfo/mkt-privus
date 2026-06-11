@@ -86,6 +86,14 @@ class SmsCampaignService
             return false;
         }
 
+        // Limite mensal de SMS do plano (no-op com billing desabilitado)
+        if ($campaign->brand) {
+            app(\App\Services\Billing\UsageService::class)->assertCanSendSms(
+                $campaign->brand,
+                $campaign->total_recipients ?: $this->calculateRecipients($campaign)
+            );
+        }
+
         $campaign->update([
             'status' => 'sending',
             'started_at' => now(),

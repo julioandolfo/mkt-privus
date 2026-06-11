@@ -110,6 +110,9 @@ return [
     |
     */
 
+    // E-mail do administrador para alertas operacionais (jobs falhados etc.)
+    'admin_alert_address' => env('ADMIN_ALERT_EMAIL'),
+
     'from' => [
         'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),
         'name' => env('MAIL_FROM_NAME', 'Example'),

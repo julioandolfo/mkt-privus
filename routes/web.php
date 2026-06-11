@@ -77,23 +77,47 @@ Route::post('/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])
 Route::post('/email/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])->name('email.webhook.sendpulse');
 Route::post('/sms/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])->name('sms.webhook.sendpulse');
 
+// Webhook de assinaturas do Mercado Pago (valida x-signature quando secret configurado)
+Route::post('/webhook/mercadopago', [\App\Http\Controllers\MercadoPagoWebhookController::class, 'handle'])
+    ->middleware('throttle:120,1')
+    ->name('webhook.mercadopago');
+
 /*
 |--------------------------------------------------------------------------
 | Rotas autenticadas
 |--------------------------------------------------------------------------
 */
-Route::middleware(['auth', 'verified'])->group(function () {
+Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
 
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-    // Marcas
-    Route::resource('brands', BrandsController::class)->except(['show']);
-    Route::post('/brands/{brand}/switch', [BrandsController::class, 'switchBrand'])->name('brands.switch');
-    Route::post('/brands/{brand}/assets', [BrandsController::class, 'uploadAsset'])->name('brands.assets.upload');
-    Route::delete('/brands/{brand}/assets/{asset}', [BrandsController::class, 'deleteAsset'])->name('brands.assets.delete');
-    Route::post('/brands/{brand}/assets/{asset}/primary', [BrandsController::class, 'setPrimaryAsset'])->name('brands.assets.primary');
-    Route::post('/brands/{brand}/reset-ai-history', [BrandsController::class, 'resetAiHistory'])->name('brands.reset-ai-history');
+    // Assinatura / Billing (Mercado Pago)
+    Route::prefix('billing')->name('billing.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\BillingController::class, 'index'])->name('index');
+        Route::post('/subscribe/{plan}', [\App\Http\Controllers\BillingController::class, 'subscribe'])->name('subscribe');
+        Route::post('/cancel', [\App\Http\Controllers\BillingController::class, 'cancel'])->name('cancel');
+    });
+
+    // Marcas (autorização via BrandPolicy)
+    Route::resource('brands', BrandsController::class)->only(['index', 'create', 'store']);
+    Route::get('/brands/{brand}/edit', [BrandsController::class, 'edit'])->name('brands.edit')->middleware('can:update,brand');
+    Route::match(['put', 'patch'], '/brands/{brand}', [BrandsController::class, 'update'])->name('brands.update')->middleware('can:update,brand');
+    Route::delete('/brands/{brand}', [BrandsController::class, 'destroy'])->name('brands.destroy')->middleware('can:delete,brand');
+    Route::post('/brands/{brand}/switch', [BrandsController::class, 'switchBrand'])->name('brands.switch')->middleware('can:view,brand');
+    Route::post('/brands/{brand}/assets', [BrandsController::class, 'uploadAsset'])->name('brands.assets.upload')->middleware('can:update,brand');
+    Route::delete('/brands/{brand}/assets/{asset}', [BrandsController::class, 'deleteAsset'])->name('brands.assets.delete')->middleware('can:update,brand');
+    Route::post('/brands/{brand}/assets/{asset}/primary', [BrandsController::class, 'setPrimaryAsset'])->name('brands.assets.primary')->middleware('can:update,brand');
+    Route::post('/brands/{brand}/reset-ai-history', [BrandsController::class, 'resetAiHistory'])->name('brands.reset-ai-history')->middleware('can:update,brand');
+
+    // Convites de membros da marca
+    Route::post('/brands/{brand}/invitations', [\App\Http\Controllers\BrandInvitationsController::class, 'store'])->name('brands.invitations.store')->middleware('can:update,brand');
+    Route::delete('/brands/{brand}/invitations/{invitation}', [\App\Http\Controllers\BrandInvitationsController::class, 'destroy'])->name('brands.invitations.destroy')->middleware('can:update,brand');
+    Route::get('/invitations/{token}', [\App\Http\Controllers\BrandInvitationsController::class, 'accept'])->name('invitations.accept');
+
+    // Membros da marca (alterar papel / remover)
+    Route::put('/brands/{brand}/members/{member}', [\App\Http\Controllers\BrandMembersController::class, 'update'])->name('brands.members.update')->middleware('can:update,brand');
+    Route::delete('/brands/{brand}/members/{member}', [\App\Http\Controllers\BrandMembersController::class, 'destroy'])->name('brands.members.destroy')->middleware('can:update,brand');
 
     // Perfil (Breeze)
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

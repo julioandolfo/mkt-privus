@@ -37,6 +37,12 @@ class EmailCampaignService
      */
     public function startCampaign(EmailCampaign $campaign): void
     {
+        // Limite mensal de envios do plano (no-op com billing desabilitado)
+        if ($campaign->brand) {
+            app(\App\Services\Billing\UsageService::class)
+                ->assertCanSendEmails($campaign->brand, $this->resolveRecipients($campaign)->count());
+        }
+
         $campaign->update([
             'status' => 'sending',
             'started_at' => now(),

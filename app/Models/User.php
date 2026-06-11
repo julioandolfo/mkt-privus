@@ -64,6 +64,11 @@ class User extends Authenticatable
         return $this->hasMany(ChatConversation::class);
     }
 
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(Subscription::class);
+    }
+
     // ===== METHODS =====
 
     /**
@@ -103,5 +108,15 @@ class User extends Authenticatable
         $pivot = $this->brands()->where('brand_id', $brand->id)->first()?->pivot;
 
         return $pivot ? BrandRole::from($pivot->role) : null;
+    }
+
+    /**
+     * Acesso ao sistema: assinatura própria válida (ativa ou trial) ou
+     * assento em marca de um Owner assinante. Com billing desabilitado,
+     * todo usuário tem acesso.
+     */
+    public function hasValidSubscription(): bool
+    {
+        return app(\App\Services\Billing\UsageService::class)->userHasAccess($this);
     }
 }

@@ -2,12 +2,18 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBrand;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ManualAdEntry extends Model
 {
+    use BelongsToBrand;
+
+    /** Registros com brand_id NULL são globais e permanecem visíveis para todas as marcas */
+    public bool $brandScopeIncludesNull = true;
+
     protected $fillable = [
         'brand_id', 'user_id', 'platform', 'platform_label',
         'date_start', 'date_end', 'amount', 'description',

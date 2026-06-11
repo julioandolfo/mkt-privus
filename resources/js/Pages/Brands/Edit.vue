@@ -82,9 +82,70 @@ interface Brand {
     assets: BrandAsset[];
 }
 
+interface Member {
+    id: number;
+    name: string;
+    email: string;
+    role: string;
+}
+
+interface Invitation {
+    id: number;
+    email: string;
+    role: string;
+    expires_at: string;
+}
+
 const props = defineProps<{
     brand: Brand;
+    members: Member[];
+    invitations: Invitation[];
 }>();
+
+// ===== Equipe =====
+const roleLabels: Record<string, string> = {
+    owner: 'Proprietário',
+    admin: 'Administrador',
+    editor: 'Editor',
+    viewer: 'Visualizador',
+};
+
+const inviteEmail = ref('');
+const inviteRole = ref('editor');
+const teamError = computed(() => (page.props as any).flash?.error ?? null);
+
+function sendInvite() {
+    if (!inviteEmail.value) return;
+    router.post(
+        route('brands.invitations.store', props.brand.id),
+        { email: inviteEmail.value, role: inviteRole.value },
+        {
+            preserveScroll: true,
+            onSuccess: () => { inviteEmail.value = ''; },
+        },
+    );
+}
+
+function revokeInvite(invitation: Invitation) {
+    router.delete(route('brands.invitations.destroy', [props.brand.id, invitation.id]), {
+        preserveScroll: true,
+    });
+}
+
+function updateMemberRole(member: Member, event: Event) {
+    const role = (event.target as HTMLSelectElement).value;
+    router.put(route('brands.members.update', [props.brand.id, member.id]), { role }, {
+        preserveScroll: true,
+    });
+}
+
+function removeMember(member: Member) {
+    if (confirm(`Remover ${member.name} da marca?`)) {
+        router.delete(route('brands.members.destroy', [props.brand.id, member.id]), {
+            preserveScroll: true,
+        });
+    }
+}
 
 const form = useForm({
     name: props.brand.name ?? '',
@@ -594,6 +655,119 @@ const urlTypeOptions = [
                         <p class="text-xs text-purple-400">
                             <strong>Dica:</strong> Para editar essas configurações, acesse o Content Engine e vá na aba "Configurações"
                         </p>
+                    </div>
+                </div>
+
+                <!-- Equipe -->
+                <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                    <h2 class="text-lg font-semibold text-white mb-2">Equipe</h2>
+                    <p class="text-sm text-gray-500 mb-5">Membros com acesso a esta marca. Convide por e-mail e defina o papel de cada um.</p>
+
+                    <div v-if="teamError" class="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+                        {{ teamError }}
+                    </div>
+
+                    <!-- Membros -->
+                    <div class="space-y-2">
+                        <div
+                            v-for="member in members"
+                            :key="member.id"
+                            class="flex flex-wrap items-center gap-3 rounded-xl bg-gray-800 px-4 py-3"
+                        >
+                            <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600/30 text-sm font-semibold text-indigo-300">
+                                {{ member.name.charAt(0).toUpperCase() }}
+                            </div>
+                            <div class="min-w-0 flex-1">
+                                <p class="truncate text-sm font-medium text-white">{{ member.name }}</p>
+                                <p class="truncate text-xs text-gray-400">{{ member.email }}</p>
+                            </div>
+                            <span
+                                v-if="member.role === 'owner'"
+                                class="rounded-lg bg-amber-500/15 px-3 py-1.5 text-xs font-medium text-amber-400"
+                            >
+                                {{ roleLabels.owner }}
+                            </span>
+                            <template v-else>
+                                <select
+                                    :value="member.role"
+                                    @change="updateMemberRole(member, $event)"
+                                    class="rounded-lg border-gray-700 bg-gray-900 py-1.5 text-xs text-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
+                                >
+                                    <option value="admin">{{ roleLabels.admin }}</option>
+                                    <option value="editor">{{ roleLabels.editor }}</option>
+                                    <option value="viewer">{{ roleLabels.viewer }}</option>
+                                </select>
+                                <button
+                                    type="button"
+                                    @click="removeMember(member)"
+                                    class="rounded-lg p-1.5 text-gray-500 transition hover:bg-red-500/10 hover:text-red-400"
+                                    title="Remover membro"
+                                >
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Convites pendentes -->
+                    <div v-if="invitations.length" class="mt-5">
+                        <h3 class="mb-2 text-sm font-medium text-gray-300">Convites pendentes</h3>
+                        <div class="space-y-2">
+                            <div
+                                v-for="invitation in invitations"
+                                :key="invitation.id"
+                                class="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-gray-700 px-4 py-3"
+                            >
+                                <div class="min-w-0 flex-1">
+                                    <p class="truncate text-sm text-gray-300">{{ invitation.email }}</p>
+                                    <p class="text-xs text-gray-500">
+                                        {{ roleLabels[invitation.role] ?? invitation.role }} &middot;
+                                        expira em {{ new Date(invitation.expires_at).toLocaleDateString('pt-BR') }}
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    @click="revokeInvite(invitation)"
+                                    class="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-400 transition hover:bg-red-500/10 hover:text-red-400"
+                                >
+                                    Revogar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Convidar -->
+                    <div class="mt-5 flex flex-wrap items-end gap-3">
+                        <div class="min-w-[220px] flex-1">
+                            <InputLabel for="invite_email" value="Convidar por e-mail" class="text-gray-300" />
+                            <TextInput
+                                id="invite_email"
+                                v-model="inviteEmail"
+                                type="email"
+                                class="mt-1 block w-full rounded-xl border-gray-700 bg-gray-800 text-white focus:border-indigo-500 focus:ring-indigo-500"
+                                placeholder="pessoa@empresa.com"
+                            />
+                        </div>
+                        <div>
+                            <InputLabel for="invite_role" value="Papel" class="text-gray-300" />
+                            <select
+                                id="invite_role"
+                                v-model="inviteRole"
+                                class="mt-1 rounded-xl border-gray-700 bg-gray-800 py-2 text-sm text-white focus:border-indigo-500 focus:ring-indigo-500"
+                            >
+                                <option value="admin">{{ roleLabels.admin }}</option>
+                                <option value="editor">{{ roleLabels.editor }}</option>
+                                <option value="viewer">{{ roleLabels.viewer }}</option>
+                            </select>
+                        </div>
+                        <button
+                            type="button"
+                            @click="sendInvite"
+                            :disabled="!inviteEmail"
+                            class="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                            Enviar convite
+                        </button>
                     </div>
                 </div>
 
