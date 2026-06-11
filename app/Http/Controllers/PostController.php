@@ -115,9 +115,9 @@ class PostController extends Controller
                 'status_color' => $post->status->color(),
                 'platforms' => $post->platforms ?? [],
                 'failed_platforms' => $failedPlatforms,
-                'scheduled_at' => $post->scheduled_at?->format('d/m/Y H:i'),
-                'published_at' => $post->published_at?->format('d/m/Y H:i'),
-                'created_at' => $post->created_at->format('d/m/Y H:i'),
+                'scheduled_at' => $post->scheduled_at?->setTimezone(config('app.display_timezone'))->format('d/m/Y H:i'),
+                'published_at' => $post->published_at?->setTimezone(config('app.display_timezone'))->format('d/m/Y H:i'),
+                'created_at' => $post->created_at->setTimezone(config('app.display_timezone'))->format('d/m/Y H:i'),
                 'user_name' => $post->user?->name,
                 'metrics' => $metrics,
                 'is_shared' => $brandsList->count() > 1,
@@ -188,7 +188,7 @@ class PostController extends Controller
                     'caption' => mb_substr($post->caption ?? '', 0, 100),
                     'type' => $post->type?->value,
                     'platforms' => $post->platforms ?? [],
-                    'published_at' => $post->published_at?->format('d/m/Y'),
+                    'published_at' => $post->published_at?->setTimezone(config('app.display_timezone'))->format('d/m/Y'),
                     'platform' => $schedule->platform->value ?? $schedule->platform,
                     'likes' => $schedule->likes,
                     'comments' => $schedule->comments,
@@ -274,6 +274,11 @@ class PostController extends Controller
             return redirect()->back()->withErrors(['brand' => 'Selecione uma marca ativa.']);
         }
 
+        // Normaliza o horário local informado (display_timezone) para UTC ANTES
+        // de validar, para que "after:2 minutes ago" (avaliado em UTC) compare o
+        // instante real — caso contrário um agendamento BRT próximo falharia.
+        $this->normalizeScheduledAtToUtc($request);
+
         $validated = $request->validate([
             'title' => 'nullable|string|max:255',
             'caption' => 'required|string|max:10000',
@@ -316,8 +321,9 @@ class PostController extends Controller
 
         $brandIds = $accounts->pluck('brand_id')->filter()->unique()->values();
 
+        // Já normalizado para UTC em normalizeScheduledAtToUtc().
         $scheduledAt = !empty($validated['scheduled_at'])
-            ? \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'))
+            ? \Carbon\Carbon::parse($validated['scheduled_at'])
             : null;
 
         $status = $scheduledAt
@@ -400,6 +406,28 @@ class PostController extends Controller
         }
 
         return redirect()->route('social.posts.index')->with('success', $msg);
+    }
+
+    /**
+     * Converte o campo scheduled_at do request — informado pelo usuário no fuso
+     * local (config app.display_timezone, via <input type="datetime-local">,
+     * portanto sem offset) — para um datetime UTC, regravando no request antes
+     * da validação. Assim "after:..." compara o instante real e o downstream
+     * apenas faz Carbon::parse() (UTC). No-op se o campo estiver vazio.
+     */
+    private function normalizeScheduledAtToUtc(Request $request): void
+    {
+        $value = $request->input('scheduled_at');
+
+        if (empty($value)) {
+            return;
+        }
+
+        $request->merge([
+            'scheduled_at' => \Carbon\Carbon::parse($value, config('app.display_timezone'))
+                ->utc()
+                ->toDateTimeString(),
+        ]);
     }
 
     /**
@@ -507,7 +535,7 @@ class PostController extends Controller
                 'type' => $post->type?->value,
                 'status' => $post->status->value,
                 'platforms' => $post->platforms ?? [],
-                'scheduled_at' => $post->scheduled_at?->format('Y-m-d\TH:i'),
+                'scheduled_at' => $post->scheduled_at?->setTimezone(config('app.display_timezone'))->format('Y-m-d\TH:i'),
                 'ai_model_used' => $post->ai_model_used,
                 'ai_prompt' => $post->ai_prompt,
                 'selected_account_ids' => $selectedAccountIds,
@@ -534,6 +562,9 @@ class PostController extends Controller
     public function update(Request $request, Post $post): RedirectResponse
     {
         $this->authorizePost($request, $post);
+
+        // Ver store(): horário local -> UTC antes da validação.
+        $this->normalizeScheduledAtToUtc($request);
 
         $validated = $request->validate([
             'title' => 'nullable|string|max:255',
@@ -572,8 +603,9 @@ class PostController extends Controller
             ? $accounts->pluck('platform')->map(fn($p) => $p instanceof SocialPlatform ? $p->value : $p)->unique()->values()->all()
             : ($validated['platforms'] ?? $post->platforms ?? []);
 
+        // Já normalizado para UTC em normalizeScheduledAtToUtc().
         $scheduledAt = !empty($validated['scheduled_at'])
-            ? \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'))
+            ? \Carbon\Carbon::parse($validated['scheduled_at'])
             : null;
 
         // Determinar status
@@ -1850,8 +1882,8 @@ class PostController extends Controller
             ->map(fn($post) => [
                 'id' => $post->id,
                 'title' => $post->title ?: mb_substr($post->caption, 0, 40) . '...',
-                'date' => ($post->scheduled_at ?? $post->published_at ?? $post->created_at)->format('Y-m-d'),
-                'time' => ($post->scheduled_at ?? $post->published_at ?? $post->created_at)->format('H:i'),
+                'date' => ($post->scheduled_at ?? $post->published_at ?? $post->created_at)->setTimezone(config('app.display_timezone'))->format('Y-m-d'),
+                'time' => ($post->scheduled_at ?? $post->published_at ?? $post->created_at)->setTimezone(config('app.display_timezone'))->format('H:i'),
                 'status' => $post->status->value,
                 'status_label' => $post->status->label(),
                 'status_color' => $post->status->color(),
@@ -1912,22 +1944,28 @@ class PostController extends Controller
             'date' => 'required|date',
         ]);
 
-        // Manter o horario original, so alterar a data
-        $oldDate = $post->scheduled_at ?? $post->created_at;
-        $newDate = \Carbon\Carbon::parse($validated['date'])->setTime(
+        // Manter o horario original (no fuso local do usuario), so alterar a data.
+        // $validated['date'] e a data local destino; reaplicamos a hora local
+        // original e convertemos de volta para UTC para armazenar.
+        $tz = config('app.display_timezone');
+        $oldDate = ($post->scheduled_at ?? $post->created_at)->copy()->setTimezone($tz);
+        $newDate = \Carbon\Carbon::parse($validated['date'], $tz)->setTime(
             $oldDate->hour,
             $oldDate->minute,
             $oldDate->second
-        );
+        )->utc();
 
         $post->update([
             'scheduled_at' => $newDate,
             'status' => $post->status === PostStatus::Draft ? PostStatus::Scheduled->value : $post->status->value,
         ]);
 
+        // Datas de volta no fuso local para o calendário posicionar o card.
+        $newDateLocal = $newDate->copy()->setTimezone($tz);
+
         return response()->json([
-            'message' => 'Post reagendado para ' . $newDate->format('d/m/Y') . '.',
-            'new_date' => $newDate->format('Y-m-d'),
+            'message' => 'Post reagendado para ' . $newDateLocal->format('d/m/Y') . '.',
+            'new_date' => $newDateLocal->format('Y-m-d'),
         ]);
     }
 
