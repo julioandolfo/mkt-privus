@@ -1,0 +1,236 @@
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Models\Plan;
+use App\Models\Subscription;
+use App\Models\SystemLog;
+use App\Models\User;
+use App\Services\Billing\MercadoPagoService;
+use App\Services\Billing\UsageService;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Inertia\Inertia;
+use Inertia\Response;
+
+/**
+ * Back-office do operador do SaaS (rotas protegidas pelo middleware 'admin'):
+ * visão e gestão de todas as contas, assinaturas e uso.
+ */
+class AccountsController extends Controller
+{
+    public function __construct(
+        private UsageService $usage,
+        private MercadoPagoService $mercadoPago,
+    ) {}
+
+    public function index(Request $request): Response
+    {
+        $search = trim((string) $request->get('q', ''));
+
+        $accounts = User::query()
+            ->when($search, fn ($query) => $query->where(
+                fn ($q) => $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%")
+            ))
+            ->orderByDesc('created_at')
+            ->paginate(15)
+            ->withQueryString()
+            ->through(function (User $user) {
+                $subscription = $this->usage->activeSubscription($user)
+                    ?? $user->subscriptions()->latest('id')->first();
+
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'is_admin' => (bool) $user->is_admin,
+                    'is_active' => $user->is_active !== false,
+                    'created_at' => $user->created_at?->toDateString(),
+                    'last_login_at' => $user->last_login_at?->toDateTimeString(),
+                    'brands_count' => $this->usage->brandsCount($user),
+                    'subscription' => $subscription ? [
+                        'id' => $subscription->id,
+                        'plan_name' => $subscription->plan?->name,
+                        'status' => $subscription->status,
+                        'trial_ends_at' => $subscription->trial_ends_at?->toDateString(),
+                        'current_period_end' => $subscription->current_period_end?->toDateString(),
+                        'is_valid' => $subscription->isValid(),
+                    ] : null,
+                    'usage' => [
+                        'emails' => $this->usage->emailsSentThisMonth($user),
+                        'ai_tokens' => $this->usage->aiTokensThisMonth($user),
+                    ],
+                ];
+            });
+
+        $activeSubscriptions = Subscription::where('status', Subscription::STATUS_ACTIVE)->with('plan')->get();
+
+        $stats = [
+            'total_accounts' => User::count(),
+            'active_subscriptions' => $activeSubscriptions->count(),
+            'trialing' => Subscription::where('status', Subscription::STATUS_TRIALING)
+                ->where('trial_ends_at', '>', now())
+                ->count(),
+            'mrr' => round($activeSubscriptions->sum(fn ($s) => (float) ($s->plan?->price ?? 0)), 2),
+        ];
+
+        return Inertia::render('Admin/Accounts', [
+            'accounts' => $accounts,
+            'stats' => $stats,
+            'plans' => Plan::active()->get(['id', 'name', 'price']),
+            'filters' => ['q' => $search],
+        ]);
+    }
+
+    /**
+     * Ativa/desativa o acesso de uma conta (bloqueia o login)
+     */
+    public function toggleActive(Request $request, User $user): RedirectResponse
+    {
+        if ($user->id === $request->user()->id) {
+            return back()->with('error', 'Você não pode desativar a própria conta.');
+        }
+
+        $user->update(['is_active' => !($user->is_active !== false)]);
+
+        SystemLog::info('admin', 'account.toggle_active', "Conta {$user->email} " . ($user->is_active ? 'ativada' : 'desativada'), [
+            'user_id' => $request->user()->id,
+            'target_user_id' => $user->id,
+        ]);
+
+        return back()->with('success', $user->is_active ? 'Conta ativada.' : 'Conta desativada.');
+    }
+
+    /**
+     * Promove/rebaixa administrador da plataforma
+     */
+    public function toggleAdmin(Request $request, User $user): RedirectResponse
+    {
+        if ($user->id === $request->user()->id) {
+            return back()->with('error', 'Você não pode alterar o próprio acesso de administrador.');
+        }
+
+        $user->update(['is_admin' => !$user->is_admin]);
+
+        SystemLog::info('admin', 'account.toggle_admin', "Conta {$user->email} " . ($user->is_admin ? 'promovida a admin' : 'rebaixada de admin'), [
+            'user_id' => $request->user()->id,
+            'target_user_id' => $user->id,
+        ]);
+
+        return back()->with('success', $user->is_admin ? 'Usuário promovido a administrador.' : 'Acesso de administrador removido.');
+    }
+
+    /**
+     * Estende (ou cria) o trial da conta
+     */
+    public function extendTrial(Request $request, User $user): RedirectResponse
+    {
+        $validated = $request->validate(['days' => 'required|integer|min:1|max:90']);
+
+        $subscription = $user->subscriptions()
+            ->whereIn('status', [Subscription::STATUS_TRIALING, Subscription::STATUS_PENDING])
+            ->latest('id')
+            ->first();
+
+        if ($subscription) {
+            $base = $subscription->trial_ends_at?->isFuture() ? $subscription->trial_ends_at : now();
+            $subscription->update([
+                'status' => Subscription::STATUS_TRIALING,
+                'trial_ends_at' => $base->copy()->addDays($validated['days']),
+            ]);
+        } else {
+            $plan = Plan::active()->first();
+
+            if (!$plan) {
+                return back()->with('error', 'Nenhum plano ativo disponível para criar o trial.');
+            }
+
+            $subscription = $user->subscriptions()->create([
+                'plan_id' => $plan->id,
+                'status' => Subscription::STATUS_TRIALING,
+                'trial_ends_at' => now()->addDays($validated['days']),
+            ]);
+        }
+
+        SystemLog::info('admin', 'account.extend_trial', "Trial de {$user->email} estendido em {$validated['days']} dia(s)", [
+            'user_id' => $request->user()->id,
+            'target_user_id' => $user->id,
+            'subscription_id' => $subscription->id,
+        ]);
+
+        return back()->with('success', "Trial estendido até {$subscription->trial_ends_at->format('d/m/Y')}.");
+    }
+
+    /**
+     * Concede um plano cortesia (assinatura ativa sem cobrança no Mercado Pago)
+     */
+    public function grantPlan(Request $request, User $user): RedirectResponse
+    {
+        $validated = $request->validate([
+            'plan_id' => 'required|exists:plans,id',
+            'months' => 'nullable|integer|min:1|max:36',
+        ]);
+
+        // Encerra assinaturas vigentes antes de conceder a cortesia
+        $user->subscriptions()
+            ->whereIn('status', [Subscription::STATUS_TRIALING, Subscription::STATUS_ACTIVE, Subscription::STATUS_PENDING])
+            ->update(['status' => Subscription::STATUS_CANCELLED, 'cancelled_at' => now()]);
+
+        $subscription = $user->subscriptions()->create([
+            'plan_id' => $validated['plan_id'],
+            'status' => Subscription::STATUS_ACTIVE,
+            'current_period_end' => isset($validated['months'])
+                ? now()->addMonths((int) $validated['months'])
+                : null,
+            'metadata' => ['granted_by' => $request->user()->id, 'courtesy' => true],
+        ]);
+
+        SystemLog::info('admin', 'account.grant_plan', "Plano cortesia concedido a {$user->email}", [
+            'user_id' => $request->user()->id,
+            'target_user_id' => $user->id,
+            'subscription_id' => $subscription->id,
+            'plan_id' => $validated['plan_id'],
+        ]);
+
+        return back()->with('success', 'Plano concedido à conta.');
+    }
+
+    /**
+     * Cancela a assinatura vigente da conta (incluindo no Mercado Pago)
+     */
+    public function cancelSubscription(Request $request, User $user): RedirectResponse
+    {
+        $subscription = $this->usage->activeSubscription($user);
+
+        if (!$subscription) {
+            return back()->with('error', 'Esta conta não possui assinatura vigente.');
+        }
+
+        if ($subscription->mp_preapproval_id) {
+            try {
+                $this->mercadoPago->cancelPreapproval($subscription->mp_preapproval_id);
+            } catch (\Throwable $e) {
+                SystemLog::error('admin', 'account.cancel_subscription.mp_error', "Erro ao cancelar no MP: {$e->getMessage()}", [
+                    'subscription_id' => $subscription->id,
+                ]);
+
+                return back()->with('error', 'Falha ao cancelar junto ao Mercado Pago. Tente novamente.');
+            }
+        }
+
+        $subscription->update([
+            'status' => Subscription::STATUS_CANCELLED,
+            'cancelled_at' => now(),
+        ]);
+
+        SystemLog::info('admin', 'account.cancel_subscription', "Assinatura de {$user->email} cancelada pelo admin", [
+            'user_id' => $request->user()->id,
+            'target_user_id' => $user->id,
+            'subscription_id' => $subscription->id,
+        ]);
+
+        return back()->with('success', 'Assinatura cancelada.');
+    }
+}

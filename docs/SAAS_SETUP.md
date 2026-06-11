@@ -100,14 +100,27 @@ A seção **Equipe** na edição da marca (`/brands/{id}/edit`) permite a
 Owner/Admin: convidar por e-mail (papéis admin/editor/viewer), alterar papel,
 remover membros e revogar convites pendentes. O papel Owner é imutável.
 
-## 6. Administradores da plataforma
+## 6. Administradores da plataforma (super admin)
 
 - `users.is_admin` separa o **operador do SaaS** dos clientes: apenas admins
-  acessam Configurações (chaves de API, SMTP, OAuth, billing, usuários) e Logs.
+  acessam Configurações (chaves de API, SMTP, OAuth, billing, usuários), Logs
+  e o back-office de contas.
 - A migration promove a admin todos os usuários existentes na data da
   atualização; novos cadastros self-service nascem como não-admin.
-- Para promover alguém: `php artisan tinker` →
-  `User::where('email', 'x@y.com')->update(['is_admin' => true]);`
+- Contas desativadas (`is_active = false`) são bloqueadas no login.
+
+### Back-office de contas (`/admin/accounts`)
+
+Painel do operador com indicadores (contas, assinaturas ativas, em trial e
+MRR), busca e ações por conta:
+
+- **+ Trial** — estende (ou cria) o período de teste em N dias;
+- **Conceder plano** — assinatura cortesia ativa sem cobrança no Mercado Pago
+  (com ou sem expiração);
+- **Cancelar assinatura** — encerra a assinatura vigente (inclusive no MP);
+- **Ativar/Desativar** — bloqueia ou libera o login da conta;
+- **Tornar/Tirar admin** — promove ou rebaixa administradores (não permite
+  alterar a si mesmo).
 
 ## 7. Operação
 
