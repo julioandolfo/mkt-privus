@@ -32,7 +32,8 @@ class EnsureSubscribed
 
         $user = $request->user();
 
-        if (!$user || $user->hasValidSubscription()) {
+        // Administradores da plataforma (operador do SaaS) não assinam planos
+        if (!$user || $user->is_admin || $user->hasValidSubscription()) {
             return $next($request);
         }
 

@@ -105,9 +105,26 @@ remover membros e revogar convites pendentes. O papel Owner é imutável.
 - `users.is_admin` separa o **operador do SaaS** dos clientes: apenas admins
   acessam Configurações (chaves de API, SMTP, OAuth, billing, usuários), Logs
   e o back-office de contas.
+- Admins **não precisam de assinatura** e não têm limites de plano.
 - A migration promove a admin todos os usuários existentes na data da
   atualização; novos cadastros self-service nascem como não-admin.
 - Contas desativadas (`is_active = false`) são bloqueadas no login.
+
+### Bootstrap do super admin no deploy
+
+O entrypoint do Docker roda `php artisan admin:create --ensure` após as
+migrations — idempotente, só age se **nenhum** admin existir:
+
+- Com `SUPER_ADMIN_EMAIL`/`SUPER_ADMIN_PASSWORD` (e opcional `SUPER_ADMIN_NAME`)
+  definidos no ambiente do primeiro deploy, o admin é criado automaticamente
+  (e-mail já verificado). Remova as variáveis depois.
+- Sem as variáveis, crie manualmente:
+  `php artisan admin:create email@dominio.com` (gera e exibe uma senha
+  aleatória se `--password` não for informado; promove o usuário se o e-mail
+  já existir).
+
+Depois do primeiro admin, toda a gestão (promover/rebaixar) é pela UI em
+Contas (Admin).
 
 ### Back-office de contas (`/admin/accounts`)
 

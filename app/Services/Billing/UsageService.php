@@ -53,6 +53,11 @@ class UsageService
             return true;
         }
 
+        // Administradores da plataforma têm acesso irrestrito
+        if ($user->is_admin) {
+            return true;
+        }
+
         if ($this->activeSubscription($user)) {
             return true;
         }
@@ -86,6 +91,11 @@ class UsageService
     public function limitFor(User $user, string $key): ?int
     {
         if (!$this->enabled()) {
+            return null;
+        }
+
+        // Administradores da plataforma não têm limites de plano
+        if ($user->is_admin) {
             return null;
         }
 
