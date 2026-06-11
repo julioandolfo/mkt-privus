@@ -41,7 +41,7 @@ class HandleInertiaRequests extends Middleware
                 'error' => fn () => $request->session()->get('error'),
                 'info' => fn () => $request->session()->get('info'),
             ],
-            'serverTime' => fn () => now()->setTimezone('America/Sao_Paulo')->format('H:i'),
+            'serverTime' => fn () => now()->setTimezone(config('app.display_timezone'))->format('H:i'),
             'serverTimezone' => 'BRT',
             'ziggy' => fn () => [
                 ...(new Ziggy)->toArray(),

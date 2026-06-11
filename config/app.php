@@ -69,6 +69,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Display Timezone
+    |--------------------------------------------------------------------------
+    |
+    | Timezone usado para exibir e interpretar datas/horários informados pelo
+    | usuário (ex: agendamento de posts). O armazenamento permanece em UTC
+    | (config "timezone" acima); este valor é apenas a "janela" local com que
+    | o usuário interage. Para o público brasileiro: America/Sao_Paulo (-03).
+    |
+    */
+
+    'display_timezone' => env('APP_DISPLAY_TIMEZONE', 'America/Sao_Paulo'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Locale Configuration
     |--------------------------------------------------------------------------
     |
