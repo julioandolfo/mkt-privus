@@ -110,6 +110,11 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
     Route::post('/brands/{brand}/assets/{asset}/primary', [BrandsController::class, 'setPrimaryAsset'])->name('brands.assets.primary')->middleware('can:update,brand');
     Route::post('/brands/{brand}/reset-ai-history', [BrandsController::class, 'resetAiHistory'])->name('brands.reset-ai-history')->middleware('can:update,brand');
 
+    // Convites de membros da marca
+    Route::post('/brands/{brand}/invitations', [\App\Http\Controllers\BrandInvitationsController::class, 'store'])->name('brands.invitations.store')->middleware('can:update,brand');
+    Route::delete('/brands/{brand}/invitations/{invitation}', [\App\Http\Controllers\BrandInvitationsController::class, 'destroy'])->name('brands.invitations.destroy')->middleware('can:update,brand');
+    Route::get('/invitations/{token}', [\App\Http\Controllers\BrandInvitationsController::class, 'accept'])->name('invitations.accept');
+
     // Perfil (Breeze)
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');

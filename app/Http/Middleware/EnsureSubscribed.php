@@ -21,6 +21,7 @@ class EnsureSubscribed
         'logout',
         'verification.*',
         'brands.switch',
+        'invitations.accept',
     ];
 
     public function handle(Request $request, Closure $next): Response

@@ -111,16 +111,12 @@ class User extends Authenticatable
     }
 
     /**
-     * Assinatura válida (ativa ou em trial). Com billing desabilitado,
-     * todo usuário é considerado assinante.
+     * Acesso ao sistema: assinatura própria válida (ativa ou trial) ou
+     * assento em marca de um Owner assinante. Com billing desabilitado,
+     * todo usuário tem acesso.
      */
     public function hasValidSubscription(): bool
     {
-        if (!config('billing.enabled')) {
-            return true;
-        }
-
-        return app(\App\Services\Billing\UsageService::class)
-            ->activeSubscription($this) !== null;
+        return app(\App\Services\Billing\UsageService::class)->userHasAccess($this);
     }
 }

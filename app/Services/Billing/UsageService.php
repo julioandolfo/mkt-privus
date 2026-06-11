@@ -43,6 +43,31 @@ class UsageService
     }
 
     /**
+     * O usuário tem acesso ao sistema? Vale assinatura própria OU ser membro
+     * (assento) de alguma marca cujo Owner tem assinatura válida.
+     */
+    public function userHasAccess(User $user): bool
+    {
+        if (!$this->enabled()) {
+            return true;
+        }
+
+        if ($this->activeSubscription($user)) {
+            return true;
+        }
+
+        foreach ($user->brands as $brand) {
+            $owner = $this->billingOwnerFor($brand);
+
+            if ($owner && $owner->id !== $user->id && $this->activeSubscription($owner)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Usuário responsável pela cobrança de uma marca (Owner).
      */
     public function billingOwnerFor(Brand $brand): ?User
