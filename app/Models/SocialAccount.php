@@ -54,6 +54,9 @@ class SocialAccount extends Model
         'scopes' => 'array',
         'metadata' => 'array',
         'is_active' => 'boolean',
+        // Tokens OAuth criptografados em repouso
+        'access_token' => 'encrypted',
+        'refresh_token' => 'encrypted',
     ];
 
     protected $hidden = [

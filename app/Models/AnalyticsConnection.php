@@ -26,6 +26,9 @@ class AnalyticsConnection extends Model
         'is_active' => 'boolean',
         'token_expires_at' => 'datetime',
         'last_synced_at' => 'datetime',
+        // Tokens OAuth criptografados em repouso
+        'access_token' => 'encrypted',
+        'refresh_token' => 'encrypted',
     ];
 
     protected $hidden = ['access_token', 'refresh_token'];

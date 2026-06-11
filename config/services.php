@@ -35,6 +35,11 @@ return [
         ],
     ],
 
+    'sendpulse' => [
+        // Token compartilhado para validar webhooks (?token=... na URL do webhook)
+        'webhook_token' => env('SENDPULSE_WEBHOOK_TOKEN'),
+    ],
+
     'postiz' => [
         'url' => env('POSTIZ_API_URL', 'https://api.postiz.com/public/v1'),
         'api_key' => env('POSTIZ_API_KEY'),
