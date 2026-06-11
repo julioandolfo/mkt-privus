@@ -26,7 +26,7 @@ class EnsureSubscribed
 
     public function handle(Request $request, Closure $next): Response
     {
-        if (!config('billing.enabled')) {
+        if (!\App\Support\BillingSettings::enabled()) {
             return $next($request);
         }
 

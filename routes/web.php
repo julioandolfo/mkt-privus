@@ -335,8 +335,11 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
         });
     });
 
-    // Configurações do Sistema
-    Route::prefix('settings')->name('settings.')->group(function () {
+    // Configurações do Sistema (apenas administradores da plataforma)
+    Route::prefix('settings')->name('settings.')->middleware('admin')->group(function () {
+        // Assinaturas / SaaS
+        Route::put('/billing', [SettingsController::class, 'updateBilling'])->name('billing');
+        Route::put('/plans/{plan}', [SettingsController::class, 'updatePlan'])->name('plans.update');
         Route::get('/', [SettingsController::class, 'index'])->name('index');
         Route::put('/general', [SettingsController::class, 'updateGeneral'])->name('general');
         Route::put('/ai', [SettingsController::class, 'updateAI'])->name('ai');
@@ -392,8 +395,8 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
         Route::post('/oauth/save', [AnalyticsController::class, 'saveOAuthAccounts'])->name('oauth.save');
     });
 
-    // Logs do Sistema
-    Route::prefix('logs')->name('logs.')->group(function () {
+    // Logs do Sistema (apenas administradores da plataforma)
+    Route::prefix('logs')->name('logs.')->middleware('admin')->group(function () {
         Route::get('/', [LogsController::class, 'index'])->name('index');
         Route::get('/laravel', [LogsController::class, 'laravelLog'])->name('laravel');
         Route::post('/laravel/clear', [LogsController::class, 'clearLaravelLog'])->name('laravel.clear');

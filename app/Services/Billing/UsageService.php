@@ -26,7 +26,7 @@ class UsageService
 {
     public function enabled(): bool
     {
-        return (bool) config('billing.enabled');
+        return \App\Support\BillingSettings::enabled();
     }
 
     public function activeSubscription(User $user): ?Subscription

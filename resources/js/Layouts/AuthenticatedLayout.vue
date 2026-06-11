@@ -25,6 +25,7 @@ const sidebarOpen = ref(true);
 const mobileMenuOpen = ref(false);
 
 const user = computed(() => page.props.auth?.user);
+const isAdmin = !!(page.props.auth?.user as any)?.is_admin;
 const currentBrand = computed(() => page.props.currentBrand);
 const brands = computed(() => page.props.brands || []);
 
@@ -51,7 +52,7 @@ function initClock() {
 onMounted(initClock);
 onUnmounted(() => { if (clockInterval) clearInterval(clockInterval); });
 
-const navigation: NavItem[] = [
+const allNavigation: NavItem[] = [
     { name: 'Dashboard', href: 'dashboard', icon: 'home', routeMatch: 'dashboard', enabled: true },
     {
         name: 'Social', href: 'social.posts.index', icon: 'share', routeMatch: 'social.*', enabled: true,
@@ -113,9 +114,13 @@ const navigation: NavItem[] = [
     },
     { name: 'Métricas', href: 'metrics.index', icon: 'trending-up', routeMatch: 'metrics.*', enabled: true },
     { name: 'Marcas', href: 'brands.index', icon: 'briefcase', routeMatch: 'brands.*', enabled: true },
-    { name: 'Logs', href: 'logs.index', icon: 'terminal', routeMatch: 'logs.*', enabled: true },
-    { name: 'Configurações', href: 'settings.index', icon: 'settings', routeMatch: 'settings.*', enabled: true },
+    // Áreas restritas a administradores da plataforma
+    { name: 'Logs', href: 'logs.index', icon: 'terminal', routeMatch: 'logs.*', enabled: isAdmin },
+    { name: 'Configurações', href: 'settings.index', icon: 'settings', routeMatch: 'settings.*', enabled: isAdmin },
 ];
+
+// Itens desabilitados (ex: áreas admin para não-admins) ficam ocultos
+const navigation: NavItem[] = allNavigation.filter((item) => item.enabled);
 
 // Determinar qual menu deve estar expandido com base na rota atual
 function getActiveMenus(): string[] {

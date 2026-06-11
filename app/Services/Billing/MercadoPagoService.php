@@ -18,7 +18,7 @@ class MercadoPagoService
     private function http()
     {
         return Http::baseUrl(config('billing.mercadopago.base_url'))
-            ->withToken(config('billing.mercadopago.access_token'))
+            ->withToken(\App\Support\BillingSettings::mpAccessToken())
             ->acceptJson()
             ->timeout(30);
     }
@@ -71,7 +71,7 @@ class MercadoPagoService
      */
     public function isValidWebhookSignature(Request $request): bool
     {
-        $secret = config('billing.mercadopago.webhook_secret');
+        $secret = \App\Support\BillingSettings::mpWebhookSecret();
 
         if (!$secret) {
             // Sem secret configurado não há como validar — aceita (modo dev)

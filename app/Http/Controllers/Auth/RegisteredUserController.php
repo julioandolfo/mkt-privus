@@ -65,14 +65,14 @@ class RegisteredUserController extends Controller
             $user->update(['current_brand_id' => $brand->id]);
 
             // Trial automático no primeiro plano ativo
-            if (config('billing.enabled')) {
+            if (\App\Support\BillingSettings::enabled()) {
                 $plan = Plan::active()->first();
 
                 if ($plan) {
                     $user->subscriptions()->create([
                         'plan_id' => $plan->id,
                         'status' => Subscription::STATUS_TRIALING,
-                        'trial_ends_at' => now()->addDays((int) config('billing.trial_days', 14)),
+                        'trial_ends_at' => now()->addDays(\App\Support\BillingSettings::trialDays()),
                     ]);
                 }
             }
