@@ -46,7 +46,7 @@ class AlertFailedJobsCommand extends Command
             'first_error' => mb_substr((string) $newFailures->first()->exception, 0, 500),
         ]);
 
-        if ($adminEmail = config('mail.admin_alert_address')) {
+        if ($adminEmail = \App\Support\BillingSettings::adminAlertEmail()) {
             $lines = $newFailures->take(10)->map(function ($job) {
                 $error = strtok((string) $job->exception, "\n");
 

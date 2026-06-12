@@ -26,7 +26,7 @@ class UsageService
 {
     public function enabled(): bool
     {
-        return (bool) config('billing.enabled');
+        return \App\Support\BillingSettings::enabled();
     }
 
     public function activeSubscription(User $user): ?Subscription
@@ -50,6 +50,11 @@ class UsageService
     public function userHasAccess(User $user): bool
     {
         if (!$this->enabled()) {
+            return true;
+        }
+
+        // Administradores da plataforma têm acesso irrestrito
+        if ($user->is_admin) {
             return true;
         }
 
@@ -86,6 +91,11 @@ class UsageService
     public function limitFor(User $user, string $key): ?int
     {
         if (!$this->enabled()) {
+            return null;
+        }
+
+        // Administradores da plataforma não têm limites de plano
+        if ($user->is_admin) {
             return null;
         }
 

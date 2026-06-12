@@ -26,13 +26,14 @@ class EnsureSubscribed
 
     public function handle(Request $request, Closure $next): Response
     {
-        if (!config('billing.enabled')) {
+        if (!\App\Support\BillingSettings::enabled()) {
             return $next($request);
         }
 
         $user = $request->user();
 
-        if (!$user || $user->hasValidSubscription()) {
+        // Administradores da plataforma (operador do SaaS) não assinam planos
+        if (!$user || $user->is_admin || $user->hasValidSubscription()) {
             return $next($request);
         }
 

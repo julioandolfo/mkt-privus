@@ -21,6 +21,7 @@ class User extends Authenticatable
         'password',
         'current_brand_id',
         'is_active',
+        'is_admin',
         'last_login_at',
         'last_login_ip',
     ];
@@ -36,6 +37,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
+            'is_admin' => 'boolean',
             'last_login_at' => 'datetime',
         ];
     }

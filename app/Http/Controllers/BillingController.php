@@ -25,7 +25,7 @@ class BillingController extends Controller
             ?? $user->subscriptions()->latest('id')->first();
 
         return Inertia::render('Billing/Index', [
-            'billingEnabled' => (bool) config('billing.enabled'),
+            'billingEnabled' => \App\Support\BillingSettings::enabled(),
             'plans' => Plan::active()->get(),
             'subscription' => $subscription?->load('plan'),
             'usage' => $this->usage->summary($user),
@@ -37,7 +37,7 @@ class BillingController extends Controller
      */
     public function subscribe(Request $request, Plan $plan)
     {
-        abort_unless(config('billing.enabled'), 404);
+        abort_unless(\App\Support\BillingSettings::enabled(), 404);
         abort_unless($plan->is_active, 404);
 
         $user = $request->user();

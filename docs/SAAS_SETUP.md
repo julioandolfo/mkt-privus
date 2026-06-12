@@ -22,14 +22,26 @@ e o sistema se comporta como a instalação single-tenant original.
 
 ## 2. Assinaturas com Mercado Pago
 
-Variáveis de ambiente:
+**Toda a configuração é feita pela UI**: Configurações → aba **Assinaturas (SaaS)**
+(acesso restrito a administradores da plataforma — `users.is_admin`). Lá você:
+
+- Liga/desliga o modo SaaS e define os dias de trial;
+- Informa as credenciais do Mercado Pago (Public Key, Access Token e Webhook
+  Secret — armazenados criptografados no banco);
+- Define o token do webhook SendPulse e o e-mail de alertas operacionais;
+- Edita os planos: preço, limites, destaques e ativo/inativo.
+
+As variáveis de `.env` abaixo funcionam apenas como **fallback** quando o valor
+não foi definido pela UI (útil para infra-as-code; o banco tem prioridade):
 
 ```env
-BILLING_ENABLED=true
+BILLING_ENABLED=false
 BILLING_TRIAL_DAYS=14
-MERCADOPAGO_ACCESS_TOKEN=APP_USR-...
-MERCADOPAGO_PUBLIC_KEY=APP_USR-...
-MERCADOPAGO_WEBHOOK_SECRET=...
+MERCADOPAGO_ACCESS_TOKEN=
+MERCADOPAGO_PUBLIC_KEY=
+MERCADOPAGO_WEBHOOK_SECRET=
+SENDPULSE_WEBHOOK_TOKEN=
+ADMIN_ALERT_EMAIL=
 ```
 
 Passos:
@@ -38,10 +50,10 @@ Passos:
    **Assinaturas** (preapproval).
 2. Configure o webhook no painel do MP apontando para
    `https://seu-dominio/webhook/mercadopago` (evento *Planos e assinaturas*) e
-   copie o secret para `MERCADOPAGO_WEBHOOK_SECRET`.
-3. Rode `php artisan db:seed --class=PlanSeeder` para criar os planos
-   Starter/Pro/Business (edite os valores em `database/seeders/PlanSeeder.php`).
-4. Ative `BILLING_ENABLED=true`.
+   cole o secret na aba Assinaturas (SaaS).
+3. Rode `php artisan db:seed --class=PlanSeeder` para criar os planos iniciais
+   (depois edite-os pela UI).
+4. Ative a chave "Cobrança de assinaturas ativa" na UI.
 
 Fluxo: o usuário escolhe um plano em `/billing` → o sistema cria um *preapproval*
 pendente e redireciona ao checkout do MP → o webhook ativa a assinatura local
@@ -88,7 +100,46 @@ A seção **Equipe** na edição da marca (`/brands/{id}/edit`) permite a
 Owner/Admin: convidar por e-mail (papéis admin/editor/viewer), alterar papel,
 remover membros e revogar convites pendentes. O papel Owner é imutável.
 
-## 6. Operação
+## 6. Administradores da plataforma (super admin)
+
+- `users.is_admin` separa o **operador do SaaS** dos clientes: apenas admins
+  acessam Configurações (chaves de API, SMTP, OAuth, billing, usuários), Logs
+  e o back-office de contas.
+- Admins **não precisam de assinatura** e não têm limites de plano.
+- A migration promove a admin todos os usuários existentes na data da
+  atualização; novos cadastros self-service nascem como não-admin.
+- Contas desativadas (`is_active = false`) são bloqueadas no login.
+
+### Bootstrap do super admin no deploy
+
+O entrypoint do Docker roda `php artisan admin:create --ensure` após as
+migrations — idempotente, só age se **nenhum** admin existir:
+
+- Com `SUPER_ADMIN_EMAIL`/`SUPER_ADMIN_PASSWORD` (e opcional `SUPER_ADMIN_NAME`)
+  definidos no ambiente do primeiro deploy, o admin é criado automaticamente
+  (e-mail já verificado). Remova as variáveis depois.
+- Sem as variáveis, crie manualmente:
+  `php artisan admin:create email@dominio.com` (gera e exibe uma senha
+  aleatória se `--password` não for informado; promove o usuário se o e-mail
+  já existir).
+
+Depois do primeiro admin, toda a gestão (promover/rebaixar) é pela UI em
+Contas (Admin).
+
+### Back-office de contas (`/admin/accounts`)
+
+Painel do operador com indicadores (contas, assinaturas ativas, em trial e
+MRR), busca e ações por conta:
+
+- **+ Trial** — estende (ou cria) o período de teste em N dias;
+- **Conceder plano** — assinatura cortesia ativa sem cobrança no Mercado Pago
+  (com ou sem expiração);
+- **Cancelar assinatura** — encerra a assinatura vigente (inclusive no MP);
+- **Ativar/Desativar** — bloqueia ou libera o login da conta;
+- **Tornar/Tirar admin** — promove ou rebaixa administradores (não permite
+  alterar a si mesmo).
+
+## 7. Operação
 
 - `email:fix-stuck` roda a cada 15 minutos (campanhas travadas em "sending").
 - `system:alert-failed-jobs` roda de hora em hora: registra em SystemLog e
@@ -97,7 +148,7 @@ remover membros e revogar convites pendentes. O papel Owner é imutável.
 - Scripts SQL/PHP de diagnóstico históricos foram movidos para
   `scripts/legacy/` (apenas referência; não usar em produção).
 
-## 7. Pendências conhecidas (próximos passos)
+## 8. Pendências conhecidas (próximos passos)
 
 - Tabela `settings` é global (não por marca/conta) — chaves de IA/OAuth são
   da plataforma, repassadas via limites de plano.

@@ -25,6 +25,7 @@ const sidebarOpen = ref(true);
 const mobileMenuOpen = ref(false);
 
 const user = computed(() => page.props.auth?.user);
+const isAdmin = !!(page.props.auth?.user as any)?.is_admin;
 const currentBrand = computed(() => page.props.currentBrand);
 const brands = computed(() => page.props.brands || []);
 
@@ -51,7 +52,7 @@ function initClock() {
 onMounted(initClock);
 onUnmounted(() => { if (clockInterval) clearInterval(clockInterval); });
 
-const navigation: NavItem[] = [
+const allNavigation: NavItem[] = [
     { name: 'Dashboard', href: 'dashboard', icon: 'home', routeMatch: 'dashboard', enabled: true },
     {
         name: 'Social', href: 'social.posts.index', icon: 'share', routeMatch: 'social.*', enabled: true,
@@ -113,9 +114,14 @@ const navigation: NavItem[] = [
     },
     { name: 'Métricas', href: 'metrics.index', icon: 'trending-up', routeMatch: 'metrics.*', enabled: true },
     { name: 'Marcas', href: 'brands.index', icon: 'briefcase', routeMatch: 'brands.*', enabled: true },
-    { name: 'Logs', href: 'logs.index', icon: 'terminal', routeMatch: 'logs.*', enabled: true },
-    { name: 'Configurações', href: 'settings.index', icon: 'settings', routeMatch: 'settings.*', enabled: true },
+    // Áreas restritas a administradores da plataforma
+    { name: 'Contas (Admin)', href: 'admin.accounts.index', icon: 'shield', routeMatch: 'admin.*', enabled: isAdmin },
+    { name: 'Logs', href: 'logs.index', icon: 'terminal', routeMatch: 'logs.*', enabled: isAdmin },
+    { name: 'Configurações', href: 'settings.index', icon: 'settings', routeMatch: 'settings.*', enabled: isAdmin },
 ];
+
+// Itens desabilitados (ex: áreas admin para não-admins) ficam ocultos
+const navigation: NavItem[] = allNavigation.filter((item) => item.enabled);
 
 // Determinar qual menu deve estar expandido com base na rota atual
 function getActiveMenus(): string[] {
@@ -305,6 +311,9 @@ function toggleSidebar() {
                             </template>
                             <template v-else-if="item.icon === 'briefcase'">
                                 <rect x="2" y="7" width="20" height="14" rx="2" ry="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+                            </template>
+                            <template v-else-if="item.icon === 'shield'">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                             </template>
                             <template v-else-if="item.icon === 'terminal'">
                                 <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />

@@ -74,6 +74,9 @@ if [ "$1" = "php-fpm" ]; then
     echo "==> [app] Rodando migrations (timeout: 120s)..."
     timeout 120 su-exec www:www php artisan migrate --force 2>&1 || echo "==> AVISO: Migrations falharam ou timeout (continuando de qualquer forma)"
 
+    echo "==> [app] Garantindo super admin (admin:create --ensure)..."
+    timeout 30 su-exec www:www php artisan admin:create --ensure 2>&1 || echo "==> AVISO: admin:create falhou (crie manualmente: php artisan admin:create email@dominio.com)"
+
     echo "==> [app] Cacheando configuracoes..."
     su-exec www:www php artisan config:cache 2>&1 || echo "==> AVISO: config:cache falhou"
     su-exec www:www php artisan route:cache 2>&1 || echo "==> AVISO: route:cache falhou"
