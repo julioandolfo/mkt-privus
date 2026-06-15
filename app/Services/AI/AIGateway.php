@@ -54,11 +54,17 @@ class AIGateway
 
         $lastException = null;
 
+        // Falhas do modelo solicitado pelo usuário: capturamos separadamente
+        // para poder reportar de forma clara no erro final (ver throw abaixo).
+        $requestedModelError = null;
+        $skippedNoKey = [];
+
         foreach ($modelsToTry as $tryModel) {
             $provider = $tryModel->provider();
             $apiKey   = $this->resolveApiKey($provider);
 
             if (!$apiKey) {
+                $skippedNoKey[] = $tryModel->value;
                 continue;
             }
 
@@ -72,7 +78,7 @@ class AIGateway
                 if ($tryModel !== $model) {
                     Log::info("AI Gateway: fallback de {$model->value} para {$tryModel->value} funcionou", [
                         'feature' => $feature,
-                        'original_error' => $lastException?->getMessage(),
+                        'original_error' => $requestedModelError?->getMessage() ?? $lastException?->getMessage(),
                     ]);
                 }
 
@@ -83,6 +89,9 @@ class AIGateway
                 return $response;
             } catch (\Exception $e) {
                 $lastException = $e;
+                if ($tryModel === $model) {
+                    $requestedModelError = $e;
+                }
 
                 Log::warning("AI Gateway: falha com {$tryModel->value} ({$provider->value}), tentando próximo", [
                     'model'   => $tryModel->value,
@@ -94,11 +103,34 @@ class AIGateway
 
         Log::error("AI Gateway: todos os provedores falharam para feature={$feature}", [
             'requested_model' => $model->value,
-            'tried'           => array_map(fn($m) => $m->value, $modelsToTry),
+            'tried'           => array_map(fn ($m) => $m->value, $modelsToTry),
+            'skipped_no_key'  => $skippedNoKey,
             'last_error'      => $lastException?->getMessage(),
             'user_id'         => $user?->id,
             'brand_id'        => $brand?->id,
         ]);
+
+        // Mensagem de erro com contexto: explicita o que aconteceu com o modelo
+        // que o usuário escolheu vs. com os fallbacks, para evitar a impressão
+        // (confusa) de que outro provedor foi usado sem motivo.
+        $requestedLabel = $model->label();
+        $requestedKeyMissing = in_array($model->value, $skippedNoKey, true);
+
+        if ($requestedKeyMissing) {
+            throw new \RuntimeException(
+                "Não foi possível usar {$requestedLabel}: a API key deste provedor não está configurada. " .
+                "Configure em Configurações > API Keys ou escolha outro modelo. " .
+                ($lastException ? "Último fallback falhou: " . $lastException->getMessage() : '')
+            );
+        }
+
+        if ($requestedModelError) {
+            throw new \RuntimeException(
+                "Falha ao usar {$requestedLabel}: " . $requestedModelError->getMessage(),
+                0,
+                $requestedModelError,
+            );
+        }
 
         throw $lastException ?? new \RuntimeException('Nenhum provedor de IA disponível.');
     }

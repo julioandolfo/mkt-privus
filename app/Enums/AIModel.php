@@ -9,7 +9,7 @@ enum AIModel: string
     case Claude35Sonnet = 'claude-3-5-sonnet-20241022';
     case Claude35Haiku = 'claude-3-5-haiku-20241022';
     case GeminiFlash = 'gemini-2.0-flash';
-    case GeminiPro = 'gemini-2.0-pro';
+    case GeminiPro = 'gemini-2.5-pro';
 
     public function label(): string
     {
@@ -19,7 +19,7 @@ enum AIModel: string
             self::Claude35Sonnet => 'Claude 3.5 Sonnet',
             self::Claude35Haiku => 'Claude 3.5 Haiku',
             self::GeminiFlash => 'Gemini 2.0 Flash',
-            self::GeminiPro => 'Gemini 2.0 Pro',
+            self::GeminiPro => 'Gemini 2.5 Pro',
         };
     }
 
