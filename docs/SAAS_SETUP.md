@@ -11,14 +11,19 @@ então os controllers de Email/SMS/Blog/Links **não filtravam por marca** e
 criavam registros com `brand_id = NULL` (comportamento single-tenant). Com o
 escopo estrito ativo, esses registros sumiriam das telas.
 
-Correção (automática no deploy):
-- `ShareBrandData` agora grava `session('current_brand_id')` a partir da marca
-  ativa — controllers passam a filtrar de verdade e novos registros nascem com
-  a marca correta.
+Correção:
+- **Fonte de verdade única e durável: `users.current_brand_id`** (coluna no
+  banco). Todos os controllers, o global scope e a criação de registros leem
+  essa coluna — **sem dependência de sessão** (que não sobrevive a jobs, filas,
+  webhooks nem comandos). `getActiveBrand()` garante a coluna preenchida.
 - A migration `2026_06_11_000006_backfill_null_brand_ids` (idempotente) vincula
   os registros legados `brand_id = NULL` à marca do dono (via `user_id`, pivot
-  ou marca única). Para rodar manualmente a qualquer momento:
-  `php artisan brand:backfill-null`.
+  ou marca única). Roda automaticamente no deploy (`php artisan migrate`).
+  Para rodar manualmente a qualquer momento: `php artisan brand:backfill-null`.
+
+> Esses comandos só existem após o deploy desta branch. Em um container com o
+> código antigo, `migrate` mostra "Nothing to migrate" e o comando `brand:*`
+> não existe — é esperado até o merge/deploy.
 
 ## 1. Isolamento de dados por marca
 

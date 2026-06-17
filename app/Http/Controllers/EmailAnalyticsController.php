@@ -14,7 +14,7 @@ class EmailAnalyticsController extends Controller
 {
     public function dashboard(Request $request)
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $period = $request->input('period', 'this_month');
         $dates = $this->parsePeriod($period, $request);
 

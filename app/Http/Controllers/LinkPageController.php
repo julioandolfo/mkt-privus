@@ -19,7 +19,7 @@ class LinkPageController extends Controller
      */
     public function index(Request $request): Response
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $pages = LinkPage::forBrand($brandId)
             ->with('user:id,name')
@@ -57,7 +57,7 @@ class LinkPageController extends Controller
             'description' => 'nullable|string|max:300',
         ]);
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $page = LinkPage::create([
             'brand_id' => $brandId,

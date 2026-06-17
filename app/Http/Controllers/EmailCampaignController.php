@@ -22,7 +22,7 @@ class EmailCampaignController extends Controller
 
     public function index(Request $request)
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $campaigns = EmailCampaign::forBrand($brandId)
             ->with('provider:id,name,type')
@@ -55,7 +55,7 @@ class EmailCampaignController extends Controller
 
     public function create(Request $request)
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $providers = EmailProvider::active()
             ->forBrand($brandId)
@@ -90,7 +90,7 @@ class EmailCampaignController extends Controller
     public function store(Request $request)
     {
         $isDraft = $request->input('status') === 'draft';
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $userId = Auth::id();
 
         SystemLog::info('email', 'campaign.store.started', "Iniciando criação de campanha", [
@@ -404,7 +404,7 @@ class EmailCampaignController extends Controller
             return back()->with('error', 'Esta campanha não pode ser editada.');
         }
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $providers = EmailProvider::active()
             ->forBrand($brandId)
@@ -456,7 +456,7 @@ class EmailCampaignController extends Controller
             return back()->with('error', 'Esta campanha não pode ser editada.');
         }
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $userId = Auth::id();
 
         SystemLog::info('email', 'campaign.update.started', "Iniciando atualização de campanha", [

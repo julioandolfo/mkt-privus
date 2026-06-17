@@ -17,7 +17,7 @@ class EmailListController extends Controller
 {
     public function index(Request $request)
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $lists = EmailList::with('sources')
             ->forBrand($brandId)
@@ -51,7 +51,7 @@ class EmailListController extends Controller
 
     public function create()
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         // Buscar conexoes WooCommerce disponiveis
         $wcConnections = AnalyticsConnection::where('platform', 'woocommerce')
@@ -75,7 +75,7 @@ class EmailListController extends Controller
         ]);
 
         $list = EmailList::create([
-            'brand_id' => session('current_brand_id'),
+            'brand_id' => auth()->user()?->current_brand_id,
             'user_id' => Auth::id(),
             'name' => $validated['name'],
             'description' => $validated['description'] ?? null,
@@ -115,7 +115,7 @@ class EmailListController extends Controller
             'config_summary' => $this->getSourceConfigSummary($s),
         ]);
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $wcConnections = AnalyticsConnection::where('platform', 'woocommerce')
             ->where('is_active', true)
             ->where(function ($q) use ($brandId) {

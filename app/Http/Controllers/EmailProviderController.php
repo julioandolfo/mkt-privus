@@ -14,7 +14,7 @@ class EmailProviderController extends Controller
 {
     public function index(Request $request)
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $providers = EmailProvider::where(function ($q) use ($brandId) {
             $q->where('brand_id', $brandId)->orWhereNull('brand_id');
@@ -139,7 +139,7 @@ class EmailProviderController extends Controller
             ],
         };
 
-        $brandId = $validated['brand_id'] ?? session('current_brand_id');
+        $brandId = $validated['brand_id'] ?? auth()->user()?->current_brand_id;
 
         // Se is_default, desmarcar outros
         if ($request->boolean('is_default')) {

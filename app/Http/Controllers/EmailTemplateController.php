@@ -11,7 +11,7 @@ class EmailTemplateController extends Controller
 {
     public function index()
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $templates = EmailTemplate::forBrand($brandId)
             ->latest()
@@ -345,7 +345,7 @@ class EmailTemplateController extends Controller
         ]);
 
         $template = EmailTemplate::create([
-            'brand_id' => session('current_brand_id'),
+            'brand_id' => auth()->user()?->current_brand_id,
             'user_id' => Auth::id(),
             ...$validated,
         ]);

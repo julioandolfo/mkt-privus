@@ -12,7 +12,7 @@ class EmailAiSuggestionController extends Controller
 {
     public function index(Request $request)
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $status = $request->input('status');
 
         $suggestions = EmailAiSuggestion::forBrand($brandId)
@@ -70,7 +70,7 @@ class EmailAiSuggestionController extends Controller
      */
     public function generate(Request $request)
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $brand = Brand::find($brandId);
 
         if (!$brand) {
