@@ -17,6 +17,13 @@ class ShareBrandData
         if ($request->user()) {
             $user = $request->user();
             $currentBrand = $user->getActiveBrand();
+
+            // Mantém a sessão sincronizada com a marca ativa. Vários controllers
+            // (Email, SMS, Blog, Links) leem session('current_brand_id') para
+            // filtrar e criar dados; sem isto a sessão fica nula e os registros
+            // nascem sem marca (brand_id NULL) e sem isolamento.
+            session(['current_brand_id' => $currentBrand?->id]);
+
             $brands = $user->brands()->orderBy('name')->get(['brands.id', 'name', 'slug', 'primary_color', 'segment', 'logo_path']);
 
             Inertia::share([
