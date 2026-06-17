@@ -143,14 +143,16 @@ class AIGateway
     {
         $chain = [$requestedModel];
 
-        // Ordem de fallback por custo-benefício
+        // Ordem de fallback: OpenAI primeiro (provedor padrão), depois Anthropic,
+        // e Google por último. Mantém custo-benefício dentro de cada provedor
+        // (modelo "mini/haiku/flash" antes do "pro/sonnet/grande").
         $allModels = [
-            AIModel::GeminiFlash,
             AIModel::GPT4oMini,
-            AIModel::Claude35Haiku,
-            AIModel::GeminiPro,
             AIModel::GPT4o,
+            AIModel::Claude35Haiku,
             AIModel::Claude35Sonnet,
+            AIModel::GeminiFlash,
+            AIModel::GeminiPro,
         ];
 
         foreach ($allModels as $fallback) {
