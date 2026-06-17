@@ -31,7 +31,7 @@ class SmsDashboardController extends Controller
             ]);
         }
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $period = $request->input('period', 'this_month');
 
         [$startDate, $endDate] = $this->resolvePeriod($period);

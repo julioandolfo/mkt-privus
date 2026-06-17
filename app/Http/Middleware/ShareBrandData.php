@@ -16,13 +16,12 @@ class ShareBrandData
     {
         if ($request->user()) {
             $user = $request->user();
-            $currentBrand = $user->getActiveBrand();
 
-            // Mantém a sessão sincronizada com a marca ativa. Vários controllers
-            // (Email, SMS, Blog, Links) leem session('current_brand_id') para
-            // filtrar e criar dados; sem isto a sessão fica nula e os registros
-            // nascem sem marca (brand_id NULL) e sem isolamento.
-            session(['current_brand_id' => $currentBrand?->id]);
+            // Fonte de verdade durável da marca ativa é users.current_brand_id.
+            // getActiveBrand() garante que a coluna esteja preenchida (define a
+            // primeira marca do usuário se ainda estiver nula). Controllers,
+            // global scope e criação de registros leem essa coluna — nada de sessão.
+            $currentBrand = $user->getActiveBrand();
 
             $brands = $user->brands()->orderBy('name')->get(['brands.id', 'name', 'slug', 'primary_color', 'segment', 'logo_path']);
 

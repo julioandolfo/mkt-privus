@@ -21,7 +21,7 @@ class SmsTemplateController extends Controller
             ]);
         }
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $templates = SmsTemplate::where('brand_id', $brandId)
             ->when($request->category, fn($q, $c) => $q->where('category', $c))
@@ -62,7 +62,7 @@ class SmsTemplateController extends Controller
         ]);
 
         SmsTemplate::create([
-            'brand_id' => session('current_brand_id'),
+            'brand_id' => auth()->user()?->current_brand_id,
             'user_id' => Auth::id(),
             'name' => $validated['name'],
             'body' => $validated['body'],

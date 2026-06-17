@@ -39,7 +39,7 @@ class EmailEditorController extends Controller
         } catch (\Throwable $e) {}
 
         $asset = EmailAsset::create([
-            'brand_id' => session('current_brand_id'),
+            'brand_id' => auth()->user()?->current_brand_id,
             'user_id' => Auth::id(),
             'file_path' => $path,
             'file_name' => $file->getClientOriginalName(),
@@ -65,7 +65,7 @@ class EmailEditorController extends Controller
      */
     public function listAssets(Request $request)
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $assets = EmailAsset::where(function ($q) use ($brandId) {
             $q->where('brand_id', $brandId)->orWhereNull('brand_id');
@@ -101,7 +101,7 @@ class EmailEditorController extends Controller
      */
     public function savedBlocks(Request $request)
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $category = $request->input('category');
 
         $blocks = EmailSavedBlock::forBrand($brandId)
@@ -136,7 +136,7 @@ class EmailEditorController extends Controller
         ]);
 
         $block = EmailSavedBlock::create([
-            'brand_id' => $request->boolean('is_global') ? null : session('current_brand_id'),
+            'brand_id' => $request->boolean('is_global') ? null : auth()->user()?->current_brand_id,
             'user_id' => Auth::id(),
             ...$validated,
         ]);
@@ -174,7 +174,7 @@ class EmailEditorController extends Controller
      */
     public function wooProducts(Request $request)
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $search = $request->input('search', '');
 
         $connection = AnalyticsConnection::where('platform', 'woocommerce')
@@ -241,7 +241,7 @@ class EmailEditorController extends Controller
         ]);
 
         $type = $validated['type'] ?? 'full_template';
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $brand = Brand::find($brandId);
         $user = Auth::user();
 
@@ -358,7 +358,7 @@ class EmailEditorController extends Controller
             'html' => 'required|string',
         ]);
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $userId = Auth::id();
 
         try {
@@ -401,7 +401,7 @@ class EmailEditorController extends Controller
             'url' => 'required|url',
         ]);
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $userId = Auth::id();
 
         try {

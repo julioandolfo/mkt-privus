@@ -30,7 +30,7 @@ class SmsCampaignController extends Controller
             ]);
         }
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $campaigns = SmsCampaign::where('brand_id', $brandId)
             ->with(['provider:id,name', 'template:id,name', 'includeLists:id,name'])
@@ -67,7 +67,7 @@ class SmsCampaignController extends Controller
 
     public function create()
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         return Inertia::render('Sms/Campaigns/Create', [
             'providers' => EmailProvider::where('brand_id', $brandId)
@@ -102,7 +102,7 @@ class SmsCampaignController extends Controller
             'tags' => 'nullable|array',
         ]);
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $campaign = SmsCampaign::create([
             'brand_id' => $brandId,
