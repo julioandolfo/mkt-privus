@@ -4,6 +4,22 @@ Este documento descreve a infraestrutura multi-tenant e de assinaturas adicionad
 ao projeto, e como ativá-la. **Por padrão tudo fica desligado** (`BILLING_ENABLED=false`)
 e o sistema se comporta como a instalação single-tenant original.
 
+## 0. Dados legados sem marca (importante na atualização)
+
+Antes do escopo de marca, o app nunca gravava `session('current_brand_id')`,
+então os controllers de Email/SMS/Blog/Links **não filtravam por marca** e
+criavam registros com `brand_id = NULL` (comportamento single-tenant). Com o
+escopo estrito ativo, esses registros sumiriam das telas.
+
+Correção (automática no deploy):
+- `ShareBrandData` agora grava `session('current_brand_id')` a partir da marca
+  ativa — controllers passam a filtrar de verdade e novos registros nascem com
+  a marca correta.
+- A migration `2026_06_11_000006_backfill_null_brand_ids` (idempotente) vincula
+  os registros legados `brand_id = NULL` à marca do dono (via `user_id`, pivot
+  ou marca única). Para rodar manualmente a qualquer momento:
+  `php artisan brand:backfill-null`.
+
 ## 1. Isolamento de dados por marca
 
 - O trait `App\Models\Concerns\BelongsToBrand` aplica um global scope que limita
