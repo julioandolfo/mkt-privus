@@ -1322,7 +1322,17 @@ class PostController extends Controller
             if ($shouldGenerateImage) {
                 try {
                     $userRefImages = $this->extractReferenceImages($request);
-                    $referenceContext = $this->analyzeReferenceImages($request, $aiGateway, $brand);
+
+                    // Onda 2: quando o usuário envia foto do produto, ela já vai como
+                    // input_image direto para o gpt-image-2 (modo edit). Antes a gente
+                    // também chamava o Vision para gerar uma DESCRIÇÃO textual da foto
+                    // e injetava no prompt — passar duas vezes (imagem + descrição) era
+                    // redundante, caro e ainda induzia o modelo a "reimaginar" detalhes
+                    // que ele deveria preservar. Agora: se há imagem do produto, a
+                    // imagem fala por si. Mantemos o Vision só como fallback (sem refs).
+                    $referenceContext = empty($userRefImages)
+                        ? $this->analyzeReferenceImages($request, $aiGateway, $brand)
+                        : null;
 
                     // Referências de identidade visual da marca (sem logo — política no-logo para posts sociais)
                     $brandRefImages = $this->extractBrandLogoAndReferences($brand);
@@ -1338,6 +1348,7 @@ class PostController extends Controller
                         'brand_ref_images' => count($brandRefImages),
                         'total_ref_images' => count($allRefImages),
                         'reference_context_length' => mb_strlen($referenceContext ?? ''),
+                        'aesthetic' => $validated['image_style'] ?? 'auto',
                         'generate_image' => $shouldGenerateImage,
                     ]);
 
@@ -1356,12 +1367,12 @@ class PostController extends Controller
 
                     $userRefCount = count($userRefImages);
                     if ($userRefCount === 1) {
-                        $imagePrompt .= "\n\nEDIT MODE: You are editing the provided product image. Keep ALL product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect. Only add or change what is explicitly requested. Do NOT regenerate, reimagine, or artistically reinterpret the product.";
+                        $imagePrompt .= "\n\nEDIT MODE: You are editing the provided product image. Keep ALL product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect. Only invent the SURROUNDING scene (background, props, lighting context) per the photo style described above. Do NOT regenerate, reimagine, or artistically reinterpret the product itself.";
                     } elseif ($userRefCount > 1) {
                         $imagePrompt .= "\n\nIMPORTANT: Multiple product reference images were provided, each showing a DIFFERENT product. "
                             . "Generate an image for the FIRST product only (image 1). Each product should get its own separate post image. "
                             . "Focus EXCLUSIVELY on the product from image 1 — do NOT combine all products into a single image. "
-                            . "Keep the product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect.";
+                            . "Keep the product details unchanged — logos, labels, text, barcodes, colors, shapes MUST remain pixel-perfect. Only invent the surrounding scene.";
                     }
 
                     $imageData = $aiGateway->generateImage(
