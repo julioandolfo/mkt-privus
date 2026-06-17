@@ -186,16 +186,19 @@ function removeContextUrl(index: number) {
     if (contextUrls.value.length === 0) contextUrls.value.push('');
 }
 
+// Estéticas de FOTOGRAFIA REAL. Cada valor corresponde a um template no
+// AIGateway::resolveAestheticTemplate (composição + ambiente + linguagem de
+// câmera). "Automático" sorteia um dos 6 a cada geração — boa opção quando
+// se quer variedade no feed. Os antigos rótulos ("Render 3D", "Neon"...)
+// foram removidos porque produziam o look-de-IA que o usuário quer evitar.
 const imageStyleOptions = [
-    { value: '', label: 'Automático (baseado na marca)' },
-    { value: 'flat design, minimalist, vector illustration', label: 'Flat / Minimalista' },
-    { value: 'photorealistic, professional photography', label: 'Fotorrealista' },
-    { value: '3D render, modern, glossy', label: 'Render 3D' },
-    { value: 'watercolor, artistic, soft', label: 'Aquarela / Artístico' },
-    { value: 'neon, vibrant, dark background', label: 'Neon / Vibrante' },
-    { value: 'vintage, retro, film grain', label: 'Vintage / Retrô' },
-    { value: 'geometric, abstract, modern', label: 'Geométrico / Abstrato' },
-    { value: 'hand drawn, sketch, creative', label: 'Ilustração Manual' },
+    { value: '', label: 'Automático (varia a cada post)' },
+    { value: 'lifestyle', label: 'Lifestyle — pessoa usando em ambiente real' },
+    { value: 'ugc_phone', label: 'UGC — feita com celular, casual' },
+    { value: 'flatlay_natural', label: 'Flat lay — vista de cima em superfície natural' },
+    { value: 'hand_held', label: 'Close-up — produto na mão' },
+    { value: 'editorial_soft', label: 'Editorial — luz suave, composição limpa' },
+    { value: 'behind_scenes', label: 'Bastidor — ambiente de trabalho / produção' },
 ];
 
 const imageSizeOptions = [

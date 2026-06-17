@@ -201,11 +201,14 @@ class AIGateway
 
             // NÃO mencionar segmento nem nome da marca — isso induz o modelo a recuperar logos
             // de concorrentes famosos do mesmo setor a partir do conhecimento de treinamento.
-            $brandHints = "Generate a REALISTIC, photographic-style image — like a real product photo or professional studio shot. NOT illustration, NOT cartoon, NOT digital art, NOT fantasy, NOT surreal.";
+            // Mensagem alinhada com buildSocialImagePrompt: foto real, não ad creative.
+            $brandHints = "Output a REAL photograph — looks captured on a real camera by a real person. "
+                . "NOT illustration, NOT cartoon, NOT digital art, NOT 3D render, NOT studio ad creative, NOT fantasy, NOT surreal. "
+                . "No huge overlay text. No neon. No gradient backgrounds. No glossy product-spotlight composition.";
 
             if ($brand->primary_color) {
-                $brandHints .= " Use this brand color palette subtly in background/props/lighting (not as flat overlays): primary {$brand->primary_color}";
-                if ($brand->secondary_color) $brandHints .= ", secondary {$brand->secondary_color}";
+                $brandHints .= " Brand color hint (use SPARINGLY as a prop / wall / fabric, never as a flat overlay): {$brand->primary_color}";
+                if ($brand->secondary_color) $brandHints .= " + {$brand->secondary_color}";
                 $brandHints .= ".";
             }
 
@@ -520,7 +523,21 @@ class AIGateway
 
     /**
      * Constrói prompt de imagem para conteúdo social a partir de contexto da marca.
-     * Helper reutilizável por PostController, ContentCalendarService, ContentEngineService.
+     *
+     * Filosofia: o resultado precisa parecer uma FOTO REAL feita por uma pessoa,
+     * não um ad creative de catálogo. Por isso o prompt:
+     *  - Bane explicitamente os clichês do "look de IA" (studio lighting, neon
+     *    grande, fundo gradiente, simetria perfeita, render/CGI etc).
+     *  - Sorteia entre 6 estéticas de FOTOGRAFIA (lifestyle, ugc-phone, flatlay,
+     *    hand-held, editorial, behind-scenes) — ou aceita uma escolhida via UI.
+     *  - Torna texto-na-imagem OPCIONAL (~35% das vezes) e, quando aparece, é
+     *    SEMPRE pequeno e sutil (post-it, sticker, etiqueta) — nunca o título
+     *    gigante neon que estava dominando os posts.
+     *  - Pede "linguagem de câmera real" (iPhone, 50mm, luz natural, leve grão).
+     *
+     * $aesthetic pode ser: 'auto' (sorteia), 'lifestyle', 'ugc_phone',
+     * 'flatlay_natural', 'hand_held', 'editorial_soft', 'behind_scenes'.
+     * Valores legados (do dropdown antigo) caem em 'auto'.
      */
     public static function buildSocialImagePrompt(
         Brand $brand,
@@ -528,7 +545,7 @@ class AIGateway
         string $caption,
         string $platform = 'instagram',
         string $postType = 'feed',
-        ?string $imageStyle = null,
+        ?string $aesthetic = null,
     ): string {
         $aspectRatio = match ($postType) {
             'story', 'reel' => 'portrait 9:16',
@@ -536,35 +553,35 @@ class AIGateway
             default => 'square 1:1',
         };
 
-        // Remover o nome da marca do topic e caption para evitar hallucination de logo pelo modelo
+        // Remove nome da marca de topic/caption — evita hallucination de logo.
         $cleanTopic = self::stripBrandName($topic, $brand->name);
         $cleanCaption = self::stripBrandName($caption, $brand->name);
 
-        $prompt = "Create a REALISTIC, photographic-style image for a Brazilian social media post ({$platform}, {$aspectRatio}). ";
-        $prompt .= "The image MUST look like a REAL photograph taken with a professional camera — real lighting, real textures, real surfaces, real environments. ";
-        $prompt .= "ABSOLUTELY NO: fantasy elements, surreal scenes, impossible physics, floating objects, magical lighting, dreamlike atmospheres, sci-fi environments, abstract backgrounds, or any element that could not exist in a real photograph. ";
-        $prompt .= "The scene must be something that could actually be photographed in a real studio, store, home, or outdoor location. ";
-        $prompt .= "NOT an illustration, NOT a cartoon, NOT digital art, NOT a render, NOT concept art. ";
-        $prompt .= "Topic: {$cleanTopic}. ";
+        $template = self::resolveAestheticTemplate($aesthetic);
 
-        if ($imageStyle) {
-            $prompt .= "Visual style: {$imageStyle}. ";
-        } else {
-            $prompt .= "Style: realistic product photography, professional studio lighting, clean modern composition, warm and inviting, Brazilian marketing aesthetic. Real surfaces like marble, wood, concrete, fabric — NOT gradient backgrounds or abstract shapes. ";
-        }
+        $prompt  = "Photograph for a Brazilian {$platform} post ({$aspectRatio}). ";
+        $prompt .= "It must read as a REAL PHOTO captured on a real camera by a real person — never as AI art, render, illustration, glossy catalog mockup, or polished ad creative. ";
+        $prompt .= "Subject / theme: {$cleanTopic}.\n";
 
-        // Intencionalmente NÃO incluímos o segmento/setor aqui:
-        // mencionar "bebidas", "moda", "eletrônicos", etc. faz o modelo puxar logos de
-        // concorrentes conhecidos do setor a partir do conhecimento de treinamento.
+        $prompt .= "\nPHOTO STYLE — {$template['name']}:\n{$template['description']}\n";
+        $prompt .= "Camera / light cues: {$template['camera']}\n";
 
+        // === Banlist: o que mais quebra a sensação de foto real ===
+        $prompt .= "\nABSOLUTELY AVOID (critical — the image fails if any of these appear): "
+                . "studio 3-point lighting, seamless paper backdrop, glossy reflective tabletop with the product centered like an ad, "
+                . "dramatic neon or glow text, huge bold typography filling the frame, gradient backgrounds, "
+                . "render / CGI / 3D-illustration feel, hyper-symmetric composition, oversaturated colors, "
+                . "plastic-looking skin, dreamlike or surreal atmospheres, fantasy elements, sci-fi lighting, "
+                . "dark moody product-spotlight shots, stock-photo clichés (hands clapping, smiling at laptop, perfect teeth), "
+                . "generic emojis baked into the image, fake watermarks, fake logos invented by the model.\n";
+
+        // Cor da marca — sugestão MUITO suave (antes era ordem dura e saturava tudo).
         if ($brand->primary_color) {
-            $prompt .= "Brand color palette: primary {$brand->primary_color}";
-            if ($brand->secondary_color) $prompt .= ", secondary {$brand->secondary_color}";
-            if ($brand->accent_color) $prompt .= ", accent {$brand->accent_color}";
-            $prompt .= ". Use these colors subtly in the background, props, or lighting tones — NOT as flat graphic overlays. ";
+            $prompt .= "\nBrand color hint (use SPARINGLY — show it as a piece of fabric, a wall paint, a small prop or accent, NEVER as a flat overlay or background fill): {$brand->primary_color}";
+            if ($brand->secondary_color) $prompt .= " accompanied by {$brand->secondary_color}";
+            $prompt .= ". The colors must feel like they belong to the real scene, not like a brand asset pasted on top.\n";
         }
 
-        // Produtos: descrição detalhada para gerar imagens com produtos reais
         $products = $brand->products()->limit(5)->get();
         if ($products->isNotEmpty()) {
             $productDescriptions = $products->map(function ($p) {
@@ -572,43 +589,109 @@ class AIGateway
                 if (!empty($p->description)) $desc .= " ({$p->description})";
                 return $desc;
             })->implode('; ');
-            $prompt .= "The brand sells these products: {$productDescriptions}. ";
-            $prompt .= "IMPORTANT: Pick the ONE product most relevant to the topic and create a product photography composition showing ONLY that single product in a real-world context (on a table, being used, in packaging, lifestyle setting). Do NOT show multiple products in the same image — focus on ONE product per post. ";
+            $prompt .= "\nBrand products: {$productDescriptions}. "
+                    . "Pick the ONE product most relevant to the theme. Show it INTEGRATED into the scene — being used, being held, sitting on a real surface beside everyday objects. "
+                    . "Never floating, never centered like a catalog hero shot. Only ONE product per image.\n";
         }
 
         $mascot = $brand->mascots()->primary()->first() ?? $brand->mascots()->first();
         if ($mascot) {
             $mascotDesc = $mascot->label;
             if (!empty($mascot->description)) $mascotDesc .= ": {$mascot->description}";
-            $prompt .= "The brand has a mascot: \"{$mascotDesc}\". Include it only when it naturally fits the topic. ";
+            $prompt .= "\nBrand has a mascot (\"{$mascotDesc}\"). Include only if it makes natural sense for the theme.\n";
         }
 
-        $captionEssence = mb_substr(strip_tags($cleanCaption), 0, 200);
+        $captionEssence = mb_substr(strip_tags($cleanCaption), 0, 180);
         if ($captionEssence) {
-            $prompt .= "Post caption context (in Portuguese): \"{$captionEssence}\". ";
+            $prompt .= "\nCaption context (Portuguese, for vibe only — do NOT render this text in the image): \"{$captionEssence}\".\n";
         }
 
-        // Regras de texto na imagem — com variação de estilo tipográfico
-        $typographyStyles = [
-            'BOLD MODERN: Use Montserrat Black or Poppins ExtraBold — clean, geometric, uppercase, high-contrast white or colored text with subtle shadow. Place as overlay block at top or bottom.',
-            'HAND LETTERING: Use a hand-drawn brush lettering style — organic strokes, slightly imperfect, warm and personal feel. Like a calligraphy artist wrote directly on the photo. Thick brush strokes.',
-            'NEON GLOW: Use a neon sign / glowing text effect — bright vivid colors (pink, cyan, yellow) against a darker area of the image. Realistic neon tube lettering with soft glow and light reflections.',
-            'RETRO VINTAGE: Use a retro/vintage typeface with serifs — distressed texture, warm tones, slight grain. Think 70s poster or classic diner signage. Bold and nostalgic.',
-            'MINIMALIST SANS: Use a clean condensed sans-serif like Bebas Neue or Oswald — all caps, generous letter-spacing, thin lines as dividers. Elegant and understated but still bold enough to read.',
-            'STREET/URBAN: Use a graffiti-inspired or street art style lettering — edgy, dynamic angles, spray paint texture, bold colors. Urban and youthful energy.',
-            'ELEGANT SCRIPT: Use an elegant flowing script font — sophisticated cursive with contrast between thick and thin strokes. Luxurious and premium feel, like a fashion brand.',
-            'STICKER/BADGE: Place text inside a graphic badge, ribbon, or sticker shape — rounded corners, solid color fill, bold condensed text inside. Eye-catching label effect.',
-        ];
-        $selectedStyle = $typographyStyles[array_rand($typographyStyles)];
+        // === Texto na imagem: opcional e SEMPRE pequeno/sutil ===
+        // 35% das vezes inclui texto. Quando inclui, é texto físico (post-it,
+        // sticker, etiqueta de papel, giz em quadro) — nunca overlay gigante.
+        $includeText = mt_rand(1, 100) <= 35;
+        if ($includeText) {
+            $textStyles = [
+                'a small handwritten note on a real paper visible in the scene, 2–5 Portuguese words, casual handwriting',
+                'a discreet round paper sticker on or near the product with 1–3 Portuguese words in a simple sans-serif',
+                'tiny chalk handwriting on a small chalkboard prop, 2–5 Portuguese words',
+                'a folded paper tag tied to the product with 2–4 handwritten Portuguese words',
+                'a small piece of masking tape on a surface with a few Portuguese words written by hand',
+            ];
+            $textStyle = $textStyles[array_rand($textStyles)];
+            $prompt .= "\nText in image: include a SUBTLE small typographic element — {$textStyle}. "
+                    . "Never large overlay text covering the frame. Never neon, glow, outlined or 3D fonts. "
+                    . "The text is part of the physical scene (printed/written on a real object), not a graphic layer on top of the photo.\n";
+        } else {
+            $prompt .= "\nText in image: NONE. Pure photograph — no words, no overlays, no graphic captions inside the image.\n";
+        }
 
-        $prompt .= "If the topic naturally calls for text (promotions, announcements, tips), include SHORT text IN PORTUGUESE (Brazilian Portuguese). ";
-        $prompt .= "TYPOGRAPHY STYLE FOR THIS POST: {$selectedStyle} ";
-        $prompt .= "The text must be LARGE, high-contrast, and visually striking — NEVER small, thin, or generic like Arial/Helvetica/default system fonts. ";
-        $prompt .= "If no text is needed, keep the image purely photographic. ";
-        $prompt .= "The final result must look like a real Instagram post from a professional Brazilian brand — NOT like AI-generated art, NOT like a tech illustration. ";
-        $prompt .= "Think: product photos, lifestyle shots, studio photography, real textures, natural lighting. NEVER fantasy, surreal, or dreamlike.";
+        $prompt .= "\nFinal target: looks like a real photo a small business owner or independent photographer would post on Instagram — honest, lived-in, slightly imperfect framing. NOT polished ad creative.";
 
         return $prompt;
+    }
+
+    /**
+     * Resolve template de estética por nome OU sorteia entre os 6 presets
+     * quando 'auto' / null / valor legado. Templates definem composição,
+     * ambiente e linguagem de câmera — é o que mais muda o "look" final.
+     *
+     * @return array{name: string, description: string, camera: string}
+     */
+    private static function resolveAestheticTemplate(?string $aesthetic): array
+    {
+        $templates = [
+            'lifestyle' => [
+                'name'        => 'Lifestyle in context',
+                'description' => 'A real person (or a glimpse of them — hands, partial silhouette, shoulder, back of head) using the product in a real everyday environment: home kitchen counter, home office desk, sofa, café table, garden, bedroom. Surroundings should feel lived-in — a coffee cup half full, a stack of magazines, a plant slightly out of focus. Never a model posing for camera; always candid.',
+                'camera'      => 'shot on iPhone 15 Pro or Fuji X100, 35mm equivalent, natural window light from the side, shallow depth of field, no flash, mild grain, color slightly muted',
+            ],
+            'ugc_phone' => [
+                'name'        => 'UGC / phone-camera style',
+                'description' => 'Looks like a customer snapped a quick casual photo of the product with their phone to share with a friend. Slightly off-center framing, a relaxed angle, candid feel. Small imperfections are welcome — a thumb shadow at the edge, a slightly tilted horizon, a touch of motion blur. Background is a real domestic surface (kitchen counter, office desk, sofa cushion, bathroom shelf). Never a perfectly symmetric studio shot.',
+                'camera'      => 'phone camera quality, front-facing ceiling light or window light, handheld vibe, slightly low resolution feel, real-world color cast',
+            ],
+            'flatlay_natural' => [
+                'name'        => 'Flat lay on a real surface',
+                'description' => 'Top-down view on a textured natural surface: raw oak wood, linen cloth, terrazzo, weathered concrete, a rug, marble with veins, a wooden cutting board. The product sits naturally among everyday companion items that make sense for the theme — a hardcover notebook, a coffee cup, keys, a small plant, a printed magazine, a folded napkin. Asymmetric arrangement, items partially cropped at the frame edges.',
+                'camera'      => 'top-down 90° angle, soft natural daylight from a side window, gentle directional shadows, no studio softbox, no perfectly even lighting',
+            ],
+            'hand_held' => [
+                'name'        => 'Held in hand close-up',
+                'description' => 'Close-up of a real human hand (or two) holding, opening, or interacting with the product. Realistic skin texture: pores, fine hair, small imperfections, natural skin tone variation. The background is the real world out of focus — a room interior, an outdoor café, a kitchen. Hand provides scale and intimacy; product is the focus.',
+                'camera'      => '50mm portrait lens, wide aperture f/2, shallow depth of field, warm natural light, soft bokeh, slight chromatic aberration at the edges',
+            ],
+            'editorial_soft' => [
+                'name'        => 'Editorial soft',
+                'description' => 'A thoughtfully composed but unstaged scene. Single product placed deliberately in a real interior or outdoor setting. Plenty of negative space. A few real-world props: a folded textile, a single stem of flower, a half-empty ceramic cup, an open book. Magazine-still-life feel but NOT catalog.',
+                'camera'      => 'mirrorless camera with 85mm lens, soft window light from the left, gentle shadows on the right, slight film grain, low contrast color grade',
+            ],
+            'behind_scenes' => [
+                'name'        => 'Behind the scenes',
+                'description' => 'Workshop / atelier / kitchen / studio scene showing the product in its making or staging context. Visible tools nearby, packaging materials, raw ingredients, work-in-progress vibe. Honest documentary feel — a slightly messy workbench, a notebook with notes, a person\'s arms partially in frame working. Lived-in workspace.',
+                'camera'      => 'documentary photography style, available light only, candid angle, mild grain, natural color balance, no retouching look',
+            ],
+        ];
+
+        $key = $aesthetic ?: 'auto';
+
+        // Aliases das opções antigas do dropdown — todas caem em 'auto' (sorteio).
+        $legacyValues = [
+            '', 'auto',
+            'flat design, minimalist, vector illustration',
+            'photorealistic, professional photography',
+            '3D render, modern, glossy',
+            'watercolor, artistic, soft',
+            'neon, vibrant, dark background',
+            'vintage, retro, film grain',
+            'geometric, abstract, modern',
+            'hand drawn, sketch, creative',
+        ];
+        if (in_array($key, $legacyValues, true) || !isset($templates[$key])) {
+            $key = array_rand($templates);
+        }
+
+        return $templates[$key];
     }
 
     /**
