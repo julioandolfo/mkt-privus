@@ -11,6 +11,7 @@ RUN apk add --no-cache tzdata && \
 RUN apk add --no-cache \
     git \
     curl \
+    netcat-openbsd \
     libpng-dev \
     libjpeg-turbo-dev \
     freetype-dev \
@@ -69,9 +70,20 @@ COPY docker/php/php-custom.ini $PHP_INI_DIR/conf.d/99-custom.ini
 RUN addgroup -g 1000 -S www && \
     adduser -u 1000 -S www -G www
 
-# Configurar PHP-FPM para usar o usuario www (padrão é www-data)
-RUN sed -i 's/user = www-data/user = www/g' /usr/local/etc/php-fpm.d/www.conf && \
-    sed -i 's/group = www-data/group = www/g' /usr/local/etc/php-fpm.d/www.conf
+# Configurar PHP-FPM para usar o usuario www (padrão é www-data) e aplicar
+# nosso pool customizado (limites de workers + reciclagem de memória).
+# Sem pm.max_requests workers vivem para sempre e acumulam leak de
+# Imagick/OPcache até derrubar o container (foi o que aconteceu no
+# incidente de 19/06: 6h de silêncio + queda sem crash visível).
+COPY docker/php/www.conf /usr/local/etc/php-fpm.d/www.conf
+
+# Healthcheck via FPM ping (responde "pong" se o pool está vivo).
+# O Docker marca o container unhealthy se 3 tentativas seguidas falharem,
+# permitindo que o Coolify ou o orquestrador detecte o app travado antes
+# do restart-loop começar.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+    CMD php-fpm -t 2>/dev/null && \
+        (echo -e "GET /fpm-ping HTTP/1.0\r\nHost: localhost\r\n\r\n" | nc -w 2 127.0.0.1 9000 | grep -q pong) || exit 1
 
 # Diretorio de trabalho
 WORKDIR /var/www/html
