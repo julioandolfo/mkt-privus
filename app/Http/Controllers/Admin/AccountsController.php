@@ -36,6 +36,7 @@ class AccountsController extends Controller
         $search = trim((string) $request->get('q', ''));
 
         $accounts = User::query()
+            ->with('currentBrand')
             ->when($search, fn ($query) => $query->where(
                 fn ($q) => $q->where('name', 'like', "%{$search}%")
                     ->orWhere('email', 'like', "%{$search}%")
@@ -47,6 +48,8 @@ class AccountsController extends Controller
                 $subscription = $this->usage->activeSubscription($user)
                     ?? $user->subscriptions()->latest('id')->first();
 
+                $brand = $user->currentBrand;
+
                 return [
                     'id' => $user->id,
                     'name' => $user->name,
@@ -56,6 +59,18 @@ class AccountsController extends Controller
                     'created_at' => $user->created_at?->toDateString(),
                     'last_login_at' => $user->last_login_at?->toDateTimeString(),
                     'brands_count' => $this->usage->brandsCount($user),
+                    'company' => $brand ? [
+                        'name' => $brand->name,
+                        'legal_name' => $brand->legal_name,
+                        'cnpj' => $brand->cnpj,
+                        'segment' => $brand->segment,
+                        'company_size' => $brand->company_size,
+                        'phone' => $brand->phone,
+                        'city' => $brand->address_city,
+                        'state' => $brand->address_state,
+                        'goals' => $brand->goals ?? [],
+                        'objective' => $brand->objective,
+                    ] : null,
                     'subscription' => $subscription ? [
                         'id' => $subscription->id,
                         'plan_name' => $subscription->plan?->name,
@@ -88,6 +103,56 @@ class AccountsController extends Controller
             'plans' => Plan::active()->get(['id', 'name', 'price']),
             'filters' => ['q' => $search],
         ]);
+    }
+
+    /**
+     * Métricas de onboarding para o operador: distribuição por segmento,
+     * objetivos buscados, porte e UF.
+     */
+    public function insights(): Response
+    {
+        $brands = Brand::query()->get([
+            'segment', 'company_size', 'address_state', 'goals',
+        ]);
+
+        return Inertia::render('Admin/Insights', [
+            'totals' => [
+                'brands' => $brands->count(),
+                'accounts' => User::count(),
+                'with_cnpj' => Brand::whereNotNull('cnpj')->where('cnpj', '!=', '')->count(),
+            ],
+            'bySegment' => $this->distribution($brands, 'segment'),
+            'byCompanySize' => $this->distribution($brands, 'company_size'),
+            'byState' => $this->distribution($brands, 'address_state'),
+            'byGoal' => $this->goalsDistribution($brands),
+        ]);
+    }
+
+    /** Conta valores de uma coluna, ordenado desc. @return array<int,array{label:string,count:int}> */
+    private function distribution($brands, string $field): array
+    {
+        return $brands
+            ->groupBy(fn ($b) => filled($b->{$field}) ? $b->{$field} : 'Não informado')
+            ->map(fn ($group, $label) => ['label' => (string) $label, 'count' => $group->count()])
+            ->sortByDesc('count')
+            ->values()
+            ->all();
+    }
+
+    /** Tabula o array JSON de goals (multi-valor) entre as marcas. */
+    private function goalsDistribution($brands): array
+    {
+        $tally = [];
+
+        foreach ($brands as $brand) {
+            foreach (($brand->goals ?? []) as $goal) {
+                $tally[$goal] = ($tally[$goal] ?? 0) + 1;
+            }
+        }
+
+        arsort($tally);
+
+        return collect($tally)->map(fn ($count, $label) => ['label' => $label, 'count' => $count])->values()->all();
     }
 
     /**

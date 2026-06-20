@@ -115,7 +115,13 @@ const allNavigation: NavItem[] = [
     { name: 'Métricas', href: 'metrics.index', icon: 'trending-up', routeMatch: 'metrics.*', enabled: true },
     { name: 'Marcas', href: 'brands.index', icon: 'briefcase', routeMatch: 'brands.*', enabled: true },
     // Áreas restritas a administradores da plataforma
-    { name: 'Contas (Admin)', href: 'admin.accounts.index', icon: 'shield', routeMatch: 'admin.*', enabled: isAdmin },
+    {
+        name: 'Admin', href: 'admin.accounts.index', icon: 'shield', routeMatch: 'admin.*', enabled: isAdmin,
+        children: [
+            { name: 'Contas', href: 'admin.accounts.index', routeMatch: 'admin.accounts.*' },
+            { name: 'Insights', href: 'admin.insights', routeMatch: 'admin.insights' },
+        ],
+    },
     { name: 'Logs', href: 'logs.index', icon: 'terminal', routeMatch: 'logs.*', enabled: isAdmin },
     { name: 'Configurações', href: 'settings.index', icon: 'settings', routeMatch: 'settings.*', enabled: isAdmin },
 ];

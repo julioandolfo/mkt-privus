@@ -19,6 +19,7 @@ class EmailVerificationFlowTest extends TestCase
         $this->post('/register', [
             'name' => 'Novo Cliente',
             'email' => 'novo@example.com',
+            'brand_name' => 'Empresa Teste',
             'password' => 'password',
             'password_confirmation' => 'password',
         ]);

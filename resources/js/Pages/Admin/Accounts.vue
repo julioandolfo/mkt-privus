@@ -12,6 +12,19 @@ interface SubscriptionInfo {
     is_valid: boolean;
 }
 
+interface Company {
+    name: string;
+    legal_name: string | null;
+    cnpj: string | null;
+    segment: string | null;
+    company_size: string | null;
+    phone: string | null;
+    city: string | null;
+    state: string | null;
+    goals: string[];
+    objective: string | null;
+}
+
 interface Account {
     id: number;
     name: string;
@@ -21,6 +34,7 @@ interface Account {
     created_at: string | null;
     last_login_at: string | null;
     brands_count: number;
+    company: Company | null;
     subscription: SubscriptionInfo | null;
     usage: { emails: number; ai_tokens: number };
 }
@@ -66,6 +80,9 @@ const statusLabels: Record<string, string> = {
 function doSearch() {
     router.get(route('admin.accounts.index'), { q: search.value }, { preserveState: true, preserveScroll: true });
 }
+
+// ===== Detalhes da conta =====
+const detailAccount = ref<Account | null>(null);
 
 // ===== Nova conta de cliente =====
 const showCreate = ref(false);
@@ -162,13 +179,18 @@ function formatNumber(value: number): string {
                 <h2 class="text-xl font-semibold leading-tight text-gray-800 dark:text-gray-200">
                     Contas do SaaS
                 </h2>
-                <button
-                    type="button"
-                    @click="openCreate"
-                    class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"
-                >
-                    + Nova conta
-                </button>
+                <div class="flex items-center gap-2">
+                    <Link :href="route('admin.insights')" class="rounded-xl bg-gray-800 border border-gray-700 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 transition">
+                        Insights
+                    </Link>
+                    <button
+                        type="button"
+                        @click="openCreate"
+                        class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"
+                    >
+                        + Nova conta
+                    </button>
+                </div>
             </div>
         </template>
 
@@ -302,6 +324,9 @@ function formatNumber(value: number): string {
                                         <button @click="toggleAdmin(account)" class="rounded-lg bg-gray-800 border border-gray-700 px-2 py-1 text-[11px] text-amber-400/80 hover:bg-gray-700 transition">
                                             {{ account.is_admin ? 'Tirar admin' : 'Tornar admin' }}
                                         </button>
+                                        <button @click="detailAccount = account" class="rounded-lg bg-gray-800 border border-gray-700 px-2 py-1 text-[11px] text-indigo-300 hover:bg-gray-700 transition">
+                                            Detalhes
+                                        </button>
                                     </div>
                                 </td>
                             </tr>
@@ -405,6 +430,47 @@ function formatNumber(value: number): string {
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+        <!-- Modal: detalhes da conta -->
+        <div
+            v-if="detailAccount"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            @click.self="detailAccount = null"
+        >
+            <div class="w-full max-w-lg rounded-2xl bg-gray-900 border border-gray-800 p-6 shadow-xl">
+                <div class="mb-4 flex items-start justify-between">
+                    <div>
+                        <h3 class="text-lg font-semibold text-white">{{ detailAccount.name }}</h3>
+                        <p class="text-sm text-gray-400">{{ detailAccount.email }}</p>
+                    </div>
+                    <button @click="detailAccount = null" class="text-gray-500 hover:text-white">✕</button>
+                </div>
+
+                <div v-if="detailAccount.company" class="space-y-3 text-sm">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div><p class="text-gray-500">Empresa</p><p class="text-gray-200">{{ detailAccount.company.name || '—' }}</p></div>
+                        <div><p class="text-gray-500">Razão social</p><p class="text-gray-200">{{ detailAccount.company.legal_name || '—' }}</p></div>
+                        <div><p class="text-gray-500">CNPJ</p><p class="text-gray-200">{{ detailAccount.company.cnpj || '—' }}</p></div>
+                        <div><p class="text-gray-500">Telefone</p><p class="text-gray-200">{{ detailAccount.company.phone || '—' }}</p></div>
+                        <div><p class="text-gray-500">Segmento</p><p class="text-gray-200">{{ detailAccount.company.segment || '—' }}</p></div>
+                        <div><p class="text-gray-500">Porte</p><p class="text-gray-200">{{ detailAccount.company.company_size || '—' }}</p></div>
+                        <div class="col-span-2"><p class="text-gray-500">Cidade / UF</p><p class="text-gray-200">{{ [detailAccount.company.city, detailAccount.company.state].filter(Boolean).join(' / ') || '—' }}</p></div>
+                    </div>
+
+                    <div v-if="detailAccount.company.goals.length">
+                        <p class="text-gray-500">O que busca</p>
+                        <div class="mt-1 flex flex-wrap gap-1.5">
+                            <span v-for="g in detailAccount.company.goals" :key="g" class="rounded-full bg-indigo-600/20 px-2.5 py-0.5 text-xs text-indigo-200">{{ g }}</span>
+                        </div>
+                    </div>
+
+                    <div v-if="detailAccount.company.objective">
+                        <p class="text-gray-500">Objetivo</p>
+                        <p class="mt-1 rounded-xl bg-gray-800 p-3 text-gray-200">{{ detailAccount.company.objective }}</p>
+                    </div>
+                </div>
+                <p v-else class="text-sm text-gray-500">Esta conta não tem dados de empresa preenchidos.</p>
             </div>
         </div>
     </AuthenticatedLayout>

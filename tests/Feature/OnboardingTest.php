@@ -42,6 +42,7 @@ class OnboardingTest extends TestCase
         $this->post('/register', [
             'name' => 'Julio Trial',
             'email' => 'trial@example.com',
+            'brand_name' => 'Empresa Teste',
             'password' => 'password',
             'password_confirmation' => 'password',
         ]);
