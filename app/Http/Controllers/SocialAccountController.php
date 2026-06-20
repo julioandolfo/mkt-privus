@@ -299,7 +299,9 @@ class SocialAccountController extends Controller
             ]);
 
             if ($brandId) {
-                // Só permite vincular a uma marca da qual o usuário é membro.
+                // 1) Permissão (multi-tenant): só permite vincular a uma marca
+                //    da qual o usuário é membro. Retorna 404 antes de qualquer
+                //    outra checagem.
                 $brand = $request->user()->brands()->where('brands.id', $brandId)->first();
 
                 if (!$brand) {
@@ -307,6 +309,34 @@ class SocialAccountController extends Controller
                         'success' => false,
                         'message' => 'Marca não encontrada ou sem acesso.',
                     ], 404);
+                }
+
+                // 2) Anti-duplicação: o banco tem unique constraint
+                //    social_accounts_brand_platform_uid_unique (sufixo "uid" por
+                //    compatibilidade histórica; a coluna real é
+                //    platform_user_id). Sem este SELECT, o UPDATE explode com
+                //    SQLSTATE 23000 e o front mostra um erro genérico
+                //    incompreensível. Acontece quando a mesma conta foi
+                //    cadastrada 2x e o usuário tenta mover uma delas pra brand
+                //    que já tem a outra.
+                $conflict = SocialAccount::where('brand_id', $brand->id)
+                    ->where('platform', $account->platform)
+                    ->where('platform_user_id', $account->platform_user_id)
+                    ->where('id', '!=', $account->id)
+                    ->first();
+
+                if ($conflict) {
+                    SystemLog::warning('social', 'account.link_brand.duplicate', "Tentativa de vincular conta duplicada", [
+                        'account_id' => $account->id,
+                        'conflict_account_id' => $conflict->id,
+                        'target_brand_id' => $brand->id,
+                        'platform_user_id' => $account->platform_user_id,
+                    ]);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => "A marca \"{$brand->name}\" já tem uma conta @{$conflict->username} cadastrada (#{$conflict->id}). Remova ou desvincule a duplicada antes de mudar esta.",
+                    ], 409);
                 }
 
                 $account->update(['brand_id' => $brand->id]);
