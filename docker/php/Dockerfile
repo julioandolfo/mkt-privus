@@ -77,13 +77,11 @@ RUN addgroup -g 1000 -S www && \
 # incidente de 19/06: 6h de silêncio + queda sem crash visível).
 COPY docker/php/www.conf /usr/local/etc/php-fpm.d/www.conf
 
-# Healthcheck via FPM ping (responde "pong" se o pool está vivo).
-# O Docker marca o container unhealthy se 3 tentativas seguidas falharem,
-# permitindo que o Coolify ou o orquestrador detecte o app travado antes
-# do restart-loop começar.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
-    CMD php-fpm -t 2>/dev/null && \
-        (echo -e "GET /fpm-ping HTTP/1.0\r\nHost: localhost\r\n\r\n" | nc -w 2 127.0.0.1 9000 | grep -q pong) || exit 1
+# Sem HEALTHCHECK aqui de propósito: a porta 9000 fala FastCGI binário
+# (não HTTP), tentar healthcheck via curl/nc dá falso negativo. O
+# healthcheck end-to-end fica no container nginx (curl http://nginx/up),
+# que naturalmente cobre o app: se o FPM estiver morto, o nginx retorna
+# 502 e o container nginx fica unhealthy — sinal suficiente pro Coolify.
 
 # Diretorio de trabalho
 WORKDIR /var/www/html
