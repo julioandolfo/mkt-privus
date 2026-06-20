@@ -39,26 +39,61 @@ class RegisteredUserController extends Controller
      */
     public function store(Request $request): RedirectResponse
     {
-        $request->validate([
+        $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|lowercase|email|max:255|unique:'.User::class,
-            'brand_name' => 'nullable|string|max:255',
             'password' => ['required', 'confirmed', Rules\Password::defaults()],
+
+            // Empresa (obrigatória)
+            'brand_name' => 'required|string|max:255',
+            'cnpj' => 'nullable|string|max:18',
+            'legal_name' => 'nullable|string|max:255',
+            'phone' => 'nullable|string|max:30',
+            'company_size' => 'nullable|string|max:30',
+            'segment' => 'nullable|string|max:255',
+
+            // Endereço
+            'cep' => 'nullable|string|max:9',
+            'address_street' => 'nullable|string|max:255',
+            'address_number' => 'nullable|string|max:30',
+            'address_complement' => 'nullable|string|max:255',
+            'address_neighborhood' => 'nullable|string|max:255',
+            'address_city' => 'nullable|string|max:255',
+            'address_state' => 'nullable|string|max:2',
+
+            // Onboarding
+            'goals' => 'nullable|array|max:20',
+            'goals.*' => 'string|max:100',
+            'objective' => 'nullable|string|max:2000',
         ]);
 
-        $user = DB::transaction(function () use ($request) {
+        $user = DB::transaction(function () use ($request, $validated) {
             $user = User::create([
-                'name' => $request->name,
-                'email' => $request->email,
-                'password' => Hash::make($request->password),
+                'name' => $validated['name'],
+                'email' => $validated['email'],
+                'password' => Hash::make($validated['password']),
             ]);
 
-            $brandName = trim((string) $request->input('brand_name')) ?: 'Minha Marca';
+            $brandName = trim($validated['brand_name']);
 
             $brand = Brand::create([
                 'name' => $brandName,
                 'slug' => $this->uniqueSlug($brandName),
                 'is_active' => true,
+                'cnpj' => $validated['cnpj'] ?? null,
+                'legal_name' => $validated['legal_name'] ?? null,
+                'phone' => $validated['phone'] ?? null,
+                'company_size' => $validated['company_size'] ?? null,
+                'segment' => $validated['segment'] ?? null,
+                'cep' => $validated['cep'] ?? null,
+                'address_street' => $validated['address_street'] ?? null,
+                'address_number' => $validated['address_number'] ?? null,
+                'address_complement' => $validated['address_complement'] ?? null,
+                'address_neighborhood' => $validated['address_neighborhood'] ?? null,
+                'address_city' => $validated['address_city'] ?? null,
+                'address_state' => $validated['address_state'] ?? null,
+                'goals' => $validated['goals'] ?? null,
+                'objective' => $validated['objective'] ?? null,
             ]);
 
             $brand->users()->attach($user->id, ['role' => BrandRole::Owner->value]);

@@ -99,6 +99,28 @@ em navegação).
 
 ## 3. Onboarding e convites
 
+### Cadastro self-service (wizard)
+
+A tela `/register` é um wizard de 4 passos (Conta → Empresa → Endereço →
+Objetivos), com link a partir do login:
+
+- **CNPJ** preenche automaticamente razão social, telefone, endereço e sugere
+  segmento (BrasilAPI); **CEP** preenche o endereço (ViaCEP). Proxies no backend:
+  `/onboarding/cnpj/{cnpj}` e `/onboarding/cep/{cep}` (públicos, com rate limit).
+  > Requer acesso de saída do servidor a `brasilapi.com.br` e `viacep.com.br`.
+- Coleta segmento, porte, objetivos (o que busca) e objetivo (texto) — usados
+  nas métricas do admin.
+- Empresa é obrigatória; e-mail passa por verificação (MustVerifyEmail).
+
+### Back-office do super admin
+
+- `/admin/accounts`: lista contas com dados da empresa, **"+ Nova conta"**
+  (cria cliente isolado: usuário + marca + trial/cortesia) e **Detalhes**
+  (CNPJ, segmento, objetivos, endereço por conta).
+- `/admin/insights`: distribuição por segmento, objetivos, porte e UF (gráficos).
+
+### Convites
+
 - O cadastro cria automaticamente a primeira marca (usuário como Owner), define
   a marca ativa e inicia um trial no primeiro plano ativo.
 - Convites: `POST /brands/{brand}/invitations` (`email`, `role` ∈ admin/editor/viewer)

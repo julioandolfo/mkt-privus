@@ -169,7 +169,7 @@ function isCurrentPlan(plan: Plan): boolean {
                             <div v-if="metric.limit" class="mt-2 h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700">
                                 <div
                                     class="h-2 rounded-full"
-                                    :class="usagePercent(metric) >= 90 ? 'bg-red-500' : 'bg-indigo-500'"
+                                    :class="usagePercent(metric) >= 90 ? 'bg-red-500' : 'bg-gradient-to-r from-violet-500 to-fuchsia-500'"
                                     :style="{ width: usagePercent(metric) + '%' }"
                                 />
                             </div>
@@ -187,7 +187,7 @@ function isCurrentPlan(plan: Plan): boolean {
                             v-for="plan in plans"
                             :key="plan.id"
                             class="flex flex-col rounded-lg bg-white p-6 shadow dark:bg-gray-800"
-                            :class="{ 'ring-2 ring-indigo-500': isCurrentPlan(plan) }"
+                            :class="{ 'ring-2 ring-violet-500': isCurrentPlan(plan) }"
                         >
                             <h4 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
                                 {{ plan.name }}
@@ -209,7 +209,7 @@ function isCurrentPlan(plan: Plan): boolean {
                                 class="mt-6 w-full rounded-md px-4 py-2 text-sm font-medium"
                                 :class="isCurrentPlan(plan)
                                     ? 'cursor-default bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
-                                    : 'bg-indigo-600 text-white hover:bg-indigo-700'"
+                                    : 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white hover:from-violet-500 hover:to-fuchsia-500'"
                                 :disabled="isCurrentPlan(plan) || !billingEnabled"
                                 @click="subscribe(plan)"
                             >

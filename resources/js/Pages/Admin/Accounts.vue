@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 
 interface SubscriptionInfo {
@@ -12,6 +12,19 @@ interface SubscriptionInfo {
     is_valid: boolean;
 }
 
+interface Company {
+    name: string;
+    legal_name: string | null;
+    cnpj: string | null;
+    segment: string | null;
+    company_size: string | null;
+    phone: string | null;
+    city: string | null;
+    state: string | null;
+    goals: string[];
+    objective: string | null;
+}
+
 interface Account {
     id: number;
     name: string;
@@ -21,6 +34,7 @@ interface Account {
     created_at: string | null;
     last_login_at: string | null;
     brands_count: number;
+    company: Company | null;
     subscription: SubscriptionInfo | null;
     usage: { emails: number; ai_tokens: number };
 }
@@ -65,6 +79,39 @@ const statusLabels: Record<string, string> = {
 
 function doSearch() {
     router.get(route('admin.accounts.index'), { q: search.value }, { preserveState: true, preserveScroll: true });
+}
+
+// ===== Detalhes da conta =====
+const detailAccount = ref<Account | null>(null);
+
+// ===== Nova conta de cliente =====
+const showCreate = ref(false);
+const createForm = useForm({
+    name: '',
+    email: '',
+    brand_name: '',
+    password: '',
+    password_confirmation: '',
+    subscription: 'trial',
+    plan_id: '' as number | '',
+    trial_days: 14,
+});
+
+function openCreate() {
+    createForm.reset();
+    createForm.subscription = 'trial';
+    createForm.trial_days = 14;
+    showCreate.value = true;
+}
+
+function submitCreate() {
+    createForm.post(route('admin.accounts.store'), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showCreate.value = false;
+            createForm.reset();
+        },
+    });
 }
 
 function post(routeName: string, account: Account, data: Record<string, unknown> = {}) {
@@ -128,9 +175,23 @@ function formatNumber(value: number): string {
 
     <AuthenticatedLayout>
         <template #header>
-            <h2 class="text-xl font-semibold leading-tight text-gray-800 dark:text-gray-200">
-                Contas do SaaS
-            </h2>
+            <div class="flex items-center justify-between">
+                <h2 class="text-xl font-semibold leading-tight text-gray-800 dark:text-gray-200">
+                    Contas do SaaS
+                </h2>
+                <div class="flex items-center gap-2">
+                    <Link :href="route('admin.insights')" class="rounded-xl bg-gray-800 border border-gray-700 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 transition">
+                        Insights
+                    </Link>
+                    <button
+                        type="button"
+                        @click="openCreate"
+                        class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"
+                    >
+                        + Nova conta
+                    </button>
+                </div>
+            </div>
         </template>
 
         <div class="py-8">
@@ -263,6 +324,9 @@ function formatNumber(value: number): string {
                                         <button @click="toggleAdmin(account)" class="rounded-lg bg-gray-800 border border-gray-700 px-2 py-1 text-[11px] text-amber-400/80 hover:bg-gray-700 transition">
                                             {{ account.is_admin ? 'Tirar admin' : 'Tornar admin' }}
                                         </button>
+                                        <button @click="detailAccount = account" class="rounded-lg bg-gray-800 border border-gray-700 px-2 py-1 text-[11px] text-indigo-300 hover:bg-gray-700 transition">
+                                            Detalhes
+                                        </button>
                                     </div>
                                 </td>
                             </tr>
@@ -287,6 +351,126 @@ function formatNumber(value: number): string {
                         <span v-else class="rounded-lg px-3 py-1.5 text-xs text-gray-600" v-html="link.label" />
                     </template>
                 </div>
+            </div>
+        </div>
+        <!-- Modal: nova conta de cliente -->
+        <div
+            v-if="showCreate"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            @click.self="showCreate = false"
+        >
+            <div class="w-full max-w-lg rounded-2xl bg-gray-900 border border-gray-800 p-6 shadow-xl">
+                <h3 class="mb-1 text-lg font-semibold text-white">Nova conta de cliente</h3>
+                <p class="mb-5 text-sm text-gray-400">
+                    Cria um cliente com a própria marca, isolado das demais contas.
+                </p>
+
+                <form @submit.prevent="submitCreate" class="space-y-4">
+                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Nome</label>
+                            <input v-model="createForm.name" type="text" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                            <p v-if="createForm.errors.name" class="mt-1 text-xs text-red-400">{{ createForm.errors.name }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">E-mail</label>
+                            <input v-model="createForm.email" type="email" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                            <p v-if="createForm.errors.email" class="mt-1 text-xs text-red-400">{{ createForm.errors.email }}</p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Nome da marca/empresa</label>
+                        <input v-model="createForm.brand_name" type="text" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                        <p v-if="createForm.errors.brand_name" class="mt-1 text-xs text-red-400">{{ createForm.errors.brand_name }}</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">
+                            Senha <span class="text-gray-500">(opcional — gerada se vazia)</span>
+                        </label>
+                        <input v-model="createForm.password" type="password" autocomplete="new-password" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                        <p v-if="createForm.errors.password" class="mt-1 text-xs text-red-400">{{ createForm.errors.password }}</p>
+                    </div>
+                    <div v-if="createForm.password">
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Confirmar senha</label>
+                        <input v-model="createForm.password_confirmation" type="password" autocomplete="new-password" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Assinatura</label>
+                            <select v-model="createForm.subscription" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="trial">Trial (teste grátis)</option>
+                                <option value="plan">Plano cortesia (ativo)</option>
+                                <option value="none">Nenhuma</option>
+                            </select>
+                        </div>
+                        <div v-if="createForm.subscription !== 'none'">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Plano</label>
+                            <select v-model="createForm.plan_id" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="">{{ createForm.subscription === 'trial' ? 'Primeiro plano ativo' : 'Selecione...' }}</option>
+                                <option v-for="plan in plans" :key="plan.id" :value="plan.id">{{ plan.name }}</option>
+                            </select>
+                            <p v-if="createForm.errors.plan_id" class="mt-1 text-xs text-red-400">{{ createForm.errors.plan_id }}</p>
+                        </div>
+                    </div>
+
+                    <div v-if="createForm.subscription === 'trial'">
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Dias de trial</label>
+                        <input v-model.number="createForm.trial_days" type="number" min="1" max="90" class="w-32 rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                    </div>
+
+                    <div class="flex justify-end gap-3 pt-2">
+                        <button type="button" @click="showCreate = false" class="rounded-xl px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition">
+                            Cancelar
+                        </button>
+                        <button type="submit" :disabled="createForm.processing" class="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition disabled:opacity-50">
+                            {{ createForm.processing ? 'Criando...' : 'Criar conta' }}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <!-- Modal: detalhes da conta -->
+        <div
+            v-if="detailAccount"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            @click.self="detailAccount = null"
+        >
+            <div class="w-full max-w-lg rounded-2xl bg-gray-900 border border-gray-800 p-6 shadow-xl">
+                <div class="mb-4 flex items-start justify-between">
+                    <div>
+                        <h3 class="text-lg font-semibold text-white">{{ detailAccount.name }}</h3>
+                        <p class="text-sm text-gray-400">{{ detailAccount.email }}</p>
+                    </div>
+                    <button @click="detailAccount = null" class="text-gray-500 hover:text-white">✕</button>
+                </div>
+
+                <div v-if="detailAccount.company" class="space-y-3 text-sm">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div><p class="text-gray-500">Empresa</p><p class="text-gray-200">{{ detailAccount.company.name || '—' }}</p></div>
+                        <div><p class="text-gray-500">Razão social</p><p class="text-gray-200">{{ detailAccount.company.legal_name || '—' }}</p></div>
+                        <div><p class="text-gray-500">CNPJ</p><p class="text-gray-200">{{ detailAccount.company.cnpj || '—' }}</p></div>
+                        <div><p class="text-gray-500">Telefone</p><p class="text-gray-200">{{ detailAccount.company.phone || '—' }}</p></div>
+                        <div><p class="text-gray-500">Segmento</p><p class="text-gray-200">{{ detailAccount.company.segment || '—' }}</p></div>
+                        <div><p class="text-gray-500">Porte</p><p class="text-gray-200">{{ detailAccount.company.company_size || '—' }}</p></div>
+                        <div class="col-span-2"><p class="text-gray-500">Cidade / UF</p><p class="text-gray-200">{{ [detailAccount.company.city, detailAccount.company.state].filter(Boolean).join(' / ') || '—' }}</p></div>
+                    </div>
+
+                    <div v-if="detailAccount.company.goals.length">
+                        <p class="text-gray-500">O que busca</p>
+                        <div class="mt-1 flex flex-wrap gap-1.5">
+                            <span v-for="g in detailAccount.company.goals" :key="g" class="rounded-full bg-indigo-600/20 px-2.5 py-0.5 text-xs text-indigo-200">{{ g }}</span>
+                        </div>
+                    </div>
+
+                    <div v-if="detailAccount.company.objective">
+                        <p class="text-gray-500">Objetivo</p>
+                        <p class="mt-1 rounded-xl bg-gray-800 p-3 text-gray-200">{{ detailAccount.company.objective }}</p>
+                    </div>
+                </div>
+                <p v-else class="text-sm text-gray-500">Esta conta não tem dados de empresa preenchidos.</p>
             </div>
         </div>
     </AuthenticatedLayout>

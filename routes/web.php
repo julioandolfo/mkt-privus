@@ -44,8 +44,15 @@ use Inertia\Inertia;
 |--------------------------------------------------------------------------
 */
 Route::get('/', function () {
-    return redirect()->route('login');
-});
+    if (auth()->check()) {
+        return redirect()->route('dashboard');
+    }
+
+    return Inertia::render('Welcome', [
+        'billingEnabled' => \App\Support\BillingSettings::enabled(),
+        'plans' => \App\Models\Plan::active()->get(['id', 'name', 'description', 'price', 'currency', 'features', 'sort_order']),
+    ]);
+})->name('home');
 
 /*
 |--------------------------------------------------------------------------
@@ -76,6 +83,12 @@ Route::post('/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])
 // Webhooks legados (redirecionam para o unificado para compatibilidade)
 Route::post('/email/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])->name('email.webhook.sendpulse');
 Route::post('/sms/webhook/sendpulse', [SendPulseWebhookController::class, 'handle'])->name('sms.webhook.sendpulse');
+
+// Consultas do wizard de cadastro (públicas, com rate limit)
+Route::middleware('throttle:30,1')->group(function () {
+    Route::get('/onboarding/cnpj/{cnpj}', [\App\Http\Controllers\OnboardingLookupController::class, 'cnpj'])->name('onboarding.cnpj');
+    Route::get('/onboarding/cep/{cep}', [\App\Http\Controllers\OnboardingLookupController::class, 'cep'])->name('onboarding.cep');
+});
 
 // Webhook de assinaturas do Mercado Pago (valida x-signature quando secret configurado)
 Route::post('/webhook/mercadopago', [\App\Http\Controllers\MercadoPagoWebhookController::class, 'handle'])
@@ -338,6 +351,8 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
     // Back-office do operador do SaaS (apenas administradores da plataforma)
     Route::prefix('admin')->name('admin.')->middleware('admin')->group(function () {
         Route::get('/accounts', [\App\Http\Controllers\Admin\AccountsController::class, 'index'])->name('accounts.index');
+        Route::get('/insights', [\App\Http\Controllers\Admin\AccountsController::class, 'insights'])->name('insights');
+        Route::post('/accounts', [\App\Http\Controllers\Admin\AccountsController::class, 'store'])->name('accounts.store');
         Route::post('/accounts/{user}/toggle-active', [\App\Http\Controllers\Admin\AccountsController::class, 'toggleActive'])->name('accounts.toggle-active');
         Route::post('/accounts/{user}/toggle-admin', [\App\Http\Controllers\Admin\AccountsController::class, 'toggleAdmin'])->name('accounts.toggle-admin');
         Route::post('/accounts/{user}/extend-trial', [\App\Http\Controllers\Admin\AccountsController::class, 'extendTrial'])->name('accounts.extend-trial');
