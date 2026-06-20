@@ -44,8 +44,15 @@ use Inertia\Inertia;
 |--------------------------------------------------------------------------
 */
 Route::get('/', function () {
-    return redirect()->route('login');
-});
+    if (auth()->check()) {
+        return redirect()->route('dashboard');
+    }
+
+    return Inertia::render('Welcome', [
+        'billingEnabled' => \App\Support\BillingSettings::enabled(),
+        'plans' => \App\Models\Plan::active()->get(['id', 'name', 'description', 'price', 'currency', 'features', 'sort_order']),
+    ]);
+})->name('home');
 
 /*
 |--------------------------------------------------------------------------
