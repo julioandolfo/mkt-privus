@@ -16,7 +16,13 @@ class ShareBrandData
     {
         if ($request->user()) {
             $user = $request->user();
+
+            // Fonte de verdade durável da marca ativa é users.current_brand_id.
+            // getActiveBrand() garante que a coluna esteja preenchida (define a
+            // primeira marca do usuário se ainda estiver nula). Controllers,
+            // global scope e criação de registros leem essa coluna — nada de sessão.
             $currentBrand = $user->getActiveBrand();
+
             $brands = $user->brands()->orderBy('name')->get(['brands.id', 'name', 'slug', 'primary_color', 'segment', 'logo_path']);
 
             Inertia::share([

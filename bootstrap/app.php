@@ -25,6 +25,11 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\ShareBrandData::class,
         ]);
 
+        $middleware->alias([
+            'subscribed' => \App\Http\Middleware\EnsureSubscribed::class,
+            'admin' => \App\Http\Middleware\EnsureAdmin::class,
+        ]);
+
         $middleware->validateCsrfTokens(except: [
             'webhook/*',
             'email/webhook/*',

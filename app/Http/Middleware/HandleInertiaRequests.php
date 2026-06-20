@@ -35,6 +35,7 @@ class HandleInertiaRequests extends Middleware
             'auth' => [
                 'user' => $request->user(),
             ],
+            'billingEnabled' => fn () => \App\Support\BillingSettings::enabled(),
             'appUrl' => config('app.url'),
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),

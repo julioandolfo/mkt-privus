@@ -49,6 +49,15 @@ class LoginRequest extends FormRequest
             ]);
         }
 
+        // Contas desativadas pelo administrador não podem entrar
+        if (Auth::user()->is_active === false) {
+            Auth::logout();
+
+            throw ValidationException::withMessages([
+                'email' => 'Esta conta está desativada. Entre em contato com o suporte.',
+            ]);
+        }
+
         RateLimiter::clear($this->throttleKey());
     }
 

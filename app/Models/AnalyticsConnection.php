@@ -2,12 +2,37 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBrand;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class AnalyticsConnection extends Model
 {
+    use BelongsToBrand;
+
+    /**
+     * Escopo global de marca (BelongsToBrand): conexões globais (brand_id NULL)
+     * só ficam visíveis para o dono (user_id) — ou para todos quando legadas
+     * (user_id NULL).
+     */
+    public function applyBrandScopeConstraint(\Illuminate\Database\Eloquent\Builder $query, ?int $brandId): void
+    {
+        if ($brandId !== null) {
+            $query->where('analytics_connections.brand_id', $brandId);
+        } else {
+            $query->whereRaw('1 = 0');
+        }
+
+        $query->orWhere(function ($orphans) {
+            $orphans->whereNull('analytics_connections.brand_id')
+                ->where(function ($owner) {
+                    $owner->whereNull('analytics_connections.user_id')
+                        ->orWhere('analytics_connections.user_id', \Illuminate\Support\Facades\Auth::id());
+                });
+        });
+    }
+
     protected $fillable = [
         'brand_id', 'user_id', 'platform', 'name', 'external_id', 'external_name',
         'access_token', 'refresh_token', 'token_expires_at', 'config', 'metadata',
@@ -20,6 +45,9 @@ class AnalyticsConnection extends Model
         'is_active' => 'boolean',
         'token_expires_at' => 'datetime',
         'last_synced_at' => 'datetime',
+        // Tokens OAuth criptografados em repouso
+        'access_token' => 'encrypted',
+        'refresh_token' => 'encrypted',
     ];
 
     protected $hidden = ['access_token', 'refresh_token'];

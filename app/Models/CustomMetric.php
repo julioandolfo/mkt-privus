@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBrand;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -9,6 +10,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class CustomMetric extends Model
 {
+    use BelongsToBrand;
+
+    /** Registros com brand_id NULL são globais e permanecem visíveis para todas as marcas */
+    public bool $brandScopeIncludesNull = true;
+
     use HasFactory;
 
     protected $fillable = [

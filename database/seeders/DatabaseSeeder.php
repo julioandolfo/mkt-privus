@@ -18,6 +18,7 @@ class DatabaseSeeder extends Seeder
             'email' => 'admin@mktprivus.com',
             'password' => bcrypt('password'),
             'email_verified_at' => now(),
+            'is_admin' => true,
         ]);
 
         // Criar marcas de exemplo
@@ -60,5 +61,8 @@ class DatabaseSeeder extends Seeder
 
         // Seed templates de metricas sociais
         \App\Models\SocialMetricTemplate::seedDefaults();
+
+        // Planos de assinatura (SaaS)
+        $this->call(PlanSeeder::class);
     }
 }

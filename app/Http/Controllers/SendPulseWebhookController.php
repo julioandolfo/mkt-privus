@@ -24,6 +24,16 @@ class SendPulseWebhookController extends Controller
      */
     public function handle(Request $request)
     {
+        // O SendPulse não assina webhooks; valida um token compartilhado na URL
+        // (?token=...) quando SENDPULSE_WEBHOOK_TOKEN está configurado.
+        $expectedToken = \App\Support\BillingSettings::sendpulseWebhookToken();
+
+        if ($expectedToken && !hash_equals($expectedToken, (string) $request->query('token'))) {
+            Log::warning('SendPulse Webhook: token inválido', ['ip' => $request->ip()]);
+
+            return response()->json(['status' => 'unauthorized'], 401);
+        }
+
         $data = $request->all();
 
         Log::info('SendPulse Webhook received', ['data' => $data]);

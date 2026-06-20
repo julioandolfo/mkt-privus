@@ -33,7 +33,7 @@ class BlogController extends Controller
      */
     public function index(Request $request): Response
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $articles = BlogArticle::forBrand($brandId)
             ->with(['category:id,name', 'wordpressConnection:id,name,platform', 'user:id,name'])
@@ -93,7 +93,7 @@ class BlogController extends Controller
      */
     public function create(Request $request): Response
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $categories = BlogCategory::forBrand($brandId)->orderBy('name')->get(['id', 'name', 'wordpress_connection_id']);
         $connections = $this->getWordPressConnections($brandId);
@@ -127,7 +127,7 @@ class BlogController extends Controller
             'ai_metadata' => 'nullable|array',
         ]);
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $article = BlogArticle::create([
             ...$validated,
@@ -188,7 +188,7 @@ class BlogController extends Controller
      */
     public function edit(BlogArticle $article): Response
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $categories = BlogCategory::forBrand($brandId)->orderBy('name')->get(['id', 'name', 'wordpress_connection_id']);
         $connections = $this->getWordPressConnections($brandId);
 
@@ -470,7 +470,7 @@ class BlogController extends Controller
      */
     public function categories(Request $request): Response
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $categories = BlogCategory::forBrand($brandId)
             ->withCount('articles')
@@ -504,7 +504,7 @@ class BlogController extends Controller
 
         BlogCategory::create([
             ...$validated,
-            'brand_id' => session('current_brand_id'),
+            'brand_id' => auth()->user()?->current_brand_id,
             'slug' => \Illuminate\Support\Str::slug($validated['name']),
         ]);
 
@@ -540,7 +540,7 @@ class BlogController extends Controller
         $request->validate(['connection_id' => 'required|exists:analytics_connections,id']);
 
         $connection = AnalyticsConnection::findOrFail($request->input('connection_id'));
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $synced = $this->wpService->syncCategories($connection, $brandId);
 
@@ -561,7 +561,7 @@ class BlogController extends Controller
             'wp_app_password' => 'required|string|max:500',
         ]);
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         // Testar conexão antes de salvar
         $testConnection = new AnalyticsConnection([
@@ -687,7 +687,7 @@ class BlogController extends Controller
 
     public function connectionCategories(AnalyticsConnection $connection): JsonResponse
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         // Retornar categorias locais sincronizadas para esta conexão (+ categorias sem conexão específica)
         $localCategories = BlogCategory::forBrand($brandId)
@@ -723,7 +723,7 @@ class BlogController extends Controller
      */
     public function calendar(): Response
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $categories = BlogCategory::forBrand($brandId)->orderBy('name')->get(['id', 'name']);
         $connections = $this->getWordPressConnections($brandId);
 
@@ -745,7 +745,7 @@ class BlogController extends Controller
      */
     public function calendarItems(Request $request): JsonResponse
     {
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $start = $request->input('start', now()->startOfMonth()->format('Y-m-d'));
         $end = $request->input('end', now()->endOfMonth()->format('Y-m-d'));
 
@@ -863,7 +863,7 @@ class BlogController extends Controller
             'limit' => 'nullable|integer|min:1|max:20',
         ]);
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
         $result = $this->calendarService->generateArticlesForPendingItems(
             brandId: $brandId,
             startDate: $request->input('start_date'),
@@ -955,7 +955,7 @@ class BlogController extends Controller
             'end_date' => 'required|date',
         ]);
 
-        $brandId = session('current_brand_id');
+        $brandId = auth()->user()?->current_brand_id;
 
         $deleted = BlogCalendarItem::forBrand($brandId)
             ->pending()

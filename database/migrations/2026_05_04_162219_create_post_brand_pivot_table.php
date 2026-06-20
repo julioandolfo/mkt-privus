@@ -22,9 +22,10 @@ return new class extends Migration
 
             // Popula a pivô a partir do brand_id atual de cada post existente
             // para manter a visibilidade pré-feature.
+            // CURRENT_TIMESTAMP é portável (MySQL e SQLite); NOW() é só MySQL
             DB::statement("
                 INSERT INTO post_brand (post_id, brand_id, created_at, updated_at)
-                SELECT id, brand_id, NOW(), NOW()
+                SELECT id, brand_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 FROM posts
                 WHERE brand_id IS NOT NULL
             ");

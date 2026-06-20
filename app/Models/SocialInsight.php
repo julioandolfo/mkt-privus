@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBrand;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class SocialInsight extends Model
 {
+    use BelongsToBrand;
+
     protected $fillable = [
         'social_account_id',
         'brand_id',

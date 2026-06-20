@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Enums\SocialPlatform;
-use App\Models\Brand;
 use App\Models\OAuthDiscoveredAccount;
 use App\Models\SocialAccount;
 use App\Models\SocialInsight;
@@ -32,7 +31,12 @@ class SocialAccountController extends Controller
                 'brand_id' => $brand?->id,
             ]);
 
-            $allAccounts = SocialAccount::with('brand:id,name')
+            // O console de conexões opera sobre TODAS as marcas do usuário (não
+            // apenas a marca ativa): assim conexões de outra marca do usuário
+            // continuam visíveis/gerenciáveis em vez de "sumirem" e darem erro.
+            // A visibilidade continua restrita às marcas do usuário (multi-tenant).
+            $allAccounts = $this->managedAccountsQuery()
+                ->with('brand:id,name')
                 ->orderBy('platform')
                 ->get();
 
@@ -152,7 +156,8 @@ class SocialAccountController extends Controller
             $discoveryToken = $discovery->session_token;
         }
 
-        $brands = Brand::orderBy('name')->get(['id', 'name']);
+        // Apenas as marcas do usuário podem ser destino de vínculo (multi-tenant).
+        $brands = $request->user()->brands()->orderBy('name')->get(['brands.id', 'brands.name']);
 
         SystemLog::info('social', 'accounts.index.render', 'Renderizando pagina', [
             'accounts_count' => count($accounts),
@@ -228,9 +233,9 @@ class SocialAccountController extends Controller
     /**
      * Atualizar conta social (tokens, status)
      */
-    public function update(Request $request, SocialAccount $account): RedirectResponse
+    public function update(Request $request, string $account): RedirectResponse
     {
-        $this->authorizeAccount($request, $account);
+        $account = $this->resolveManagedAccount($account);
 
         $validated = $request->validate([
             'display_name' => 'nullable|string|max:255',
@@ -248,9 +253,9 @@ class SocialAccountController extends Controller
     /**
      * Desconectar conta social
      */
-    public function destroy(Request $request, SocialAccount $account): RedirectResponse
+    public function destroy(Request $request, string $account): RedirectResponse
     {
-        $this->authorizeAccount($request, $account);
+        $account = $this->resolveManagedAccount($account);
 
         $account->delete();
 
@@ -261,9 +266,9 @@ class SocialAccountController extends Controller
     /**
      * Toggle ativo/inativo
      */
-    public function toggle(Request $request, SocialAccount $account): RedirectResponse
+    public function toggle(Request $request, string $account): RedirectResponse
     {
-        $this->authorizeAccount($request, $account);
+        $account = $this->resolveManagedAccount($account);
 
         $account->update(['is_active' => !$account->is_active]);
 
@@ -275,8 +280,13 @@ class SocialAccountController extends Controller
     /**
      * Vincular/desvincular conta social a uma marca
      */
-    public function linkBrand(Request $request, SocialAccount $account): JsonResponse
+    public function linkBrand(Request $request, string $account): JsonResponse
     {
+        // Resolvido fora do try (404 limpo se fora do alcance) e considerando
+        // TODAS as marcas do usuário, não só a ativa. Antes, uma conta atribuída
+        // a outra marca do usuário não era encontrada → "Erro ao vincular marca".
+        $account = $this->resolveManagedAccount($account);
+
         try {
             $brandId = $request->input('brand_id');
 
@@ -289,16 +299,26 @@ class SocialAccountController extends Controller
             ]);
 
             if ($brandId) {
-                $brand = Brand::findOrFail($brandId);
+                // 1) Permissão (multi-tenant): só permite vincular a uma marca
+                //    da qual o usuário é membro. Retorna 404 antes de qualquer
+                //    outra checagem.
+                $brand = $request->user()->brands()->where('brands.id', $brandId)->first();
 
-                // Detecta antes do UPDATE se outra linha já ocupa a combinação
-                // (brand_id, platform, platform_user_id) — o banco tem unique
-                // constraint social_accounts_brand_platform_uid_unique (note: a
-                // constraint usa o sufixo "uid" por compatibilidade histórica,
-                // mas a coluna na tabela é platform_user_id). O erro nativo
-                // (SQLSTATE 23000) é incompreensível pro usuário final.
-                // Acontece quando a mesma conta foi cadastrada 2x e o user
-                // tenta mover uma delas pra brand que já tem a outra.
+                if (!$brand) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Marca não encontrada ou sem acesso.',
+                    ], 404);
+                }
+
+                // 2) Anti-duplicação: o banco tem unique constraint
+                //    social_accounts_brand_platform_uid_unique (sufixo "uid" por
+                //    compatibilidade histórica; a coluna real é
+                //    platform_user_id). Sem este SELECT, o UPDATE explode com
+                //    SQLSTATE 23000 e o front mostra um erro genérico
+                //    incompreensível. Acontece quando a mesma conta foi
+                //    cadastrada 2x e o usuário tenta mover uma delas pra brand
+                //    que já tem a outra.
                 $conflict = SocialAccount::where('brand_id', $brand->id)
                     ->where('platform', $account->platform)
                     ->where('platform_user_id', $account->platform_user_id)
@@ -364,8 +384,10 @@ class SocialAccountController extends Controller
     /**
      * Sincronizar insights de uma conta social manualmente
      */
-    public function syncAccount(Request $request, SocialAccount $account): JsonResponse
+    public function syncAccount(Request $request, string $account): JsonResponse
     {
+        $account = $this->resolveManagedAccount($account);
+
         try {
             if (!$account->access_token) {
                 return response()->json([
@@ -427,8 +449,10 @@ class SocialAccountController extends Controller
     /**
      * Diagnóstico da API de insights do Instagram — testa todas as chamadas e retorna os resultados raw.
      */
-    public function diagnoseInsights(SocialAccount $account): JsonResponse
+    public function diagnoseInsights(string $account): JsonResponse
     {
+        $account = $this->resolveManagedAccount($account);
+
         if (!$account->access_token) {
             return response()->json(['error' => 'Conta sem token de acesso.']);
         }
@@ -533,17 +557,41 @@ class SocialAccountController extends Controller
 
     // ===== PRIVATE =====
 
-    private function authorizeAccount(Request $request, SocialAccount $account): void
+    /**
+     * Query base de conexões geríveis pelo usuário atual.
+     *
+     * Substitui o escopo de marca ATIVA (que via route-model binding fazia uma
+     * conta de outra marca do usuário retornar 404 → "Erro ao vincular marca")
+     * por uma visibilidade que abrange TODAS as marcas do usuário, mantendo o
+     * isolamento multi-tenant: contas de marcas das quais ele não é membro
+     * permanecem inacessíveis. Contas globais (brand_id NULL) seguem a mesma
+     * regra de propriedade do escopo padrão do modelo (próprias ou legadas).
+     */
+    private function managedAccountsQuery(): \Illuminate\Database\Eloquent\Builder
     {
-        // Contas globais (brand_id = null) sao acessiveis por qualquer usuario autenticado
-        if ($account->brand_id === null) {
-            return;
-        }
+        $user = request()->user();
+        $brandIds = $user->brands()->pluck('brands.id')->all();
 
-        $brand = $request->user()->getActiveBrand();
-        if (!$brand || $account->brand_id !== $brand->id) {
-            abort(403, 'Acesso negado.');
-        }
+        return SocialAccount::withoutGlobalScope('brand')
+            ->where(function ($query) use ($brandIds, $user) {
+                $query->whereIn('brand_id', $brandIds)
+                    ->orWhere(function ($orphans) use ($user) {
+                        $orphans->whereNull('brand_id')
+                            ->where(function ($owner) use ($user) {
+                                $owner->whereNull('user_id')
+                                    ->orWhere('user_id', $user->id);
+                            });
+                    });
+            });
+    }
+
+    /**
+     * Resolve uma conta gerível pelo usuário (todas as suas marcas + globais),
+     * retornando 404 quando estiver fora do seu alcance (isolamento preservado).
+     */
+    private function resolveManagedAccount(string|int $id): SocialAccount
+    {
+        return $this->managedAccountsQuery()->findOrFail($id);
     }
 
     private function getTokenStatus(SocialAccount $account): string
@@ -552,9 +600,10 @@ class SocialAccountController extends Controller
             return 'sem_token';
         }
 
-        // Se token expirado ou prestes a expirar, tentar renovar automaticamente
+        // Se token expirado ou prestes a expirar, tentar renovar automaticamente.
+        // canAutoRefresh() cobre Meta (sem refresh_token) e Google (com refresh_token).
         if ($account->isTokenExpired() || $account->needsRefresh()) {
-            if ($account->refresh_token && $account->ensureFreshToken()) {
+            if ($account->canAutoRefresh() && $account->ensureFreshToken()) {
                 return 'ativo'; // Renovado com sucesso
             }
 

@@ -501,6 +501,7 @@ class SocialOAuthController extends Controller
                 } else {
                     $newAccount = SocialAccount::create([
                         'brand_id' => $brandId,
+                        'user_id' => auth()->id(),
                         'platform' => $account['platform'],
                         'platform_user_id' => $account['platform_user_id'],
                         'username' => $account['username'],

@@ -156,8 +156,25 @@ class SettingsController extends Controller
             'postiz_webhook_url' => rtrim(config('app.url'), '/') . '/webhook/postiz',
         ];
 
+        // Assinaturas / SaaS (Mercado Pago)
+        $billing = [
+            'enabled' => \App\Support\BillingSettings::enabled(),
+            'trial_days' => \App\Support\BillingSettings::trialDays(),
+            'mp_public_key' => \App\Support\BillingSettings::mpPublicKey() ?? '',
+            'mp_access_token_set' => !empty(\App\Support\BillingSettings::mpAccessToken()),
+            'mp_webhook_secret_set' => !empty(\App\Support\BillingSettings::mpWebhookSecret()),
+            'sendpulse_webhook_token_set' => !empty(\App\Support\BillingSettings::sendpulseWebhookToken()),
+            'admin_alert_email' => \App\Support\BillingSettings::adminAlertEmail() ?? '',
+            'mp_webhook_url' => rtrim(config('app.url'), '/') . '/webhook/mercadopago',
+            'sendpulse_webhook_url' => rtrim(config('app.url'), '/') . '/webhook/sendpulse?token=SEU_TOKEN',
+        ];
+
+        $plans = \App\Models\Plan::orderBy('sort_order')->get();
+
         return Inertia::render('Settings/Index', [
             'tab' => $tab,
+            'billing' => $billing,
+            'plans' => $plans,
             'general' => $general,
             'ai' => $ai,
             'apiKeys' => $apiKeys,
@@ -197,6 +214,80 @@ class SettingsController extends Controller
         return back()->with('success', 'Configurações gerais salvas com sucesso.');
     }
 
+    /**
+     * Salvar configurações de Assinaturas/SaaS (Mercado Pago).
+     */
+    public function updateBilling(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            "enabled" => "required|boolean",
+            "trial_days" => "required|integer|min:0|max:90",
+            "mp_public_key" => "nullable|string|max:200",
+            "mp_access_token" => "nullable|string|max:200",
+            "mp_webhook_secret" => "nullable|string|max:200",
+            "sendpulse_webhook_token" => "nullable|string|max:200",
+            "admin_alert_email" => "nullable|email|max:255",
+        ]);
+
+        Setting::set("billing", "enabled", $validated["enabled"], "boolean");
+        Setting::set("billing", "trial_days", $validated["trial_days"], "integer");
+        Setting::set("billing", "mp_public_key", $validated["mp_public_key"] ?? "", "string");
+        Setting::set("billing", "admin_alert_email", $validated["admin_alert_email"] ?? "", "string");
+
+        // Segredos: só sobrescreve quando preenchido (campo vazio mantém o atual)
+        foreach (["mp_access_token", "mp_webhook_secret", "sendpulse_webhook_token"] as $secretKey) {
+            if (!empty($validated[$secretKey])) {
+                Setting::set("billing", $secretKey, $validated[$secretKey], "encrypted");
+            }
+        }
+
+        SystemLog::info("settings", "billing.updated", "Configurações de assinaturas atualizadas", [
+            "user_id" => $request->user()->id,
+            "enabled" => $validated["enabled"],
+        ]);
+
+        return back()->with("success", "Configurações de assinaturas salvas com sucesso.");
+    }
+
+    /**
+     * Atualizar um plano de assinatura.
+     */
+    public function updatePlan(Request $request, \App\Models\Plan $plan): RedirectResponse
+    {
+        $validated = $request->validate([
+            "name" => "required|string|max:100",
+            "price" => "required|numeric|min:0",
+            "description" => "nullable|string|max:500",
+            "is_active" => "required|boolean",
+            "features" => "nullable|array|max:20",
+            "features.*" => "nullable|string|max:200",
+            "limits" => "nullable|array",
+            "limits.max_brands" => "nullable|integer|min:1",
+            "limits.max_users" => "nullable|integer|min:1",
+            "limits.monthly_emails" => "nullable|integer|min:0",
+            "limits.monthly_sms" => "nullable|integer|min:0",
+            "limits.monthly_ai_tokens" => "nullable|integer|min:0",
+        ]);
+
+        $plan->update([
+            "name" => $validated["name"],
+            "price" => $validated["price"],
+            "description" => $validated["description"] ?? $plan->description,
+            "is_active" => $validated["is_active"],
+            "features" => array_values(array_filter($validated["features"] ?? [])),
+            "limits" => array_filter(
+                $validated["limits"] ?? [],
+                fn ($value) => $value !== null && $value !== ""
+            ),
+        ]);
+
+        SystemLog::info("settings", "plan.updated", "Plano \"{$plan->name}\" atualizado", [
+            "user_id" => $request->user()->id,
+            "plan_id" => $plan->id,
+        ]);
+
+        return back()->with("success", "Plano atualizado com sucesso.");
+    }
     /**
      * Salvar configurações de IA.
      */

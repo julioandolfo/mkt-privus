@@ -11,6 +11,18 @@ interface ProviderInfo {
     env_key: string;
 }
 
+interface PlanInfo {
+    id: number;
+    name: string;
+    slug: string;
+    description: string | null;
+    price: string;
+    currency: string;
+    features: string[] | null;
+    limits: Record<string, number | null> | null;
+    is_active: boolean;
+}
+
 interface ModelInfo {
     value: string;
     label: string;
@@ -58,6 +70,8 @@ const props = defineProps<{
     providers: ProviderInfo[];
     aiUsageStats: AiUsageStats;
     timezones: Record<string, string>;
+    billing: Record<string, any>;
+    plans: PlanInfo[];
 }>();
 
 const page = usePage();
@@ -97,6 +111,7 @@ const tabs = [
     { id: 'social', name: 'Social Media', icon: 'share' },
     { id: 'oauth', name: 'Integracoes OAuth', icon: 'link' },
     { id: 'notifications', name: 'Notificacoes', icon: 'bell' },
+    { id: 'billing', name: 'Assinaturas (SaaS)', icon: 'credit-card' },
 ];
 
 // Forms
@@ -153,6 +168,66 @@ const socialForm = useForm({
     watermark_enabled: props.social.watermark_enabled ?? false,
 });
 
+const billingForm = useForm({
+    enabled: props.billing.enabled ?? false,
+    trial_days: props.billing.trial_days ?? 14,
+    mp_public_key: props.billing.mp_public_key || '',
+    mp_access_token: '',
+    mp_webhook_secret: '',
+    sendpulse_webhook_token: '',
+    admin_alert_email: props.billing.admin_alert_email || '',
+});
+
+function saveBilling() {
+    billingForm.put(route('settings.billing'), {
+        preserveScroll: true,
+        onSuccess: () => {
+            billingForm.mp_access_token = '';
+            billingForm.mp_webhook_secret = '';
+            billingForm.sendpulse_webhook_token = '';
+        },
+    });
+}
+
+// Edição de planos (cópia local editável)
+const editablePlans = ref(
+    props.plans.map((plan) => ({
+        id: plan.id,
+        name: plan.name,
+        slug: plan.slug,
+        description: plan.description ?? '',
+        price: Number(plan.price),
+        is_active: plan.is_active,
+        featuresText: (plan.features ?? []).join('\n'),
+        limits: {
+            max_brands: plan.limits?.max_brands ?? null,
+            max_users: plan.limits?.max_users ?? null,
+            monthly_emails: plan.limits?.monthly_emails ?? null,
+            monthly_sms: plan.limits?.monthly_sms ?? null,
+            monthly_ai_tokens: plan.limits?.monthly_ai_tokens ?? null,
+        },
+        saving: false,
+    })),
+);
+
+function savePlan(plan: any) {
+    plan.saving = true;
+    router.put(
+        route('settings.plans.update', plan.id),
+        {
+            name: plan.name,
+            description: plan.description,
+            price: plan.price,
+            is_active: plan.is_active,
+            features: plan.featuresText.split('\n').map((l: string) => l.trim()).filter(Boolean),
+            limits: plan.limits,
+        },
+        {
+            preserveScroll: true,
+            onFinish: () => { plan.saving = false; },
+        },
+    );
+}
 const notificationsForm = useForm({
     notify_publish_success: props.notifications.notify_publish_success ?? true,
     notify_publish_failure: props.notifications.notify_publish_failure ?? true,
@@ -458,6 +533,7 @@ const userForm = useForm({
     password: '',
     password_confirmation: '',
     is_active: true,
+    is_admin: false,
 });
 
 async function loadUsers() {
@@ -479,6 +555,7 @@ function openCreateUser() {
     editingUser.value = null;
     userForm.reset();
     userForm.is_active = true;
+    userForm.is_admin = false;
     showUserForm.value = true;
 }
 
@@ -489,6 +566,7 @@ function openEditUser(user: any) {
     userForm.password = '';
     userForm.password_confirmation = '';
     userForm.is_active = user.is_active;
+    userForm.is_admin = user.is_admin ?? false;
     showUserForm.value = true;
 }
 
@@ -672,6 +750,9 @@ onMounted(() => {
                             </template>
                             <template v-else-if="tab.icon === 'bell'">
                                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                            </template>
+                            <template v-else-if="tab.icon === 'credit-card'">
+                                <rect x="1" y="4" width="22" height="16" rx="2" ry="2" /><line x1="1" y1="10" x2="23" y2="10" />
                             </template>
                         </svg>
                         {{ tab.name }}
@@ -925,6 +1006,14 @@ onMounted(() => {
                                     <div>
                                         <span class="text-sm text-gray-300">Usuario ativo</span>
                                         <p class="text-[11px] text-gray-600">Usuarios inativos nao conseguem fazer login.</p>
+                                    </div>
+                                </label>
+
+                                <label class="flex items-center gap-3 cursor-pointer">
+                                    <input v-model="userForm.is_admin" type="checkbox" class="rounded border-gray-600 bg-gray-800 text-indigo-600 focus:ring-indigo-500" />
+                                    <div>
+                                        <span class="text-sm text-gray-300">Administrador da plataforma</span>
+                                        <p class="text-[11px] text-gray-600">Acesso a Configuracoes, Logs e ao back-office de Contas. Nao vincula a nenhuma marca de cliente.</p>
                                     </div>
                                 </label>
 
@@ -1657,6 +1746,143 @@ onMounted(() => {
                             <div v-if="!pushSupported" class="mt-3">
                                 <div class="rounded-lg p-2.5 text-xs bg-amber-500/10 border border-amber-500/30 text-amber-400">
                                     Seu navegador nao suporta Push Notifications. Use Chrome, Firefox ou Edge para esta funcionalidade.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB: ASSINATURAS (SAAS) -->
+                <div v-if="activeTab === 'billing'" class="space-y-6">
+                    <form @submit.prevent="saveBilling" class="space-y-6">
+                        <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                            <h2 class="text-lg font-semibold text-white mb-2">Modo SaaS</h2>
+                            <p class="text-sm text-gray-500 mb-6">Habilita assinaturas, trial e limites de plano. Desligado, o sistema opera sem cobrança e sem limites.</p>
+
+                            <div class="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                                <div class="sm:col-span-2 flex items-center justify-between rounded-xl bg-gray-800 px-4 py-3">
+                                    <div>
+                                        <p class="text-sm font-medium text-white">Cobrança de assinaturas ativa</p>
+                                        <p class="text-xs text-gray-400">Novos cadastros entram em trial e precisam assinar um plano ao final.</p>
+                                    </div>
+                                    <input v-model="billingForm.enabled" type="checkbox" class="h-5 w-5 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500" />
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-1">Dias de teste grátis (trial)</label>
+                                    <input v-model.number="billingForm.trial_days" type="number" min="0" max="90" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-1">E-mail para alertas operacionais</label>
+                                    <input v-model="billingForm.admin_alert_email" type="email" placeholder="admin@suaempresa.com" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                                    <p class="mt-1 text-xs text-gray-500">Recebe avisos de jobs falhados na fila.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                            <h2 class="text-lg font-semibold text-white mb-2">Mercado Pago</h2>
+                            <p class="text-sm text-gray-500 mb-6">
+                                Credenciais da sua aplicação em mercadopago.com.br/developers (produto Assinaturas).
+                                Configure o webhook no painel do MP: <code class="text-indigo-400">{{ billing.mp_webhook_url }}</code>
+                            </p>
+
+                            <div class="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-1">Public Key</label>
+                                    <input v-model="billingForm.mp_public_key" type="text" placeholder="APP_USR-..." class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-1">
+                                        Access Token
+                                        <span v-if="billing.mp_access_token_set" class="ml-2 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">configurado</span>
+                                    </label>
+                                    <input v-model="billingForm.mp_access_token" type="password" :placeholder="billing.mp_access_token_set ? 'Deixe vazio para manter o atual' : 'APP_USR-...'" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-1">
+                                        Webhook Secret
+                                        <span v-if="billing.mp_webhook_secret_set" class="ml-2 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">configurado</span>
+                                    </label>
+                                    <input v-model="billingForm.mp_webhook_secret" type="password" :placeholder="billing.mp_webhook_secret_set ? 'Deixe vazio para manter o atual' : 'Secret do painel de Webhooks'" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-1">
+                                        Token do webhook SendPulse
+                                        <span v-if="billing.sendpulse_webhook_token_set" class="ml-2 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">configurado</span>
+                                    </label>
+                                    <input v-model="billingForm.sendpulse_webhook_token" type="password" :placeholder="billing.sendpulse_webhook_token_set ? 'Deixe vazio para manter o atual' : 'Token de sua escolha'" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                                    <p class="mt-1 text-xs text-gray-500">URL no painel SendPulse: <code class="text-indigo-400">{{ billing.sendpulse_webhook_url }}</code></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end">
+                            <button type="submit" :disabled="billingForm.processing" class="rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 transition disabled:opacity-50">
+                                {{ billingForm.processing ? 'Salvando...' : 'Salvar Configurações' }}
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- Planos -->
+                    <div class="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+                        <h2 class="text-lg font-semibold text-white mb-2">Planos</h2>
+                        <p class="text-sm text-gray-500 mb-6">Preço, limites e destaques de cada plano. Limites vazios = ilimitado.</p>
+
+                        <div class="space-y-6">
+                            <div v-for="plan in editablePlans" :key="plan.id" class="rounded-xl border border-gray-800 bg-gray-950/40 p-5">
+                                <div class="mb-4 flex flex-wrap items-center gap-3">
+                                    <input v-model="plan.name" type="text" class="w-44 rounded-xl bg-gray-800 border-gray-700 text-white font-semibold focus:border-indigo-500 focus:ring-indigo-500" />
+                                    <span class="text-xs text-gray-500">/{{ plan.slug }}</span>
+                                    <label class="ml-auto flex items-center gap-2 text-sm text-gray-300">
+                                        <input v-model="plan.is_active" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500" />
+                                        Ativo
+                                    </label>
+                                </div>
+
+                                <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-400 mb-1">Preço (R$/mês)</label>
+                                        <input v-model.number="plan.price" type="number" min="0" step="0.01" class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-400 mb-1">Marcas</label>
+                                        <input v-model.number="plan.limits.max_brands" type="number" min="1" class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-400 mb-1">Usuários</label>
+                                        <input v-model.number="plan.limits.max_users" type="number" min="1" class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-400 mb-1">E-mails/mês</label>
+                                        <input v-model.number="plan.limits.monthly_emails" type="number" min="0" class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-400 mb-1">SMS/mês</label>
+                                        <input v-model.number="plan.limits.monthly_sms" type="number" min="0" class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-400 mb-1">Tokens IA/mês</label>
+                                        <input v-model.number="plan.limits.monthly_ai_tokens" type="number" min="0" class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </div>
+                                </div>
+
+                                <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-400 mb-1">Descrição</label>
+                                        <input v-model="plan.description" type="text" class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-400 mb-1">Destaques (um por linha)</label>
+                                        <textarea v-model="plan.featuresText" rows="3" class="w-full rounded-lg bg-gray-800 border-gray-700 text-white text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </div>
+                                </div>
+
+                                <div class="mt-4 flex justify-end">
+                                    <button type="button" @click="savePlan(plan)" :disabled="plan.saving" class="rounded-xl bg-gray-800 border border-gray-700 px-5 py-2 text-sm font-medium text-gray-200 hover:bg-gray-700 transition disabled:opacity-50">
+                                        {{ plan.saving ? 'Salvando...' : 'Salvar Plano' }}
+                                    </button>
                                 </div>
                             </div>
                         </div>

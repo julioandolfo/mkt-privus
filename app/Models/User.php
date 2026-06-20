@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\BrandRole;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -10,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-class User extends Authenticatable
+class User extends Authenticatable implements MustVerifyEmail
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable;
@@ -21,6 +22,7 @@ class User extends Authenticatable
         'password',
         'current_brand_id',
         'is_active',
+        'is_admin',
         'last_login_at',
         'last_login_ip',
     ];
@@ -36,6 +38,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
+            'is_admin' => 'boolean',
             'last_login_at' => 'datetime',
         ];
     }
@@ -62,6 +65,11 @@ class User extends Authenticatable
     public function chatConversations(): HasMany
     {
         return $this->hasMany(ChatConversation::class);
+    }
+
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(Subscription::class);
     }
 
     // ===== METHODS =====
@@ -103,5 +111,15 @@ class User extends Authenticatable
         $pivot = $this->brands()->where('brand_id', $brand->id)->first()?->pivot;
 
         return $pivot ? BrandRole::from($pivot->role) : null;
+    }
+
+    /**
+     * Acesso ao sistema: assinatura própria válida (ativa ou trial) ou
+     * assento em marca de um Owner assinante. Com billing desabilitado,
+     * todo usuário tem acesso.
+     */
+    public function hasValidSubscription(): bool
+    {
+        return app(\App\Services\Billing\UsageService::class)->userHasAccess($this);
     }
 }
