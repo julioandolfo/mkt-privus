@@ -112,7 +112,10 @@ async function linkBrandToAccount(accountId: number, brandId: string | null) {
         }
     } catch (e: any) {
         console.error('Erro ao vincular marca', e);
-        showToast('Erro ao vincular marca', 'error');
+        // Mostra a mensagem real do backend (ex: conflito de duplicata em 409,
+        // permissão em 403). Cai no genérico só se o servidor não responder.
+        const msg = e.response?.data?.message || 'Erro ao vincular marca';
+        showToast(msg, 'error');
     } finally {
         linkingBrandAccount.value = null;
     }

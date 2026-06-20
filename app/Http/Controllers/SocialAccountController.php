@@ -290,6 +290,33 @@ class SocialAccountController extends Controller
 
             if ($brandId) {
                 $brand = Brand::findOrFail($brandId);
+
+                // Detecta antes do UPDATE se outra linha já ocupa a combinação
+                // (brand_id, platform, uid) — o banco tem unique constraint
+                // social_accounts_brand_platform_uid_unique e o erro nativo
+                // (SQLSTATE 23000) é incompreensível pro usuário final.
+                // Acontece quando a mesma conta foi cadastrada 2x e o user
+                // tenta mover uma delas pra brand que já tem a outra.
+                $conflict = SocialAccount::where('brand_id', $brand->id)
+                    ->where('platform', $account->platform)
+                    ->where('uid', $account->uid)
+                    ->where('id', '!=', $account->id)
+                    ->first();
+
+                if ($conflict) {
+                    SystemLog::warning('social', 'account.link_brand.duplicate', "Tentativa de vincular conta duplicada", [
+                        'account_id' => $account->id,
+                        'conflict_account_id' => $conflict->id,
+                        'target_brand_id' => $brand->id,
+                        'uid' => $account->uid,
+                    ]);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => "A marca \"{$brand->name}\" já tem uma conta @{$conflict->username} cadastrada (#{$conflict->id}). Remova ou desvincule a duplicada antes de mudar esta.",
+                    ], 409);
+                }
+
                 $account->update(['brand_id' => $brand->id]);
 
                 SystemLog::info('social', 'account.link_brand.linked', "Conta vinculada a \"{$brand->name}\"", [
