@@ -292,14 +292,16 @@ class SocialAccountController extends Controller
                 $brand = Brand::findOrFail($brandId);
 
                 // Detecta antes do UPDATE se outra linha já ocupa a combinação
-                // (brand_id, platform, uid) — o banco tem unique constraint
-                // social_accounts_brand_platform_uid_unique e o erro nativo
+                // (brand_id, platform, platform_user_id) — o banco tem unique
+                // constraint social_accounts_brand_platform_uid_unique (note: a
+                // constraint usa o sufixo "uid" por compatibilidade histórica,
+                // mas a coluna na tabela é platform_user_id). O erro nativo
                 // (SQLSTATE 23000) é incompreensível pro usuário final.
                 // Acontece quando a mesma conta foi cadastrada 2x e o user
                 // tenta mover uma delas pra brand que já tem a outra.
                 $conflict = SocialAccount::where('brand_id', $brand->id)
                     ->where('platform', $account->platform)
-                    ->where('uid', $account->uid)
+                    ->where('platform_user_id', $account->platform_user_id)
                     ->where('id', '!=', $account->id)
                     ->first();
 
@@ -308,7 +310,7 @@ class SocialAccountController extends Controller
                         'account_id' => $account->id,
                         'conflict_account_id' => $conflict->id,
                         'target_brand_id' => $brand->id,
-                        'uid' => $account->uid,
+                        'platform_user_id' => $account->platform_user_id,
                     ]);
 
                     return response()->json([
