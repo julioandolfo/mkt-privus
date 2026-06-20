@@ -34,13 +34,30 @@ class RefreshSocialTokensJob implements ShouldQueue
 
     public function handle(SocialOAuthService $oauthService): void
     {
-        // Buscar contas ativas que precisam de refresh
-        // Token expirado OU expira em menos de 15 minutos (cobre Google/YouTube 1h tokens)
+        // Buscar contas ativas (diretas) que precisam de refresh.
+        //
+        // Google/YouTube: token de 1h, renovado via refresh_token. Janela curta
+        //   (15 min) é suficiente porque o refresh_token não expira.
+        // Meta (Facebook/Instagram): token de 60 dias estendido via
+        //   fb_exchange_token usando o PRÓPRIO access_token — não há
+        //   refresh_token. Como a extensão só funciona enquanto o token ainda
+        //   está válido, usamos uma janela ampla (7 dias) para renovar bem
+        //   antes de expirar e nunca cair em reconexão manual.
         $accounts = SocialAccount::where('is_active', true)
             ->direct()
+            ->whereNotNull('access_token')
             ->whereNotNull('token_expires_at')
-            ->whereNotNull('refresh_token')
-            ->where('token_expires_at', '<=', now()->addMinutes(15))
+            ->where(function ($query) {
+                $query->where(function ($google) {
+                    $google->whereIn('platform', ['youtube', 'google'])
+                        ->whereNotNull('refresh_token')
+                        ->where('token_expires_at', '<=', now()->addMinutes(15));
+                })->orWhere(function ($meta) {
+                    $meta->whereIn('platform', ['facebook', 'instagram'])
+                        ->where('token_expires_at', '>', now()) // ainda válido = renovável
+                        ->where('token_expires_at', '<=', now()->addDays(7));
+                });
+            })
             ->get();
 
         if ($accounts->isEmpty()) {
