@@ -157,14 +157,43 @@ const submit = () => {
 <template>
     <Head title="Criar conta" />
 
-    <div class="flex min-h-screen items-center justify-center bg-gray-950 p-4">
-        <div class="w-full max-w-2xl">
-            <div class="mb-8 text-center">
-                <h1 class="text-2xl font-bold text-white">Crie sua conta</h1>
-                <p class="mt-1 text-sm text-gray-400">Comece grátis — leva menos de 2 minutos.</p>
+    <div class="grid min-h-screen bg-gray-950 lg:grid-cols-2">
+        <!-- Painel de marketing (esquerda) -->
+        <div class="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-indigo-700 via-indigo-800 to-purple-900 p-12 lg:flex">
+            <div class="pointer-events-none absolute inset-0 opacity-20" style="background-image: radial-gradient(circle at 1px 1px, white 1px, transparent 0); background-size: 28px 28px;" />
+            <div class="relative flex items-center gap-2 text-white">
+                <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-lg font-bold">M</div>
+                <span class="text-xl font-bold">MKT Privus</span>
             </div>
+            <div class="relative space-y-6">
+                <h2 class="text-3xl font-bold leading-tight text-white">
+                    Todo o seu marketing<br />em um só lugar.
+                </h2>
+                <ul class="space-y-3 text-indigo-100">
+                    <li class="flex items-start gap-3"><span class="mt-0.5 text-emerald-300">✓</span> Campanhas de e-mail e SMS com IA</li>
+                    <li class="flex items-start gap-3"><span class="mt-0.5 text-emerald-300">✓</span> Redes sociais no piloto automático</li>
+                    <li class="flex items-start gap-3"><span class="mt-0.5 text-emerald-300">✓</span> Blog, analytics e conteúdo gerado por IA</li>
+                    <li class="flex items-start gap-3"><span class="mt-0.5 text-emerald-300">✓</span> Várias marcas, uma só plataforma</li>
+                </ul>
+            </div>
+            <div class="relative text-sm text-indigo-200/80">
+                Comece grátis — sem cartão de crédito.
+            </div>
+        </div>
 
-            <div class="rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl sm:p-8">
+        <!-- Formulário (direita) -->
+        <div class="flex items-center justify-center overflow-y-auto p-4 py-8 sm:p-8">
+            <div class="w-full max-w-xl">
+                <div class="mb-8">
+                    <div class="mb-6 flex items-center gap-2 lg:hidden">
+                        <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-base font-bold text-white">M</div>
+                        <span class="text-lg font-bold text-white">MKT Privus</span>
+                    </div>
+                    <h1 class="text-2xl font-bold text-white">Crie sua conta</h1>
+                    <p class="mt-1 text-sm text-gray-400">Comece grátis — leva menos de 2 minutos.</p>
+                </div>
+
+                <div class="rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl sm:p-8">
                 <!-- Progresso -->
                 <div class="mb-8">
                     <div class="mb-3 flex items-center justify-between">
@@ -357,6 +386,7 @@ const submit = () => {
                         </button>
                     </div>
                 </form>
+                </div>
             </div>
         </div>
     </div>
