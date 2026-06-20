@@ -150,6 +150,37 @@ class SocialAccount extends Model
     }
 
     /**
+     * Indica se esta conta consegue renovar o token automaticamente.
+     *
+     * Meta (Facebook/Instagram) NÃO usa refresh_token: o token de longa
+     * duração (60 dias) é estendido via fb_exchange_token usando o próprio
+     * access_token atual — desde que ele ainda esteja válido. Por isso essas
+     * contas são renováveis mesmo sem refresh_token.
+     *
+     * Google/YouTube usam refresh_token (que não expira) para gerar novos
+     * access_tokens de 1h.
+     */
+    public function canAutoRefresh(): bool
+    {
+        if (empty($this->access_token)) {
+            return false;
+        }
+
+        $platform = $this->platform->value ?? $this->platform;
+
+        if (in_array($platform, ['facebook', 'instagram'])) {
+            // Meta só consegue estender enquanto o token atual ainda é válido.
+            return !$this->isTokenExpired();
+        }
+
+        if (in_array($platform, ['youtube', 'google'])) {
+            return !empty($this->refresh_token);
+        }
+
+        return !empty($this->refresh_token);
+    }
+
+    /**
      * Garante que o token está válido, renovando automaticamente se necessário.
      * Retorna true se o token é válido, false se não pode ser renovado.
      */
@@ -160,8 +191,9 @@ class SocialAccount extends Model
             return true;
         }
 
-        // Sem refresh_token, não tem como renovar
-        if (!$this->refresh_token) {
+        // Plataforma não pode renovar (ex: Google sem refresh_token,
+        // ou Meta com token já expirado/sem access_token)
+        if (!$this->canAutoRefresh()) {
             return false;
         }
 
