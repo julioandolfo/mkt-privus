@@ -533,6 +533,7 @@ const userForm = useForm({
     password: '',
     password_confirmation: '',
     is_active: true,
+    is_admin: false,
 });
 
 async function loadUsers() {
@@ -554,6 +555,7 @@ function openCreateUser() {
     editingUser.value = null;
     userForm.reset();
     userForm.is_active = true;
+    userForm.is_admin = false;
     showUserForm.value = true;
 }
 
@@ -564,6 +566,7 @@ function openEditUser(user: any) {
     userForm.password = '';
     userForm.password_confirmation = '';
     userForm.is_active = user.is_active;
+    userForm.is_admin = user.is_admin ?? false;
     showUserForm.value = true;
 }
 
@@ -1003,6 +1006,14 @@ onMounted(() => {
                                     <div>
                                         <span class="text-sm text-gray-300">Usuario ativo</span>
                                         <p class="text-[11px] text-gray-600">Usuarios inativos nao conseguem fazer login.</p>
+                                    </div>
+                                </label>
+
+                                <label class="flex items-center gap-3 cursor-pointer">
+                                    <input v-model="userForm.is_admin" type="checkbox" class="rounded border-gray-600 bg-gray-800 text-indigo-600 focus:ring-indigo-500" />
+                                    <div>
+                                        <span class="text-sm text-gray-300">Administrador da plataforma</span>
+                                        <p class="text-[11px] text-gray-600">Acesso a Configuracoes, Logs e ao back-office de Contas. Nao vincula a nenhuma marca de cliente.</p>
                                     </div>
                                 </label>
 

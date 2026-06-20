@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 
 interface SubscriptionInfo {
@@ -67,6 +67,36 @@ function doSearch() {
     router.get(route('admin.accounts.index'), { q: search.value }, { preserveState: true, preserveScroll: true });
 }
 
+// ===== Nova conta de cliente =====
+const showCreate = ref(false);
+const createForm = useForm({
+    name: '',
+    email: '',
+    brand_name: '',
+    password: '',
+    password_confirmation: '',
+    subscription: 'trial',
+    plan_id: '' as number | '',
+    trial_days: 14,
+});
+
+function openCreate() {
+    createForm.reset();
+    createForm.subscription = 'trial';
+    createForm.trial_days = 14;
+    showCreate.value = true;
+}
+
+function submitCreate() {
+    createForm.post(route('admin.accounts.store'), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showCreate.value = false;
+            createForm.reset();
+        },
+    });
+}
+
 function post(routeName: string, account: Account, data: Record<string, unknown> = {}) {
     router.post(route(routeName, account.id), data, { preserveScroll: true });
 }
@@ -128,9 +158,18 @@ function formatNumber(value: number): string {
 
     <AuthenticatedLayout>
         <template #header>
-            <h2 class="text-xl font-semibold leading-tight text-gray-800 dark:text-gray-200">
-                Contas do SaaS
-            </h2>
+            <div class="flex items-center justify-between">
+                <h2 class="text-xl font-semibold leading-tight text-gray-800 dark:text-gray-200">
+                    Contas do SaaS
+                </h2>
+                <button
+                    type="button"
+                    @click="openCreate"
+                    class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"
+                >
+                    + Nova conta
+                </button>
+            </div>
         </template>
 
         <div class="py-8">
@@ -287,6 +326,85 @@ function formatNumber(value: number): string {
                         <span v-else class="rounded-lg px-3 py-1.5 text-xs text-gray-600" v-html="link.label" />
                     </template>
                 </div>
+            </div>
+        </div>
+        <!-- Modal: nova conta de cliente -->
+        <div
+            v-if="showCreate"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            @click.self="showCreate = false"
+        >
+            <div class="w-full max-w-lg rounded-2xl bg-gray-900 border border-gray-800 p-6 shadow-xl">
+                <h3 class="mb-1 text-lg font-semibold text-white">Nova conta de cliente</h3>
+                <p class="mb-5 text-sm text-gray-400">
+                    Cria um cliente com a própria marca, isolado das demais contas.
+                </p>
+
+                <form @submit.prevent="submitCreate" class="space-y-4">
+                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Nome</label>
+                            <input v-model="createForm.name" type="text" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                            <p v-if="createForm.errors.name" class="mt-1 text-xs text-red-400">{{ createForm.errors.name }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">E-mail</label>
+                            <input v-model="createForm.email" type="email" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                            <p v-if="createForm.errors.email" class="mt-1 text-xs text-red-400">{{ createForm.errors.email }}</p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Nome da marca/empresa</label>
+                        <input v-model="createForm.brand_name" type="text" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                        <p v-if="createForm.errors.brand_name" class="mt-1 text-xs text-red-400">{{ createForm.errors.brand_name }}</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">
+                            Senha <span class="text-gray-500">(opcional — gerada se vazia)</span>
+                        </label>
+                        <input v-model="createForm.password" type="password" autocomplete="new-password" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                        <p v-if="createForm.errors.password" class="mt-1 text-xs text-red-400">{{ createForm.errors.password }}</p>
+                    </div>
+                    <div v-if="createForm.password">
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Confirmar senha</label>
+                        <input v-model="createForm.password_confirmation" type="password" autocomplete="new-password" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Assinatura</label>
+                            <select v-model="createForm.subscription" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="trial">Trial (teste grátis)</option>
+                                <option value="plan">Plano cortesia (ativo)</option>
+                                <option value="none">Nenhuma</option>
+                            </select>
+                        </div>
+                        <div v-if="createForm.subscription !== 'none'">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Plano</label>
+                            <select v-model="createForm.plan_id" class="w-full rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="">{{ createForm.subscription === 'trial' ? 'Primeiro plano ativo' : 'Selecione...' }}</option>
+                                <option v-for="plan in plans" :key="plan.id" :value="plan.id">{{ plan.name }}</option>
+                            </select>
+                            <p v-if="createForm.errors.plan_id" class="mt-1 text-xs text-red-400">{{ createForm.errors.plan_id }}</p>
+                        </div>
+                    </div>
+
+                    <div v-if="createForm.subscription === 'trial'">
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Dias de trial</label>
+                        <input v-model.number="createForm.trial_days" type="number" min="1" max="90" class="w-32 rounded-xl bg-gray-800 border-gray-700 text-white focus:border-indigo-500 focus:ring-indigo-500" />
+                    </div>
+
+                    <div class="flex justify-end gap-3 pt-2">
+                        <button type="button" @click="showCreate = false" class="rounded-xl px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition">
+                            Cancelar
+                        </button>
+                        <button type="submit" :disabled="createForm.processing" class="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition disabled:opacity-50">
+                            {{ createForm.processing ? 'Criando...' : 'Criar conta' }}
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     </AuthenticatedLayout>

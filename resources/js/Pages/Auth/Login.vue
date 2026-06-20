@@ -95,6 +95,16 @@ const submit = () => {
                     Log in
                 </PrimaryButton>
             </div>
+
+            <div class="mt-6 border-t border-gray-200 pt-6 text-center dark:border-gray-700">
+                <span class="text-sm text-gray-600 dark:text-gray-400">Não tem uma conta?</span>
+                <Link
+                    :href="route('register')"
+                    class="ms-1 rounded-md text-sm font-semibold text-indigo-600 underline hover:text-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:text-indigo-400 dark:focus:ring-offset-gray-800"
+                >
+                    Criar conta grátis
+                </Link>
+            </div>
         </form>
     </GuestLayout>
 </template>

@@ -338,6 +338,7 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
     // Back-office do operador do SaaS (apenas administradores da plataforma)
     Route::prefix('admin')->name('admin.')->middleware('admin')->group(function () {
         Route::get('/accounts', [\App\Http\Controllers\Admin\AccountsController::class, 'index'])->name('accounts.index');
+        Route::post('/accounts', [\App\Http\Controllers\Admin\AccountsController::class, 'store'])->name('accounts.store');
         Route::post('/accounts/{user}/toggle-active', [\App\Http\Controllers\Admin\AccountsController::class, 'toggleActive'])->name('accounts.toggle-active');
         Route::post('/accounts/{user}/toggle-admin', [\App\Http\Controllers\Admin\AccountsController::class, 'toggleAdmin'])->name('accounts.toggle-admin');
         Route::post('/accounts/{user}/extend-trial', [\App\Http\Controllers\Admin\AccountsController::class, 'extendTrial'])->name('accounts.extend-trial');
