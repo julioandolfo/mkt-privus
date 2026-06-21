@@ -203,14 +203,18 @@ class SocialAccountController extends Controller
             'token_expires_at' => 'nullable|date',
         ]);
 
-        // Verificar se a conta ja existe para esta plataforma/username
-        $exists = SocialAccount::where('platform', $validated['platform'])
+        // Verificar se a conta ja existe para esta plataforma/username em
+        // QUALQUER brand. Sem withoutGlobalScope('brand'), o exists() só
+        // enxergaria a brand ativa do usuário e permitiria criar duplicatas
+        // (que depois quebram o linkBrand com violação de unique constraint).
+        $exists = SocialAccount::withoutGlobalScope('brand')
+            ->where('platform', $validated['platform'])
             ->where('username', $validated['username'])
             ->exists();
 
         if ($exists) {
             return redirect()->back()->withErrors([
-                'username' => 'Esta conta já está conectada nesta plataforma.',
+                'username' => 'Esta conta já está conectada nesta plataforma (em alguma marca). Use a tela de Contas para vinculá-la a esta marca.',
             ]);
         }
 

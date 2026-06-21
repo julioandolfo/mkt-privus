@@ -112,7 +112,15 @@ class PostizIntegrationController extends Controller
 
                 $postizIds[] = $integration['id'];
 
-                $existing = SocialAccount::where('postiz_integration_id', $integration['id'])->first();
+                // withoutGlobalScope('brand') é essencial: a sincronização do
+                // Postiz é global (uma API key cobre todas as marcas), então
+                // precisamos achar a conta em QUALQUER brand. Sem isto, ao
+                // ressincar, o SELECT só veria contas da brand ativa e o else
+                // criaria duplicatas para integrations vinculadas a outras
+                // brands — quebrando o linkBrand depois.
+                $existing = SocialAccount::withoutGlobalScope('brand')
+                    ->where('postiz_integration_id', $integration['id'])
+                    ->first();
 
                 // Dados que vêm da origem (Postiz) e são sempre refrescados
                 $fromSource = [
