@@ -477,14 +477,23 @@ class SocialOAuthController extends Controller
             $account = $discoveredAccounts[$index];
 
             try {
-                // Verificar se já existe para QUALQUER brand
-                $existsGlobal = SocialAccount::where('platform', $account['platform'])
+                // Procura conta existente em QUALQUER brand (não só a ativa).
+                // CRÍTICO: o modelo SocialAccount tem global scope 'brand' via
+                // BelongsToBrand — sem withoutGlobalScope, este SELECT só veria
+                // contas da brand ativa do usuário. Quando o usuário reconecta
+                // uma conta que estava vinculada a outra brand, o SELECT
+                // retornava NULL e o código caía no else (create), gerando
+                // duplicata que depois quebrava o linkBrand com
+                // SQLSTATE 23000 Duplicate entry '<brand>-<platform>-<uid>'.
+                $existsGlobal = SocialAccount::withoutGlobalScope('brand')
+                    ->where('platform', $account['platform'])
                     ->where('platform_user_id', $account['platform_user_id'])
                     ->first();
 
                 if ($existsGlobal) {
                     $existsGlobal->update([
                         'brand_id' => $brandId,
+                        'user_id' => $existsGlobal->user_id ?? auth()->id(),
                         'username' => $account['username'],
                         'display_name' => $account['display_name'],
                         'avatar_url' => $account['avatar_url'],
@@ -497,6 +506,8 @@ class SocialOAuthController extends Controller
                     SystemLog::info('oauth', 'oauth.save.updated', "Conta atualizada: {$account['username']}", [
                         'account_id' => $existsGlobal->id,
                         'platform' => $account['platform'],
+                        'previous_brand_id' => $existsGlobal->getOriginal('brand_id'),
+                        'new_brand_id' => $brandId,
                     ]);
                 } else {
                     $newAccount = SocialAccount::create([
