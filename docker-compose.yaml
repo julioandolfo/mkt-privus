@@ -38,7 +38,17 @@ services:
       dockerfile: docker/php/Dockerfile
     restart: unless-stopped
     working_dir: /var/www/html
-    command: php artisan queue:work --queue=email,autopilot,default --sleep=3 --tries=3 --timeout=290 --max-time=3600
+    # Por que cada flag:
+    # --max-jobs=50   recicla o worker a cada 50 jobs. CRÍTICO: jobs de geração
+    #                 de imagem carregam ~2 MB de base64 por chamada (4 refs);
+    #                 sem reciclagem, em ~50 jobs o worker passa de 1 GB e o
+    #                 container morre silenciosamente. --max-time=3600 sozinho
+    #                 não basta porque um loop de 50+ jobs cabe num único 1h.
+    # --max-time=3600 limite de 1h por worker (defesa secundária).
+    # --memory=384    encerra o worker se ele passar de 384 MB num único job
+    #                 (terceira barreira contra runaway). Bate com o
+    #                 memory_limit=512M do php.ini.
+    command: php artisan queue:work --queue=email,autopilot,default --sleep=3 --tries=3 --timeout=290 --max-jobs=50 --max-time=3600 --memory=384
     environment:
       - TZ=America/Sao_Paulo
     volumes:
