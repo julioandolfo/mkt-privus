@@ -719,9 +719,21 @@ class AIGateway
                 $prompt .= "\n\nBRAND VISUAL IDENTITY (MUST follow this style exactly): " . $refContext;
             }
 
+            // Refs precisam ser extraídas ANTES do bloco de instruções pra
+            // que o prompt possa diferenciar entre "foto real do produto"
+            // (que deve ser ancorada visualmente) vs. "post recente / asset
+            // de estilo" (que serve só pra alinhar a estética).
             $brandRefImages = $this->extractBrandReferenceImages($brand);
+            $hasProductPhoto = !empty($brandRefImages) && collect($brandRefImages)->contains(fn ($i) => ($i['role'] ?? '') === 'product');
+
+            if ($hasProductPhoto) {
+                // Foto REAL do produto vai no payload — o modelo precisa saber que
+                // deve ANCORAR o produto da cena nessa foto, não inventar do zero.
+                $prompt .= "\n\nPRODUCT PHOTO PROVIDED: Among the reference images you receive, the one(s) tagged as the brand's product show the REAL physical product being sold. Use it as the visual anchor for the product appearing in your generated scene — keep colors, materials, shape and packaging style consistent with the photo. The surrounding scene (environment, lighting, props, composition) follows the PHOTO STYLE described earlier; only the product itself stays faithful to the reference. Do NOT replicate any logo, wordmark or brand insignia from the reference — these go through the NO-LOGO policy.";
+            }
+
             if (!empty($brandRefImages)) {
-                $prompt .= "\n\nREFERENCE IMAGES: Reference images are provided only for visual style, color scheme, composition and aesthetic — the generated image should feel like it belongs in the same Instagram feed as these references. Do NOT copy, redraw or include any logo, wordmark or branding that may appear in the references; extract only the photographic style.";
+                $prompt .= "\n\nSTYLE REFERENCES: Other reference images (recent posts of this brand, brand identity references) are provided only for visual style, color scheme, composition and aesthetic — the generated image should feel like it belongs in the same Instagram feed as these references. Do NOT copy, redraw or include any logo, wordmark or branding that may appear in them; extract only the photographic style.";
             }
 
             $result = $this->generateImage(
@@ -967,33 +979,55 @@ class AIGateway
 
     /**
      * Extrai imagens de referência dos brand assets como base64 para envio direto à API de imagem.
-     * Fallback: usa imagens de posts publicados recentes se não houver brand assets.
-     * @return array<array{base64: string, mime: string}>
+     *
+     * Prioridade dos slots (cap total = 4 imagens):
+     *   1) PRODUTOS cadastrados (BrandAsset category='product') — até 2.
+     *      São as fotos reais do produto que o usuário subiu na tela de Marca.
+     *      O modelo USA estas como base do que está sendo vendido — sem elas,
+     *      o resultado é um produto genérico que não tem nada a ver com a marca.
+     *   2) REFERÊNCIAS de identidade visual (category='reference') — até 2.
+     *      Cores/estilo/composição que a marca quer transmitir.
+     *   3) POSTS recentes publicados — preenche o restante.
+     *      Alinha o resultado ao estilo do feed atual da marca.
+     *
+     * @return array<array{base64: string, mime: string, role: string}>
      */
     private function extractBrandReferenceImages(Brand $brand): array
     {
         $images = [];
+        $cap = 4;
 
         // Política: NÃO enviamos o logo como referência — posts sociais modernos não aplicam logo
         // na imagem. Incluir o logo como referência induz o modelo a desenhá-lo no resultado.
 
-        // 1) Assets de referência cadastrados em MARCAS (identidade visual oficial — cor/estilo)
-        $references = $brand->references()->limit(3)->get();
-        foreach ($references as $ref) {
-            $path = \Illuminate\Support\Facades\Storage::disk('public')->path($ref->file_path);
-            if (!file_exists($path)) continue;
-            $fileSize = filesize($path);
-            if ($fileSize > 5 * 1024 * 1024) continue;
-            $images[] = [
-                'base64' => base64_encode(file_get_contents($path)),
-                'mime' => $ref->mime_type ?? 'image/jpeg',
-                'role' => 'reference',
-            ];
+        // 1) PRODUTOS da marca (FOTO REAL — máxima prioridade)
+        //    Bug anterior: o pipeline automatizado (Content Engine) ignorava
+        //    completamente $brand->products() e gerava produtos inventados.
+        //    Agora pegamos até 2 fotos de produto cadastradas e mandamos como
+        //    referência visual com role='product' (não ativa edit mode, mas
+        //    o modelo passa a ter ancoragem visual concreta do que vender).
+        foreach ($brand->products()->limit(2)->get() as $product) {
+            if (count($images) >= $cap) break;
+            $img = $this->readAssetAsBase64($product);
+            if ($img) {
+                $images[] = $img + ['role' => 'product'];
+            }
         }
 
-        // 3) Últimos posts publicados — mesmo com logo/referências, usamos 1-2 posts recentes
-        //    para o modelo alinhar com o estilo visual do feed atual da marca.
-        $slotsLeft = max(0, 4 - count($images));
+        // 2) Referências visuais cadastradas (estilo/cor/composição)
+        $slotsLeft = $cap - count($images);
+        if ($slotsLeft > 0) {
+            foreach ($brand->references()->limit(min(2, $slotsLeft))->get() as $ref) {
+                if (count($images) >= $cap) break;
+                $img = $this->readAssetAsBase64($ref);
+                if ($img) {
+                    $images[] = $img + ['role' => 'reference'];
+                }
+            }
+        }
+
+        // 3) Últimos posts publicados — preenche o restante
+        $slotsLeft = $cap - count($images);
         if ($slotsLeft > 0) {
             foreach ($this->extractRecentPostImages($brand, $slotsLeft) as $postImg) {
                 $images[] = $postImg + ['role' => 'recent_post'];
@@ -1004,21 +1038,59 @@ class AIGateway
     }
 
     /**
+     * Lê um BrandAsset do disco e retorna {base64, mime} se válido.
+     * Encapsula path resolution, size cap (5MB) e file_exists check.
+     *
+     * @return array{base64: string, mime: string}|null
+     */
+    private function readAssetAsBase64(\App\Models\BrandAsset $asset): ?array
+    {
+        if (!$asset->file_path) {
+            return null;
+        }
+
+        $path = \Illuminate\Support\Facades\Storage::disk('public')->path($asset->file_path);
+        if (!file_exists($path)) {
+            return null;
+        }
+
+        $size = filesize($path);
+        if ($size === false || $size > 5 * 1024 * 1024) {
+            return null;
+        }
+
+        return [
+            'base64' => base64_encode(file_get_contents($path)),
+            'mime' => $asset->mime_type ?? 'image/jpeg',
+        ];
+    }
+
+    /**
      * Busca imagens dos posts publicados mais recentes da marca para usar como referência visual.
      * @return array<array{base64: string, mime: string}>
      */
     private function extractRecentPostImages(Brand $brand, int $limit = 3): array
     {
-        // Respeitar "ai_reference_since" — só pegar posts criados após essa data
+        // Respeitar "ai_reference_since" se configurado; caso contrário usa
+        // fallback de 60 dias (era null antes, o que combinado com query sem
+        // limite de data podia trazer posts muito antigos não representativos
+        // do estilo visual atual da marca, ou nada se a config estiver mal-set).
         $cfg = $brand->getContentEngineConfig();
-        $referenceSince = $cfg['ai_reference_since'] ?? null;
+        $referenceSince = $cfg['ai_reference_since'] ?? now()->subDays(60)->toDateString();
 
         $recentMedia = \App\Models\PostMedia::whereHas('post', function ($q) use ($brand, $referenceSince) {
-            $q->where('brand_id', $brand->id)
-              ->where('status', \App\Enums\PostStatus::Published);
-            if ($referenceSince) {
-                $q->where('created_at', '>=', $referenceSince);
-            }
+            // Bug anterior: filtrava só por posts.brand_id direto.
+            // Após a migração post_brand_pivot (2026_05_04), brand_id virou
+            // nullable e a visibilidade real vem da pivot post_brand. Sem o
+            // whereHas('brands'), posts da marca cuja FK direta foi nullificada
+            // (cross-brand) sumiam, e posts órfãos (brand_id=NULL) de outras
+            // marcas podiam vazar. Agora cobrimos ambos os caminhos.
+            $q->where('status', \App\Enums\PostStatus::Published)
+              ->where(function ($w) use ($brand) {
+                  $w->where('brand_id', $brand->id)
+                    ->orWhereHas('brands', fn($pb) => $pb->where('brands.id', $brand->id));
+              });
+            $q->where('created_at', '>=', $referenceSince);
         })
         ->where('type', 'image')
         ->whereNotNull('file_path')
@@ -1092,30 +1164,49 @@ class AIGateway
     {
         $imageContents = [];
 
-        $references = $brand->references()->limit(3)->get();
-        foreach ($references as $ref) {
-            $path = \Illuminate\Support\Facades\Storage::disk('public')->path($ref->file_path);
-            if (!file_exists($path)) continue;
-            $base64 = base64_encode(file_get_contents($path));
-            $mime = $ref->mime_type ?? 'image/jpeg';
-            $imageContents[] = [
-                'type' => 'image_url',
-                'image_url' => ['url' => "data:{$mime};base64,{$base64}", 'detail' => 'low'],
-            ];
+        // 1) PRODUTOS — fotos reais cadastradas pela marca. Bug anterior: o
+        //    Vision nunca via os produtos, então a descrição "BRAND VISUAL
+        //    IDENTITY" gerada pra ancorar o prompt da imagem ignorava o que
+        //    a marca de fato vende. Agora produto entra no Vision também.
+        foreach ($brand->products()->limit(2)->get() as $product) {
+            $img = $this->readAssetAsBase64($product);
+            if ($img) {
+                $imageContents[] = [
+                    'type' => 'image_url',
+                    'image_url' => ['url' => "data:{$img['mime']};base64,{$img['base64']}", 'detail' => 'low'],
+                ];
+            }
+        }
+
+        foreach ($brand->references()->limit(2)->get() as $ref) {
+            $img = $this->readAssetAsBase64($ref);
+            if ($img) {
+                $imageContents[] = [
+                    'type' => 'image_url',
+                    'image_url' => ['url' => "data:{$img['mime']};base64,{$img['base64']}", 'detail' => 'low'],
+                ];
+            }
         }
 
         if (!empty($imageContents)) return $imageContents;
 
-        // Respeitar "ai_reference_since"
+        // Fallback: nenhum produto/referência cadastrado — usa últimos posts
+        // publicados como base pro Vision descrever o estilo visual da marca.
+        // Default de 60 dias quando ai_reference_since não está configurado.
         $cfg = $brand->getContentEngineConfig();
-        $referenceSince = $cfg['ai_reference_since'] ?? null;
+        $referenceSince = $cfg['ai_reference_since'] ?? now()->subDays(60)->toDateString();
 
         $recentMedia = \App\Models\PostMedia::whereHas('post', function ($q) use ($brand, $referenceSince) {
-            $q->where('brand_id', $brand->id)
-              ->where('status', \App\Enums\PostStatus::Published);
-            if ($referenceSince) {
-                $q->where('created_at', '>=', $referenceSince);
-            }
+            // Cobre tanto posts.brand_id direto quanto cross-brand via pivô
+            // post_brand (migração 2026_05_04 tornou brand_id nullable e
+            // delegou visibilidade pra pivot — sem isso, posts cross-brand
+            // da marca não eram capturados ou posts órfãos de outras vazavam).
+            $q->where('status', \App\Enums\PostStatus::Published)
+              ->where(function ($w) use ($brand) {
+                  $w->where('brand_id', $brand->id)
+                    ->orWhereHas('brands', fn ($pb) => $pb->where('brands.id', $brand->id));
+              })
+              ->where('created_at', '>=', $referenceSince);
         })
         ->where('type', 'image')
         ->whereNotNull('file_path')
