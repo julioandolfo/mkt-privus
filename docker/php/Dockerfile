@@ -52,10 +52,21 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
         sockets
 
 # Instalar Redis extension
-RUN pecl install redis && docker-php-ext-enable redis
+# Versão fixa pra não pegar lançamentos novos que ocasionalmente quebram
+# o build em PHP 8.3-alpine (deploy 22/06 falhou exatamente por isso).
+# 6.1.0 é estável e suporta PHP 8.0-8.4.
+# `printf "\n"` responde "default" a qualquer prompt interativo do pecl;
+# `pecl channel-update` refresca o índice (defesa contra cache stale).
+RUN pecl channel-update pecl.php.net \
+    && printf "\n" | pecl install -o -f redis-6.1.0 \
+    && docker-php-ext-enable redis \
+    && rm -rf /tmp/pear
 
 # Instalar Imagick extension (para conversao de imagens via PHP)
-RUN pecl install imagick && docker-php-ext-enable imagick
+# Mesma estratégia: versão fixa estável + non-interactive.
+RUN printf "\n" | pecl install -o -f imagick-3.7.0 \
+    && docker-php-ext-enable imagick \
+    && rm -rf /tmp/pear
 
 # Instalar Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
