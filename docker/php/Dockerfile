@@ -38,8 +38,14 @@ RUN if [ -f /etc/ImageMagick-7/policy.xml ]; then \
     fi
 
 # Instalar extensoes PHP
+# -j2 em vez de -j$(nproc): o Coolify builda app, worker e scheduler em
+# PARALELO (mesma imagem base, 3 stages independentes), cada um chamando
+# este ext-install. Com -j$(nproc) cada stage usa todos os CPUs do builder
+# helper, então o consumo total = nproc × 3 stages — estoura RAM/CPU e o
+# builder mata um deles com exit 255 (deploy 23/06). -j2 mantém compilação
+# razoavelmente rápida sem inundar o builder.
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j$(nproc) \
+    && docker-php-ext-install -j2 \
         pdo_mysql \
         mbstring \
         exif \
