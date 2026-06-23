@@ -69,8 +69,12 @@ RUN pecl channel-update pecl.php.net \
     && rm -rf /tmp/pear
 
 # Instalar Imagick extension (para conversao de imagens via PHP)
-# Mesma estratégia: versão fixa estável + non-interactive.
-RUN printf "\n" | pecl install -o -f imagick-3.7.0 \
+# Versão fixa 3.8.0: foi a primeira release com suporte OFICIAL a
+# ImageMagick 7 (o Alpine atual instala IM 7.1.x). A 3.7.0 que tentei
+# antes só suporta IM6 e falha em compile-time aqui (build 23/06 quebrou
+# em exit 1 nesta linha exata). 3.8.0+ é estável e era a versão "latest"
+# que estava sendo puxada nos deploys que funcionavam antes.
+RUN printf "\n" | pecl install -o -f imagick-3.8.0 \
     && docker-php-ext-enable imagick \
     && rm -rf /tmp/pear
 
