@@ -39,6 +39,27 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
+            // Inertia detecta-se pelo header X-Inertia. Para essas requests o
+            // front espera REDIRECT com errors na sessão (que o Inertia
+            // consome e expõe como `errors` reativo), não JSON. Devolver
+            // JSON aqui quebra a tela com "All Inertia requests must receive
+            // a valid Inertia response, however a plain JSON response was
+            // received". Deixa o fluxo padrão do Laravel/Inertia converter
+            // ValidationException em redirect automaticamente.
+            if ($request->header('X-Inertia')) {
+                return null;
+            }
+
+            // ValidationException tem formato próprio (422 + {message, errors})
+            // que axios/fetch dos consumidores diretos do front (modais que
+            // postam via axios puro, ex: social.generate-complete) já
+            // entendem e renderizam por campo. Sobrescrever isso achatava o
+            // array `errors` em uma string única ("The lists field is
+            // required."), perdendo qual campo falhou. Deixa o Laravel cuidar.
+            if ($e instanceof \Illuminate\Validation\ValidationException) {
+                return null;
+            }
+
             if ($request->expectsJson() || $request->ajax()) {
                 $status = method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 500;
                 \Illuminate\Support\Facades\Log::error("Unhandled exception on {$request->method()} {$request->path()}: {$e->getMessage()}", [
