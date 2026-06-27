@@ -54,16 +54,17 @@ services:
     mem_limit: 768m
     mem_reservation: 256m
     # Por que cada flag:
-    # --max-jobs=50   recicla o worker a cada 50 jobs. CRÍTICO: jobs de geração
-    #                 de imagem carregam ~2 MB de base64 por chamada (4 refs);
-    #                 sem reciclagem, em ~50 jobs o worker passa de 1 GB e o
-    #                 container morre silenciosamente. --max-time=3600 sozinho
-    #                 não basta porque um loop de 50+ jobs cabe num único 1h.
-    # --max-time=3600 limite de 1h por worker (defesa secundária).
-    # --memory=384    encerra o worker se ele passar de 384 MB num único job
-    #                 (terceira barreira contra runaway). Bate com o
-    #                 memory_limit=512M do php.ini.
-    command: php artisan queue:work --queue=email,autopilot,default --sleep=3 --tries=3 --timeout=290 --max-jobs=50 --max-time=3600 --memory=384
+    # --max-time=3600 recicla o worker a cada 1h (descarta memória acumulada
+    #                 por Imagick/OPcache de forma previsível). É a defesa
+    #                 PRINCIPAL anti-leak agora — restart raro (24x/dia).
+    # --memory=384    encerra o worker se ultrapassar 384 MB num job
+    #                 (proteção contra runaway num job pesado individual).
+    # REMOVIDO --max-jobs=50: fazia o worker SAIR a cada 50 jobs, e como o
+    #                 Docker reinicia (restart: unless-stopped) cada saída
+    #                 vira um "restart". Com filas de email cheias isso gerou
+    #                 4000+ restarts e re-executava o entrypoint a cada ciclo.
+    #                 O --memory já cobre o anti-leak sem reciclar tão cedo.
+    command: php artisan queue:work --queue=email,autopilot,default --sleep=3 --tries=3 --timeout=290 --max-time=3600 --memory=384
     environment:
       - TZ=America/Sao_Paulo
     volumes:

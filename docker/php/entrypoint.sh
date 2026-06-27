@@ -9,54 +9,62 @@
 # NAO usar set -e aqui! Queremos que o PHP-FPM inicie
 # mesmo que algum passo de setup falhe.
 
-# Copiar assets compilados para o volume compartilhado
-if [ -d "/var/www/html/build-assets" ]; then
-    echo "==> Copiando assets Vite para volume compartilhado..."
-    rm -rf /var/www/html/public/build/* 2>/dev/null || true
-    rm -rf /var/www/html/public/build/.vite 2>/dev/null || true
-    mkdir -p /var/www/html/public/build
-    cp -a /var/www/html/build-assets/. /var/www/html/public/build/
-    chown -R www:www /var/www/html/public/build
-    echo "==> Assets copiados com sucesso."
-    echo "==> Manifest: $(ls -la /var/www/html/public/build/.vite/manifest.json 2>/dev/null || echo 'NAO ENCONTRADO')"
-fi
+# =====================================================
+# Setup PESADO (cópia de assets Vite, chown -R recursivo, migrations,
+# caches) roda APENAS no container php-fpm (app). Worker e scheduler
+# reciclam periodicamente (queue:work --max-time/--memory) e o Docker
+# os reinicia — re-executar este setup pesado a cada reciclagem
+# desperdiça CPU/IO, polui o log e cria contenção de escrita no volume
+# public_build compartilhado. Worker/scheduler não servem HTTP, então
+# não precisam dos assets nem do setup de banco.
+# =====================================================
 
-# Garantir permissoes do storage e cache (CRITICAL: must succeed for logging to work)
-echo "==> Ajustando permissoes de storage e cache..."
-chown -R www:www /var/www/html/storage /var/www/html/bootstrap/cache 2>&1 || echo "==> ERRO: chown falhou no storage!"
-chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache 2>&1 || echo "==> ERRO: chmod falhou no storage!"
-
-# Garantir que o diretorio de logs existe e tem permissao
-mkdir -p /var/www/html/storage/logs
-mkdir -p /var/www/html/storage/framework/sessions
-mkdir -p /var/www/html/storage/framework/views
-mkdir -p /var/www/html/storage/framework/cache/data
-
-# Criar arquivos de log com permissoes corretas
-touch /var/www/html/storage/logs/laravel.log
-touch /var/www/html/storage/logs/php-errors.log
-chown www:www /var/www/html/storage/logs/laravel.log /var/www/html/storage/logs/php-errors.log
-chmod 664 /var/www/html/storage/logs/laravel.log /var/www/html/storage/logs/php-errors.log
-
-# Criar diretorios de upload que o app precisa
-mkdir -p /var/www/html/storage/app/public/brands
-mkdir -p /var/www/html/storage/app/public/ai-generated
-mkdir -p /var/www/html/storage/app/public/email-templates
-chown -R www:www /var/www/html/storage/app
-chmod -R 775 /var/www/html/storage/app
-
-# Verificar se o storage realmente ficou gravavel
-TEST_FILE="/var/www/html/storage/logs/.perm-test"
-if su-exec www:www touch "$TEST_FILE" 2>/dev/null; then
-    rm -f "$TEST_FILE"
-    echo "==> Permissoes de storage: OK"
-else
-    echo "==> ALERTA: storage NAO gravavel pelo usuario www! Tentando chmod 777..."
-    chmod -R 777 /var/www/html/storage 2>/dev/null || true
-fi
-
-# Apenas o container principal (php-fpm) faz setup do banco
 if [ "$1" = "php-fpm" ]; then
+    # Copiar assets compilados para o volume compartilhado
+    if [ -d "/var/www/html/build-assets" ]; then
+        echo "==> Copiando assets Vite para volume compartilhado..."
+        rm -rf /var/www/html/public/build/* 2>/dev/null || true
+        rm -rf /var/www/html/public/build/.vite 2>/dev/null || true
+        mkdir -p /var/www/html/public/build
+        cp -a /var/www/html/build-assets/. /var/www/html/public/build/
+        chown -R www:www /var/www/html/public/build
+        echo "==> Assets copiados com sucesso."
+        echo "==> Manifest: $(ls -la /var/www/html/public/build/.vite/manifest.json 2>/dev/null || echo 'NAO ENCONTRADO')"
+    fi
+
+    # Garantir permissoes do storage e cache (CRITICAL: must succeed for logging to work)
+    echo "==> Ajustando permissoes de storage e cache..."
+    chown -R www:www /var/www/html/storage /var/www/html/bootstrap/cache 2>&1 || echo "==> ERRO: chown falhou no storage!"
+    chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache 2>&1 || echo "==> ERRO: chmod falhou no storage!"
+
+    # Garantir que o diretorio de logs existe e tem permissao
+    mkdir -p /var/www/html/storage/logs
+    mkdir -p /var/www/html/storage/framework/sessions
+    mkdir -p /var/www/html/storage/framework/views
+    mkdir -p /var/www/html/storage/framework/cache/data
+
+    # Criar arquivos de log com permissoes corretas
+    touch /var/www/html/storage/logs/laravel.log
+    touch /var/www/html/storage/logs/php-errors.log
+    chown www:www /var/www/html/storage/logs/laravel.log /var/www/html/storage/logs/php-errors.log
+    chmod 664 /var/www/html/storage/logs/laravel.log /var/www/html/storage/logs/php-errors.log
+
+    # Criar diretorios de upload que o app precisa
+    mkdir -p /var/www/html/storage/app/public/brands
+    mkdir -p /var/www/html/storage/app/public/ai-generated
+    mkdir -p /var/www/html/storage/app/public/email-templates
+    chown -R www:www /var/www/html/storage/app
+    chmod -R 775 /var/www/html/storage/app
+
+    # Verificar se o storage realmente ficou gravavel
+    TEST_FILE="/var/www/html/storage/logs/.perm-test"
+    if su-exec www:www touch "$TEST_FILE" 2>/dev/null; then
+        rm -f "$TEST_FILE"
+        echo "==> Permissoes de storage: OK"
+    else
+        echo "==> ALERTA: storage NAO gravavel pelo usuario www! Tentando chmod 777..."
+        chmod -R 777 /var/www/html/storage 2>/dev/null || true
+    fi
 
     echo "==> [app] Aguardando MySQL..."
     MAX_TRIES=30
@@ -93,5 +101,15 @@ if [ "$1" = "php-fpm" ]; then
     exec "$@"
 fi
 
-# Para outros processos (worker, scheduler), rodar como www
+# =====================================================
+# Worker / scheduler: setup MÍNIMO e barato. O container app já fez o
+# setup pesado do volume compartilhado; aqui só garantimos que os
+# diretórios de log existem (idempotente, rápido) para o caso de o
+# worker subir antes do app numa inicialização a frio.
+# =====================================================
+mkdir -p /var/www/html/storage/logs \
+         /var/www/html/storage/framework/cache/data \
+         2>/dev/null || true
+
+# Rodar como www (sem chown -R recursivo pesado a cada reciclagem)
 exec su-exec www:www "$@"
