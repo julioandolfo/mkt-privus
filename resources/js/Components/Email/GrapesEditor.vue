@@ -85,6 +85,43 @@ async function initEditor() {
             ],
         },
 
+        // Asset Manager: TODA imagem inserida (arrastar, colar, dialog, duplo
+        // clique no placeholder) faz UPLOAD para o servidor e usa a URL
+        // hospedada. Sem o uploadFile abaixo, o GrapesJS embute a imagem como
+        // data URI base64 — que SendPulse/Gmail não renderizam, e a tag <img>
+        // vaza como texto cru no email (incidente reportado). Aqui resolvemos
+        // na ORIGEM: nunca gera base64 no html_content.
+        assetManager: {
+            uploadName: 'file',
+            autoAdd: true,
+            // Callback custom porque nosso endpoint usa campo "file" (singular)
+            // e responde { data: { src, name } } — formato diferente do default
+            // do GrapesJS.
+            async uploadFile(e) {
+                const files = e.dataTransfer ? e.dataTransfer.files : e.target.files;
+                if (!files || !files.length) return;
+
+                for (const file of Array.from(files)) {
+                    if (!file.type.startsWith('image/')) continue;
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    try {
+                        const resp = await axios.post(route('email.editor.upload-asset'), formData, {
+                            headers: { 'Content-Type': 'multipart/form-data' },
+                        });
+                        if (resp.data?.data?.src && editor) {
+                            editor.AssetManager.add({
+                                src: resp.data.data.src,
+                                name: resp.data.data.name,
+                            });
+                        }
+                    } catch (err) {
+                        alert('Erro no upload da imagem: ' + (err.response?.data?.message || err.message));
+                    }
+                }
+            },
+        },
+
         // Blocos padrão de email
         blockManager: {
             appendTo: '#gjs-blocks-container',
