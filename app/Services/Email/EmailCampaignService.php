@@ -427,6 +427,14 @@ class EmailCampaignService
             'html_length' => $originalLength,
         ]);
 
+        // CRÍTICO: extrair imagens embutidas como data URI (data:image/...;base64,...)
+        // para arquivos hospedados no storage, trocando o src por URL absoluta.
+        // SendPulse (e a maioria dos clientes) NÃO renderiza data URI em email —
+        // o resultado é a tag <img> aparecendo como texto cru no destinatário
+        // (incidente reportado). Roda ANTES de tudo para que a data URI gigante
+        // não passe pelo inliner de CSS nem infle o resto do processamento.
+        $html = $this->extractDataUriImages($html);
+
         // Inline CSS (<style> no <head> → atributos style="" em cada elemento)
         // Necessário porque clientes de email (Gmail, Outlook) removem <head>/<style>
         $html = $this->inlineCss($html);
@@ -537,6 +545,67 @@ class EmailCampaignService
      * Garante que todas as imagens tenham URLs absolutas (não base64)
      * Provedores como SendPulse removem imagens base64 do HTML
      */
+    /**
+     * Extrai imagens embutidas como data URI (data:image/...;base64,...) para
+     * arquivos hospedados no storage público e troca o src pela URL absoluta.
+     *
+     * Por que: clientes de email e provedores (SendPulse, Gmail, Outlook) não
+     * renderizam data URI inline — a imagem some ou, pior, a tag <img> vaza
+     * como texto cru no email (incidente reportado). Hospedar a imagem e usar
+     * uma URL http(s) normal é a única forma confiável.
+     *
+     * Idempotente: o nome do arquivo é o md5 do binário, então a mesma imagem
+     * (reusada entre contatos/campanhas) é gravada uma única vez no disco.
+     */
+    private function extractDataUriImages(string $html): string
+    {
+        if (empty($html) || stripos($html, 'data:image') === false) {
+            return $html;
+        }
+
+        $appUrl = rtrim(config('app.url'), '/');
+        $disk = \Illuminate\Support\Facades\Storage::disk('public');
+        $converted = 0;
+        $failed = 0;
+
+        // src="data:image/png;base64,...."  (aspas simples ou duplas)
+        $pattern = '/src=(["\'])data:image\/([a-zA-Z0-9.+-]+);base64,([^"\']+)\1/i';
+
+        $result = preg_replace_callback($pattern, function ($m) use ($appUrl, $disk, &$converted, &$failed) {
+            $mime = strtolower($m[2]);
+            $binary = base64_decode($m[3], true);
+
+            if ($binary === false || strlen($binary) === 0) {
+                $failed++;
+                return $m[0]; // não decodificou — deixa intacto
+            }
+
+            $ext = match ($mime) {
+                'jpeg', 'jpg' => 'jpg',
+                'png'         => 'png',
+                'gif'         => 'gif',
+                'webp'        => 'webp',
+                'svg+xml'     => 'svg',
+                default       => 'png',
+            };
+
+            $path = 'email-inline/' . md5($binary) . '.' . $ext;
+            if (!$disk->exists($path)) {
+                $disk->put($path, $binary);
+            }
+
+            $converted++;
+            return 'src="' . $appUrl . '/storage/' . $path . '"';
+        }, $html);
+
+        SystemLog::info('email', 'render.data_uri_extracted', "Imagens data URI convertidas para URL hospedada", [
+            'converted' => $converted,
+            'failed' => $failed,
+        ]);
+
+        return $result ?? $html;
+    }
+
     private function ensureAbsoluteImageUrls(string $html): string
     {
         if (empty($html)) {
