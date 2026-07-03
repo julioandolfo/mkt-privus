@@ -58,25 +58,39 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
         sockets
 
 # Instalar Redis extension
-# Versão fixa pra não pegar lançamentos novos que ocasionalmente quebram
-# o build em PHP 8.3-alpine (deploy 22/06 falhou exatamente por isso).
-# 6.1.0 é estável e suporta PHP 8.0-8.4.
-# `printf "\n"` responde "default" a qualquer prompt interativo do pecl;
-# `pecl channel-update` refresca o índice (defesa contra cache stale).
-RUN pecl channel-update pecl.php.net \
-    && printf "\n" | pecl install -o -f redis-6.1.0 \
-    && docker-php-ext-enable redis \
-    && rm -rf /tmp/pear
+# Versão fixa 6.1.0 (estável, PHP 8.0-8.4) como PRIMÁRIA, mas com
+# resiliência: o pecl.php.net tem blips de rede intermitentes no momento
+# do build (deploy 28/06 quebrou aqui SEM mudança de código; o de 27/06
+# com o MESMO Dockerfile passou — falha transitória clássica).
+# Estratégia: refresca o canal, tenta 6.1.0 duas vezes (retry de rede
+# com pausa) e, por último, cai para "latest" (que sempre existe no
+# índice) — assim um blip ou uma versão sumida não trava o deploy.
+# `printf "\n"` responde default a prompt interativo do pecl.
+RUN set -eux; \
+    pecl channel-update pecl.php.net || true; \
+    ok=0; \
+    for target in redis-6.1.0 redis-6.1.0 redis; do \
+        if printf "\n" | pecl install -o -f "$target"; then ok=1; break; fi; \
+        echo ">> pecl redis ($target) falhou, aguardando 5s..."; sleep 5; \
+    done; \
+    [ "$ok" = "1" ]; \
+    docker-php-ext-enable redis; \
+    rm -rf /tmp/pear
 
 # Instalar Imagick extension (para conversao de imagens via PHP)
-# Versão fixa 3.8.0: foi a primeira release com suporte OFICIAL a
-# ImageMagick 7 (o Alpine atual instala IM 7.1.x). A 3.7.0 que tentei
-# antes só suporta IM6 e falha em compile-time aqui (build 23/06 quebrou
-# em exit 1 nesta linha exata). 3.8.0+ é estável e era a versão "latest"
-# que estava sendo puxada nos deploys que funcionavam antes.
-RUN printf "\n" | pecl install -o -f imagick-3.8.0 \
-    && docker-php-ext-enable imagick \
-    && rm -rf /tmp/pear
+# Versão fixa 3.8.0: primeira release com suporte OFICIAL a ImageMagick 7
+# (o Alpine atual instala IM 7.1.x; a 3.7.0 só suporta IM6 e quebra o
+# compile). Mesma estratégia de resiliência do redis: retry + fallback
+# para latest, para sobreviver a blips do pecl.php.net.
+RUN set -eux; \
+    ok=0; \
+    for target in imagick-3.8.0 imagick-3.8.0 imagick; do \
+        if printf "\n" | pecl install -o -f "$target"; then ok=1; break; fi; \
+        echo ">> pecl imagick ($target) falhou, aguardando 5s..."; sleep 5; \
+    done; \
+    [ "$ok" = "1" ]; \
+    docker-php-ext-enable imagick; \
+    rm -rf /tmp/pear
 
 # Instalar Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
