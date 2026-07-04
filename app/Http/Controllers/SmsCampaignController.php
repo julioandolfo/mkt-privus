@@ -104,6 +104,34 @@ class SmsCampaignController extends Controller
 
         $brandId = auth()->user()?->current_brand_id;
 
+        // Garante que provider, template e listas pertencem à marca ativa.
+        // Os models usam BelongsToBrand, então as queries abaixo já são escopadas
+        // pela marca atual — um ID de outro tenant simplesmente não é encontrado.
+        abort_unless(
+            EmailProvider::whereKey($validated['email_provider_id'])->exists(),
+            403,
+            'Provedor inválido para esta marca.'
+        );
+
+        if (!empty($validated['sms_template_id'])) {
+            abort_unless(
+                SmsTemplate::whereKey($validated['sms_template_id'])->exists(),
+                403,
+                'Template inválido para esta marca.'
+            );
+        }
+
+        $requestedListIds = array_merge(
+            $validated['list_ids'],
+            $validated['exclude_list_ids'] ?? []
+        );
+        $ownedListCount = EmailList::whereKey($requestedListIds)->count();
+        abort_unless(
+            $ownedListCount === count(array_unique($requestedListIds)),
+            403,
+            'Uma ou mais listas não pertencem a esta marca.'
+        );
+
         $campaign = SmsCampaign::create([
             'brand_id' => $brandId,
             'user_id' => Auth::id(),

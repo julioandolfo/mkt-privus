@@ -38,13 +38,13 @@ class AnalyticsController extends Controller
     public function index(Request $request)
     {
         $brandFilter = $request->get('brand_id', 'all');
-        $brands = Brand::orderBy('name')->get(['id', 'name']);
+        $brands = $request->user()->brands()->orderBy('name')->get(['brands.id', 'brands.name']);
 
         if ($brandFilter === 'all' || $brandFilter === null) {
             $brandId = null;
             $brand = null;
         } else {
-            $brand = Brand::find($brandFilter);
+            $brand = $request->user()->brands()->find($brandFilter);
             $brandId = $brand?->id;
         }
 
@@ -121,7 +121,7 @@ class AnalyticsController extends Controller
         if ($brandFilter === 'all' || $brandFilter === null) {
             $brand = null;
         } else {
-            $brand = Brand::find($brandFilter);
+            $brand = $request->user()->brands()->find($brandFilter);
         }
 
         // Carregar TODAS as conexões (global) ou filtrar por marca
@@ -180,7 +180,7 @@ class AnalyticsController extends Controller
             }
         }
 
-        $brands = Brand::orderBy('name')->get(['id', 'name']);
+        $brands = $request->user()->brands()->orderBy('name')->get(['brands.id', 'brands.name']);
 
         // Investimentos manuais (global ou por marca)
         $manualEntries = ManualAdEntry::when($brand, fn($q) => $q->where('brand_id', $brand->id))
@@ -978,7 +978,9 @@ class AnalyticsController extends Controller
             ]);
 
             if ($brandId) {
-                $brand = Brand::findOrFail($brandId);
+                // Só permite vincular a uma marca do próprio usuário (evita mover
+                // conexão para marca de outro tenant).
+                $brand = $request->user()->brands()->findOrFail($brandId);
                 $connection->update(['brand_id' => $brand->id]);
 
                 // Atualizar data_points vinculados a esta conexao
@@ -1113,6 +1115,10 @@ class AnalyticsController extends Controller
             return back()->with('error', 'Nenhuma marca selecionada.');
         }
 
+        // Garante que a marca pertence ao usuário (evita sincronizar/recalcular
+        // dados de outro tenant).
+        abort_unless($request->user()->brands()->whereKey($brandId)->exists(), 403);
+
         $startDate = $request->get('start_date', now()->subDays(30)->format('Y-m-d'));
         $endDate = $request->get('end_date', now()->format('Y-m-d'));
 
@@ -1151,7 +1157,9 @@ class AnalyticsController extends Controller
     public function website(Request $request)
     {
         $brandId = $request->get('brand_id') ?? session('active_brand_id');
-        $brand = $brandId ? Brand::find($brandId) : Brand::first();
+        $brand = $brandId
+            ? $request->user()->brands()->find($brandId)
+            : $request->user()->brands()->orderBy('name')->first();
 
         $endDate = $request->get('end_date', now()->format('Y-m-d'));
         $startDate = $request->get('start_date', now()->subDays(29)->format('Y-m-d'));
@@ -1216,7 +1224,9 @@ class AnalyticsController extends Controller
     public function ads(Request $request)
     {
         $brandId = $request->get('brand_id') ?? session('active_brand_id');
-        $brand = $brandId ? Brand::find($brandId) : Brand::first();
+        $brand = $brandId
+            ? $request->user()->brands()->find($brandId)
+            : $request->user()->brands()->orderBy('name')->first();
 
         $endDate = $request->get('end_date', now()->format('Y-m-d'));
         $startDate = $request->get('start_date', now()->subDays(29)->format('Y-m-d'));
@@ -1253,7 +1263,9 @@ class AnalyticsController extends Controller
     public function seo(Request $request)
     {
         $brandId = $request->get('brand_id') ?? session('active_brand_id');
-        $brand = $brandId ? Brand::find($brandId) : Brand::first();
+        $brand = $brandId
+            ? $request->user()->brands()->find($brandId)
+            : $request->user()->brands()->orderBy('name')->first();
 
         $endDate = $request->get('end_date', now()->subDays(2)->format('Y-m-d'));
         $startDate = $request->get('start_date', now()->subDays(31)->format('Y-m-d'));

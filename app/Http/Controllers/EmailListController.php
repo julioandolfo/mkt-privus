@@ -296,6 +296,10 @@ class EmailListController extends Controller
      */
     public function syncSource(EmailList $list, EmailListSource $source)
     {
+        // $list já é escopado pela marca ativa (BelongsToBrand); garantir que a
+        // fonte pertence a essa lista impede acesso cross-tenant via ID direto.
+        abort_unless($source->email_list_id === $list->id, 404);
+
         SyncEmailListSourceJob::dispatch($source->id);
         return back()->with('success', 'Sincronização iniciada em segundo plano.');
     }
@@ -305,6 +309,8 @@ class EmailListController extends Controller
      */
     public function removeSource(EmailList $list, EmailListSource $source)
     {
+        abort_unless($source->email_list_id === $list->id, 404);
+
         $source->delete();
         return back()->with('success', 'Fonte removida.');
     }
