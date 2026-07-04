@@ -22,10 +22,14 @@ class User extends Authenticatable implements MustVerifyEmail
         'password',
         'current_brand_id',
         'is_active',
-        'is_admin',
         'last_login_at',
         'last_login_ip',
     ];
+
+    // is_admin é um campo de privilégio e NÃO é mass-assignable de propósito.
+    // Defina-o explicitamente via forceFill()/atribuição direta em fluxos
+    // administrativos confiáveis (UserController, console), nunca a partir de
+    // input cru do usuário.
 
     protected $hidden = [
         'password',

@@ -152,6 +152,18 @@ class SmsCampaignService
         foreach ($contacts as $contact) {
             if (!$contact->phone) continue;
 
+            // Idempotência: se este contato já tem 'sent' nesta campanha, pula —
+            // evita reenvio (e recobrança) quando o job é reprocessado após
+            // timeout/erro (tries=3 sem essa checagem duplicava SMS e custo).
+            $alreadySent = SmsCampaignEvent::where('sms_campaign_id', $campaign->id)
+                ->where('email_contact_id', $contact->id)
+                ->where('event_type', 'sent')
+                ->exists();
+
+            if ($alreadySent) {
+                continue;
+            }
+
             try {
                 // Substituir merge tags por contato
                 $personalizedBody = $this->smsProvider->replaceMergeTags($baseBody, [
@@ -211,19 +223,22 @@ class SmsCampaignService
         // Atualizar stats da campanha
         $campaign->refreshStats();
 
-        // Verificar se a campanha foi totalmente processada
-        $totalProcessed = $campaign->events()->whereIn('event_type', ['sent', 'failed'])->count();
+        // Verificar se a campanha foi totalmente processada. Conta contatos
+        // DISTINTOS (não eventos) para não concluir cedo por duplicatas.
+        $totalProcessed = $campaign->events()
+            ->whereIn('event_type', ['sent', 'failed'])
+            ->distinct('email_contact_id')
+            ->count('email_contact_id');
+
         if ($totalProcessed >= $campaign->total_recipients) {
             $campaign->update([
                 'status' => 'sent',
                 'completed_at' => now(),
             ]);
 
-            SystemLog::create([
-                'level' => 'info',
-                'source' => 'sms_campaign',
-                'message' => "Campanha SMS '{$campaign->name}' concluída - {$results['sent']} enviados, {$results['failed']} falhas",
-                'context' => ['campaign_id' => $campaign->id, 'results' => $results],
+            SystemLog::info('sms', 'sms_campaign.completed', "Campanha SMS '{$campaign->name}' concluída - {$results['sent']} enviados, {$results['failed']} falhas", [
+                'campaign_id' => $campaign->id,
+                'results' => $results,
             ]);
         }
 

@@ -159,10 +159,11 @@ class PostizIntegrationController extends Controller
                 }
             }
 
-            // Marca como inativas contas Postiz cujo integration_id não veio mais na
-            // listagem (desconectadas no painel do Postiz). Sem filtro de brand porque
-            // cada API key do Postiz representa uma organização única.
+            // Marca como inativas as contas Postiz DESTA marca cujo integration_id
+            // não veio mais na listagem (desconectadas no painel do Postiz).
+            // Escopado por brand para não desativar contas de outros tenants.
             $deactivated = SocialAccount::postiz()
+                ->where('brand_id', $brand->id)
                 ->when(!empty($postizIds), fn($q) => $q->whereNotIn('postiz_integration_id', $postizIds))
                 ->where('is_active', true)
                 ->update(['is_active' => false]);

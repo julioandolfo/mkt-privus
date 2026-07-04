@@ -93,9 +93,10 @@ class ContentSuggestionController extends Controller
             abort(403);
         }
 
-        $scheduleNow = $request->boolean('schedule_now', false);
-
-        // Criar Post real a partir da sugestao
+        // Criar Post real a partir da sugestao. Sempre como Draft: não há data de
+        // agendamento nem contas selecionadas aqui, então marcar como Scheduled
+        // deixaria o post num limbo que nenhum cron consegue publicar (sem
+        // scheduled_at/PostSchedule). O usuário finaliza o agendamento no editor.
         $post = Post::create([
             'brand_id' => $brand->id,
             'user_id' => $request->user()->id,
@@ -104,7 +105,7 @@ class ContentSuggestionController extends Controller
             'hashtags' => $suggestion->hashtags,
             'platforms' => $suggestion->platforms,
             'type' => $suggestion->post_type,
-            'status' => $scheduleNow ? PostStatus::Scheduled : PostStatus::Draft,
+            'status' => PostStatus::Draft,
         ]);
 
         // Copiar imagem gerada pela IA (se existir) para PostMedia

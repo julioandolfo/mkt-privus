@@ -334,12 +334,13 @@ class BlogCalendarService
      */
     private function fetchUrlContent(string $url): ?string
     {
-        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+        if (empty($url) || !\App\Support\SafeUrl::isSafePublicUrl($url)) {
             return null;
         }
 
         try {
             $response = \Illuminate\Support\Facades\Http::timeout(10)
+                ->withOptions(['allow_redirects' => false])
                 ->withHeaders([
                     'User-Agent' => 'Mozilla/5.0 (compatible; PrivusBot/1.0)',
                     'Accept' => 'text/html',

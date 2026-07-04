@@ -110,13 +110,27 @@ class PostSchedule extends Model
             && $this->attempts < $this->max_attempts;
     }
 
-    public function markAsPublishing(): void
+    /**
+     * Reivindica o schedule para publicação de forma atômica. Só transiciona se
+     * ainda estiver em 'pending'/'failed' (uma única linha afetada), evitando que
+     * dois ciclos do scheduler ou o retry despachem PublishPostJob para o mesmo
+     * schedule ao mesmo tempo (posts duplicados). Retorna true se reivindicou.
+     */
+    public function markAsPublishing(): bool
     {
-        $this->update([
-            'status' => 'publishing',
-            'attempts' => $this->attempts + 1,
-            'last_attempted_at' => now(),
-        ]);
+        $claimed = static::whereKey($this->getKey())
+            ->whereIn('status', ['pending', 'failed'])
+            ->update([
+                'status' => 'publishing',
+                'attempts' => \Illuminate\Support\Facades\DB::raw('attempts + 1'),
+                'last_attempted_at' => now(),
+            ]);
+
+        if ($claimed) {
+            $this->refresh();
+        }
+
+        return (bool) $claimed;
     }
 
     public function markAsPublished(string $platformPostId, ?string $platformPostUrl = null): void

@@ -23,7 +23,9 @@ class OAuthDiscoveredAccount extends Model
 
     protected $casts = [
         'accounts' => 'array',
-        'token_data' => 'array',
+        // token_data guarda access/refresh tokens OAuth — criptografado em repouso
+        // (como em SocialAccount). Registros são transitórios (TTL ~30min).
+        'token_data' => 'encrypted:array',
         'expires_at' => 'datetime',
     ];
 

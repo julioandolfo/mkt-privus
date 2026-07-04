@@ -492,6 +492,12 @@ class MetricsController extends Controller
     public function removeEntry(Request $request, CustomMetric $metric, CustomMetricEntry $entry): RedirectResponse
     {
         $this->authorizeMetric($request, $metric);
+
+        // Garante que a entrada pertence à métrica informada (evita IDOR entre marcas)
+        if ($entry->custom_metric_id !== $metric->id) {
+            abort(404);
+        }
+
         $entry->delete();
 
         return redirect()->back()
@@ -594,6 +600,8 @@ class MetricsController extends Controller
 
     public function updateGoal(Request $request, MetricGoal $goal): RedirectResponse
     {
+        $this->authorizeGoal($request, $goal);
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'target_value' => 'required|numeric|min:0',
@@ -608,6 +616,8 @@ class MetricsController extends Controller
 
     public function destroyGoal(Request $request, MetricGoal $goal): RedirectResponse
     {
+        $this->authorizeGoal($request, $goal);
+
         $goal->delete();
 
         return back()->with('success', 'Meta removida.');
@@ -836,6 +846,19 @@ class MetricsController extends Controller
     private function authorizeMetric(Request $request, CustomMetric $metric): void
     {
         if ($metric->brand_id !== $request->user()->current_brand_id) {
+            abort(403, 'Acesso negado.');
+        }
+    }
+
+    /**
+     * MetricGoal não usa o global scope de marca (não tem coluna brand_id).
+     * A autorização é feita pela métrica-pai, que é escopada por BelongsToBrand.
+     */
+    private function authorizeGoal(Request $request, MetricGoal $goal): void
+    {
+        $metric = CustomMetric::withoutBrandScope()->find($goal->custom_metric_id);
+
+        if (!$metric || $metric->brand_id !== $request->user()->current_brand_id) {
             abort(403, 'Acesso negado.');
         }
     }

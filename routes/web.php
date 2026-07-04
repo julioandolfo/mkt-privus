@@ -144,8 +144,8 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
         Route::get('/{conversation}', [ChatController::class, 'show'])->name('show');
         Route::put('/{conversation}', [ChatController::class, 'update'])->name('update');
         Route::delete('/{conversation}', [ChatController::class, 'destroy'])->name('destroy');
-        Route::post('/{conversation}/message', [ChatController::class, 'sendMessage'])->name('message');
-        Route::post('/{conversation}/stream', [ChatController::class, 'streamMessage'])->name('stream');
+        Route::post('/{conversation}/message', [ChatController::class, 'sendMessage'])->middleware('throttle:ai')->name('message');
+        Route::post('/{conversation}/stream', [ChatController::class, 'streamMessage'])->middleware('throttle:ai')->name('stream');
     });
 
     // Metricas Customizadas
@@ -200,7 +200,8 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
             Route::post('/sync-metrics', [PostController::class, 'syncMetrics'])->name('sync-metrics');
         });
 
-        // Diagnóstico da API de imagem
+        // Diagnóstico da API de imagem — admin-only e com throttle: dispara uma
+        // chamada real (e cara) à OpenAI, não deve ficar aberto a qualquer usuário.
         Route::get('/test-image-api', function () {
             $apiKey = config('services.openai.api_key') ?: env('OPENAI_API_KEY');
             if (!$apiKey) return response()->json(['error' => 'OPENAI_API_KEY não configurada'], 500);
@@ -233,11 +234,11 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
                 'error' => $data['error'] ?? null,
                 'usage' => $data['usage'] ?? null,
             ]);
-        })->name('test-image-api');
+        })->middleware(['admin', 'throttle:3,1'])->name('test-image-api');
 
         // Geracao de conteudo com IA
-        Route::post('/generate', [PostController::class, 'generateContent'])->name('generate');
-        Route::post('/generate-complete', [PostController::class, 'generateCompletePost'])->name('generate-complete');
+        Route::post('/generate', [PostController::class, 'generateContent'])->middleware('throttle:ai')->name('generate');
+        Route::post('/generate-complete', [PostController::class, 'generateCompletePost'])->middleware('throttle:ai')->name('generate-complete');
 
         // Calendario
         Route::get('/calendar', [PostController::class, 'calendar'])->name('calendar.index');
@@ -246,9 +247,9 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
         // Calendario de Conteudo (AI)
         Route::prefix('calendar/content')->name('calendar.content.')->group(function () {
             Route::get('/items', [ContentCalendarController::class, 'items'])->name('items');
-            Route::post('/generate', [ContentCalendarController::class, 'generate'])->name('generate');
-            Route::post('/{item}/generate-post', [ContentCalendarController::class, 'generatePost'])->name('generate-post');
-            Route::post('/generate-all-posts', [ContentCalendarController::class, 'generateAllPosts'])->name('generate-all-posts');
+            Route::post('/generate', [ContentCalendarController::class, 'generate'])->middleware('throttle:ai')->name('generate');
+            Route::post('/{item}/generate-post', [ContentCalendarController::class, 'generatePost'])->middleware('throttle:ai')->name('generate-post');
+            Route::post('/generate-all-posts', [ContentCalendarController::class, 'generateAllPosts'])->middleware('throttle:ai')->name('generate-all-posts');
             Route::put('/{item}', [ContentCalendarController::class, 'update'])->name('update');
             Route::delete('/{item}', [ContentCalendarController::class, 'destroy'])->name('destroy');
             Route::post('/clear-period', [ContentCalendarController::class, 'clearPeriod'])->name('clear-period');
@@ -267,9 +268,9 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
             Route::get('/brand-dna', [ContentEngineV2Controller::class, 'getBrandDna'])->name('brand-dna');
 
             // Geração de Campanhas
-            Route::post('/generate-campaigns', [ContentEngineV2Controller::class, 'generateCampaigns'])->name('generate-campaigns');
-            Route::post('/generate-from-idea', [ContentEngineV2Controller::class, 'generateFromUserIdea'])->name('generate-from-idea');
-            Route::post('/regenerate-variant', [ContentEngineV2Controller::class, 'regenerateCampaignVariant'])->name('regenerate-variant');
+            Route::post('/generate-campaigns', [ContentEngineV2Controller::class, 'generateCampaigns'])->middleware('throttle:ai')->name('generate-campaigns');
+            Route::post('/generate-from-idea', [ContentEngineV2Controller::class, 'generateFromUserIdea'])->middleware('throttle:ai')->name('generate-from-idea');
+            Route::post('/regenerate-variant', [ContentEngineV2Controller::class, 'regenerateCampaignVariant'])->middleware('throttle:ai')->name('regenerate-variant');
 
             // Criação de Posts
             Route::post('/create-posts-from-campaign', [ContentEngineV2Controller::class, 'createPostsFromCampaign'])->name('create-posts');
@@ -278,7 +279,7 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
             Route::post('/natural-edit', [ContentEngineV2Controller::class, 'naturalEdit'])->name('natural-edit');
             Route::post('/apply-preset', [ContentEngineV2Controller::class, 'applyPreset'])->name('apply-preset');
             Route::post('/suggest-improvements', [ContentEngineV2Controller::class, 'suggestImprovements'])->name('suggest-improvements');
-            Route::post('/generate-variations', [ContentEngineV2Controller::class, 'generateVariations'])->name('generate-variations');
+            Route::post('/generate-variations', [ContentEngineV2Controller::class, 'generateVariations'])->middleware('throttle:ai')->name('generate-variations');
             Route::get('/preset-commands', [ContentEngineV2Controller::class, 'getPresetCommands'])->name('preset-commands');
 
             // Gerenciamento de Campanhas Geradas
@@ -297,7 +298,7 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
             Route::put('/rules/{rule}', [ContentRuleController::class, 'update'])->name('rules.update');
             Route::delete('/rules/{rule}', [ContentRuleController::class, 'destroy'])->name('rules.destroy');
             Route::post('/rules/{rule}/toggle', [ContentRuleController::class, 'toggle'])->name('rules.toggle');
-            Route::post('/rules/{rule}/generate', [ContentRuleController::class, 'generate'])->name('rules.generate');
+            Route::post('/rules/{rule}/generate', [ContentRuleController::class, 'generate'])->middleware('throttle:ai')->name('rules.generate');
 
             // Sugestões (Content Engine legado)
             Route::get('/suggestions', [ContentSuggestionController::class, 'index'])->name('suggestions.index');
@@ -305,7 +306,7 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
             Route::post('/suggestions/{suggestion}/reject', [ContentSuggestionController::class, 'reject'])->name('suggestions.reject');
             Route::put('/suggestions/{suggestion}', [ContentSuggestionController::class, 'update'])->name('suggestions.update');
             Route::post('/suggestions/bulk-approve', [ContentSuggestionController::class, 'bulkApprove'])->name('suggestions.bulk-approve');
-            Route::post('/suggestions/generate-smart', [ContentSuggestionController::class, 'generateSmart'])->name('suggestions.generate-smart');
+            Route::post('/suggestions/generate-smart', [ContentSuggestionController::class, 'generateSmart'])->middleware('throttle:ai')->name('suggestions.generate-smart');
         });
 
         // Redirecionamento da URL antiga V2 para a nova principal
@@ -487,10 +488,10 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
             Route::get('/{campaign}/edit', [EmailCampaignController::class, 'edit'])->name('edit');
             Route::put('/{campaign}', [EmailCampaignController::class, 'update'])->name('update');
             Route::delete('/{campaign}', [EmailCampaignController::class, 'destroy'])->name('destroy');
-            Route::post('/{campaign}/send', [EmailCampaignController::class, 'send'])->name('send');
+            Route::post('/{campaign}/send', [EmailCampaignController::class, 'send'])->middleware('throttle:campaign-send')->name('send');
             Route::post('/{campaign}/schedule', [EmailCampaignController::class, 'schedule'])->name('schedule');
             Route::post('/{campaign}/update-schedule', [EmailCampaignController::class, 'updateSchedule'])->name('update-schedule');
-            Route::post('/{campaign}/send-now', [EmailCampaignController::class, 'sendNow'])->name('send-now');
+            Route::post('/{campaign}/send-now', [EmailCampaignController::class, 'sendNow'])->middleware('throttle:campaign-send')->name('send-now');
             Route::post('/{campaign}/retry-failed', [EmailCampaignController::class, 'retryFailed'])->name('retry-failed');
             Route::post('/{campaign}/pause', [EmailCampaignController::class, 'pause'])->name('pause');
             Route::post('/{campaign}/cancel', [EmailCampaignController::class, 'cancel'])->name('cancel');
@@ -510,7 +511,7 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
             Route::put('/saved-blocks/{block}', [EmailEditorController::class, 'updateSavedBlock'])->name('update-saved-block');
             Route::delete('/saved-blocks/{block}', [EmailEditorController::class, 'destroySavedBlock'])->name('delete-saved-block');
             Route::get('/woo-products', [EmailEditorController::class, 'wooProducts'])->name('woo-products');
-            Route::post('/generate-ai', [EmailEditorController::class, 'generateWithAI'])->name('generate-ai');
+            Route::post('/generate-ai', [EmailEditorController::class, 'generateWithAI'])->middleware('throttle:ai')->name('generate-ai');
             // Processamento de imagens externas
             Route::post('/process-images', [EmailEditorController::class, 'processExternalImages'])->name('process-images');
             Route::post('/download-image', [EmailEditorController::class, 'downloadExternalImage'])->name('download-image');
@@ -522,7 +523,7 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
             Route::post('/{suggestion}/accept', [EmailAiSuggestionController::class, 'accept'])->name('accept');
             Route::post('/{suggestion}/reject', [EmailAiSuggestionController::class, 'reject'])->name('reject');
             Route::post('/{suggestion}/create-campaign', [EmailAiSuggestionController::class, 'createCampaign'])->name('create-campaign');
-            Route::post('/generate', [EmailAiSuggestionController::class, 'generate'])->name('generate');
+            Route::post('/generate', [EmailAiSuggestionController::class, 'generate'])->middleware('throttle:ai')->name('generate');
         });
     });
 
@@ -547,7 +548,7 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
             Route::post('/', [SmsCampaignController::class, 'store'])->name('store');
             Route::get('/{campaign}', [SmsCampaignController::class, 'show'])->name('show');
             Route::delete('/{campaign}', [SmsCampaignController::class, 'destroy'])->name('destroy');
-            Route::post('/{campaign}/send', [SmsCampaignController::class, 'send'])->name('send');
+            Route::post('/{campaign}/send', [SmsCampaignController::class, 'send'])->middleware('throttle:campaign-send')->name('send');
             Route::post('/{campaign}/schedule', [SmsCampaignController::class, 'schedule'])->name('schedule');
             Route::post('/{campaign}/pause', [SmsCampaignController::class, 'pause'])->name('pause');
             Route::post('/{campaign}/cancel', [SmsCampaignController::class, 'cancel'])->name('cancel');
@@ -567,9 +568,9 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
         Route::post('/', [BlogController::class, 'store'])->name('store');
 
         // Geração com IA (AJAX) — ANTES das rotas com {article}
-        Route::post('/generate', [BlogController::class, 'generate'])->name('generate');
-        Route::post('/generate-cover', [BlogController::class, 'generateCover'])->name('generate-cover');
-        Route::post('/generate-topics', [BlogController::class, 'generateTopics'])->name('generate-topics');
+        Route::post('/generate', [BlogController::class, 'generate'])->middleware('throttle:ai')->name('generate');
+        Route::post('/generate-cover', [BlogController::class, 'generateCover'])->middleware('throttle:ai')->name('generate-cover');
+        Route::post('/generate-topics', [BlogController::class, 'generateTopics'])->middleware('throttle:ai')->name('generate-topics');
         Route::post('/upload-cover', [BlogController::class, 'uploadCover'])->name('upload-cover');
 
         // Categorias — ANTES das rotas com {article}
@@ -596,9 +597,9 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
         // Calendário editorial — ANTES das rotas com {article}
         Route::get('/calendar', [BlogController::class, 'calendar'])->name('calendar');
         Route::get('/calendar/items', [BlogController::class, 'calendarItems'])->name('calendar.items');
-        Route::post('/calendar/generate', [BlogController::class, 'generateCalendar'])->name('calendar.generate');
-        Route::post('/calendar/generate-article/{item}', [BlogController::class, 'generateArticleFromItem'])->name('calendar.generate-article');
-        Route::post('/calendar/generate-all-articles', [BlogController::class, 'generateAllArticles'])->name('calendar.generate-all-articles');
+        Route::post('/calendar/generate', [BlogController::class, 'generateCalendar'])->middleware('throttle:ai')->name('calendar.generate');
+        Route::post('/calendar/generate-article/{item}', [BlogController::class, 'generateArticleFromItem'])->middleware('throttle:ai')->name('calendar.generate-article');
+        Route::post('/calendar/generate-all-articles', [BlogController::class, 'generateAllArticles'])->middleware('throttle:ai')->name('calendar.generate-all-articles');
         Route::put('/calendar/items/{item}', [BlogController::class, 'updateCalendarItem'])->name('calendar.items.update');
         Route::delete('/calendar/items/{item}', [BlogController::class, 'destroyCalendarItem'])->name('calendar.items.destroy');
         Route::post('/calendar/approve-batch', [BlogController::class, 'approveCalendarBatch'])->name('calendar.approve-batch');
@@ -613,7 +614,7 @@ Route::middleware(['auth', 'verified', 'subscribed'])->group(function () {
         Route::delete('/{article}', [BlogController::class, 'destroy'])->name('destroy');
         Route::post('/{article}/publish', [BlogController::class, 'publish'])->name('publish');
         Route::post('/{article}/approve', [BlogController::class, 'approve'])->name('approve');
-        Route::post('/{article}/generate-seo', [BlogController::class, 'generateSeo'])->name('generate-seo');
+        Route::post('/{article}/generate-seo', [BlogController::class, 'generateSeo'])->middleware('throttle:ai')->name('generate-seo');
     });
 
     // ===== LINKS (BIO LINK PAGES) =====

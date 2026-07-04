@@ -470,6 +470,8 @@ function connectOAuth(platform: string) {
 
 // Listener para mensagens do popup OAuth
 function handleOAuthMessage(event: MessageEvent) {
+    // Só aceita mensagens da própria origem (popup roda no mesmo domínio).
+    if (event.origin !== window.location.origin) return;
     if (event.data?.type !== 'oauth_callback') return;
 
     connectingPlatform.value = null;

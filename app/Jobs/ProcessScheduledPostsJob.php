@@ -37,9 +37,13 @@ class ProcessScheduledPostsJob implements ShouldQueue
 
         Log::info("Autopilot: Encontrados {$schedules->count()} schedules para publicação");
 
+        $dispatched = 0;
         foreach ($schedules as $schedule) {
-            // Marcar como "publishing" para evitar reprocessamento
-            $schedule->markAsPublishing();
+            // Reivindica atomicamente; se outro ciclo/worker já pegou este
+            // schedule, markAsPublishing retorna false e não despachamos de novo.
+            if (!$schedule->markAsPublishing()) {
+                continue;
+            }
 
             // Atualizar status do post para Publishing se estiver Scheduled
             $post = $schedule->post;
@@ -50,8 +54,9 @@ class ProcessScheduledPostsJob implements ShouldQueue
             // Despachar job de publicacao individual
             PublishPostJob::dispatch($schedule)
                 ->onQueue('autopilot');
+            $dispatched++;
         }
 
-        Log::info("Autopilot: {$schedules->count()} jobs de publicação despachados");
+        Log::info("Autopilot: {$dispatched} jobs de publicação despachados");
     }
 }

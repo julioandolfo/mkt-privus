@@ -74,10 +74,13 @@ class UserController extends Controller
             'email' => $validated['email'],
             'password' => $validated['password'],
             'is_active' => $validated['is_active'] ?? true,
-            'is_admin' => $validated['is_admin'] ?? false,
         ]);
 
-        $user->forceFill(['email_verified_at' => now()])->save();
+        // is_admin não é mass-assignable; setar explicitamente (rota admin-only).
+        $user->forceFill([
+            'is_admin' => $validated['is_admin'] ?? false,
+            'email_verified_at' => now(),
+        ])->save();
 
         return back()->with('success', "Usuário \"{$user->name}\" criado com sucesso.");
     }

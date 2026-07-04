@@ -146,6 +146,12 @@ class EmailListSyncService
             }
         }
 
+        // Anti-SSRF: recusa hosts internos/privados também no sync (o host foi
+        // fornecido pelo usuário e fica salvo em config).
+        if (!\App\Support\SafeUrl::isSafePublicHost($config['host'])) {
+            return ['success' => false, 'error' => 'Host não permitido (endereço interno).'];
+        }
+
         try {
             $pdo = new \PDO(
                 "mysql:host={$config['host']};port={$config['port']};dbname={$config['database']};charset=utf8mb4",

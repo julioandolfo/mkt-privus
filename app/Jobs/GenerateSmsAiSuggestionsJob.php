@@ -32,7 +32,9 @@ class GenerateSmsAiSuggestionsJob implements ShouldQueue
         }
 
         $total = 0;
-        $brands = Brand::all();
+        // Só marcas ativas com membros (consistente com os demais jobs de IA);
+        // Brand::all() incluía marcas inativas, gastando IA à toa.
+        $brands = Brand::where('is_active', true)->has('users')->get();
 
         foreach ($brands as $brand) {
             try {
@@ -57,13 +59,15 @@ class GenerateSmsAiSuggestionsJob implements ShouldQueue
         // Montar prompt
         $prompt = $this->buildPrompt($brand, $context);
 
-        $response = Http::timeout(90)->post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}",
-            [
-                'contents' => [['parts' => [['text' => $prompt]]]],
-                'generationConfig' => ['temperature' => 0.8, 'maxOutputTokens' => 3000],
-            ]
-        );
+        $response = Http::timeout(90)
+            ->withHeaders(['x-goog-api-key' => $apiKey])
+            ->post(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                [
+                    'contents' => [['parts' => [['text' => $prompt]]]],
+                    'generationConfig' => ['temperature' => 0.8, 'maxOutputTokens' => 3000],
+                ]
+            );
 
         if (!$response->successful()) {
             SystemLog::error('sms', 'ai_suggestion.api_error', 'Gemini API falhou para SMS', [

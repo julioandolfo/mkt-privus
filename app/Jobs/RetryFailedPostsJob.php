@@ -37,13 +37,19 @@ class RetryFailedPostsJob implements ShouldQueue
 
         Log::info("Autopilot Retry: Encontrados {$retryable->count()} schedules para re-tentativa");
 
+        $dispatched = 0;
         foreach ($retryable as $schedule) {
-            $schedule->markAsPublishing();
+            // Reivindicação atômica: evita corrida com o ProcessScheduledPostsJob
+            // ou com outro ciclo de retry re-despachando o mesmo schedule.
+            if (!$schedule->markAsPublishing()) {
+                continue;
+            }
 
             PublishPostJob::dispatch($schedule)
                 ->onQueue('autopilot');
+            $dispatched++;
         }
 
-        Log::info("Autopilot Retry: {$retryable->count()} jobs re-despachados");
+        Log::info("Autopilot Retry: {$dispatched} jobs re-despachados");
     }
 }

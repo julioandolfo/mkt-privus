@@ -160,7 +160,16 @@ class EmailImageService
 
             // Não baixa imagens do próprio domínio (já estão locais)
             $appUrl = config('app.url');
-            if (str_starts_with($url, $appUrl)) {
+            $isLocal = str_starts_with($url, $appUrl);
+
+            // Anti-SSRF: URLs externas devem ser http/https com host público.
+            // (A cópia local acima é liberada porque não faz requisição de rede.)
+            if (!$isLocal && !\App\Support\SafeUrl::isSafePublicUrl($url)) {
+                SystemLog::warning('email', 'image.blocked_url', "URL externa bloqueada (SSRF)", ['url' => $url]);
+                return null;
+            }
+
+            if ($isLocal) {
                 $relativePath = str_replace($appUrl . '/storage/', '', $url);
                 if (Storage::disk('public')->exists($relativePath)) {
                     // Verifica se é SVG e precisa de conversão

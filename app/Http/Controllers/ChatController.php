@@ -221,8 +221,23 @@ class ChatController extends Controller
     {
         $this->authorizeConversation($request, $conversation);
 
-        $content      = $request->input('content');
-        $modelSetting = $request->input('model', $conversation->model);
+        // Valida a entrada ANTES de persistir/resolver modelo — antes um content
+        // nulo/gigante ou um model inválido causava 500 e deixava a mensagem do
+        // usuário órfã no histórico (reenviada e duplicada na tentativa seguinte).
+        $validated = $request->validate([
+            'content' => 'required|string|max:50000',
+            'model'   => 'nullable|string',
+        ]);
+
+        $content      = $validated['content'];
+        $modelSetting = $validated['model'] ?? $conversation->model;
+
+        // Modelo inválido cai para o padrão da conversa (ou 'auto') em vez de
+        // estourar ValueError em AIModel::from mais abaixo.
+        if ($modelSetting !== 'auto' && AIModel::tryFrom($modelSetting) === null) {
+            $fallback = $conversation->model;
+            $modelSetting = ($fallback && AIModel::tryFrom($fallback)) ? $fallback : 'auto';
+        }
 
         // Salvar mensagem do usuario
         $conversation->messages()->create([

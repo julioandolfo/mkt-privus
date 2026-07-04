@@ -23,11 +23,20 @@ class GenerateCalendarPostsJob implements ShouldQueue
     public int $timeout = 300; // 5 minutos
     public int $tries = 1;
 
+    /**
+     * @param int|null $brandId Quando informado, processa só as pautas dessa
+     *   marca ("executar agora" de uma marca). Null = todas (run agendado).
+     */
+    public function __construct(public ?int $brandId = null)
+    {
+    }
+
     public function handle(ContentCalendarService $calendarService): void
     {
         // Buscar pautas pendentes dos próximos 2 dias (para dar tempo de aprovar)
         // Ignora pautas com batch_status = 'draft' (ainda nao aprovadas)
         $items = ContentCalendarItem::where('status', 'pending')
+            ->when($this->brandId, fn($q) => $q->where('brand_id', $this->brandId))
             ->where(fn($q) => $q->whereNull('batch_status')->orWhere('batch_status', 'approved'))
             ->where('scheduled_date', '>=', now()->toDateString())
             ->where('scheduled_date', '<=', now()->addDays(2)->toDateString())

@@ -346,7 +346,9 @@ class InstagramPublisher extends AbstractPublisher
         }
 
         $postId  = $lastResponse->json('id');
-        $postUrl = "https://www.instagram.com/p/{$postId}/";
+        // O id retornado é o media ID numérico, não o shortcode — montar
+        // /p/{mediaId}/ gera link quebrado. Buscar o permalink real da Graph API.
+        $postUrl = $this->fetchPermalink($postId, $token);
 
         SystemLog::info('social', 'ig.publish.success', "Instagram: post #{$post->id} publicado com sucesso", [
             'post_id'          => $post->id,
@@ -355,6 +357,31 @@ class InstagramPublisher extends AbstractPublisher
         ]);
 
         return PublishResult::ok($postId, $postUrl);
+    }
+
+    /**
+     * Busca o permalink real de uma mídia publicada. Cai para a URL baseada no
+     * media ID se a Graph API não responder (link ainda melhor que nada).
+     */
+    private function fetchPermalink(string $mediaId, string $token): string
+    {
+        try {
+            $response = Http::timeout(10)->get(self::BASE_URL . "/{$mediaId}", [
+                'fields'       => 'permalink',
+                'access_token' => $token,
+            ]);
+
+            $permalink = $response->json('permalink');
+            if ($response->successful() && $permalink) {
+                return $permalink;
+            }
+        } catch (\Throwable $e) {
+            SystemLog::warning('social', 'ig.permalink.error', "Instagram: falha ao buscar permalink: {$e->getMessage()}", [
+                'media_id' => $mediaId,
+            ]);
+        }
+
+        return "https://www.instagram.com/p/{$mediaId}/";
     }
 
     // ===== Meta CDN Fallback =====
