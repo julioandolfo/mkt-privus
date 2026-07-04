@@ -87,6 +87,16 @@ class SmsCampaignController extends Controller
 
     public function store(Request $request)
     {
+        // scheduled_at vem no fuso local (display_timezone, sem offset); normaliza
+        // para UTC antes de validar/gravar (app.timezone é UTC, não BRT).
+        if ($request->filled('scheduled_at')) {
+            $request->merge([
+                'scheduled_at' => \Carbon\Carbon::parse($request->input('scheduled_at'), config('app.display_timezone'))
+                    ->utc()
+                    ->toDateTimeString(),
+            ]);
+        }
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email_provider_id' => 'required|exists:email_providers,id',
@@ -142,7 +152,7 @@ class SmsCampaignController extends Controller
             'sender_name' => $validated['sender_name'],
             'status' => !empty($validated['scheduled_at']) ? 'scheduled' : 'draft',
             'scheduled_at' => !empty($validated['scheduled_at'])
-                ? \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'))
+                ? \Carbon\Carbon::parse($validated['scheduled_at']) // já normalizado para UTC
                 : null,
             'settings' => $validated['settings'] ?? [],
             'tags' => $validated['tags'] ?? [],

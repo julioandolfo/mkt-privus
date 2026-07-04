@@ -292,7 +292,10 @@ class BlogArticle extends Model
         $original = $slug;
         $counter = 1;
 
-        while (static::withTrashed()
+        // Sem o escopo de marca: o índice unique de slug é GLOBAL, então a
+        // checagem precisa enxergar todas as marcas — senão duas marcas geram o
+        // mesmo slug e o INSERT estoura QueryException (23000).
+        while (static::withoutGlobalScope('brand')->withTrashed()
             ->where('slug', $slug)
             ->when($excludeId, fn($q) => $q->where('id', '!=', $excludeId))
             ->exists()

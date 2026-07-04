@@ -146,28 +146,24 @@ Schedule::call(function () {
             return;
         }
 
-        // Detectar campanha travada: sem jobs na fila e sem atividade há mais de 30 min
+        // Detectar campanha travada: sem atividade há mais de 30 min e ainda com
+        // pendentes. (A fila roda em Redis; a antiga consulta a DB::table('jobs')
+        // era sempre 0 e o diffInMinutes sem 'absolute' vinha negativo no Carbon 3,
+        // então a detecção nunca disparava.)
         if ($campaign->started_at && $campaign->started_at->lt(now()->subMinutes(30))) {
-            $jobsNaFila = \Illuminate\Support\Facades\DB::table('jobs')
-                ->where('queue', 'email')
-                ->where('payload', 'like', "%\"campaignId\":{$campaign->id}%")
-                ->where('available_at', '<=', now()->addMinutes(5)->timestamp)
-                ->count();
-
             $ultimoEvento = $campaign->events()->latest('occurred_at')->first();
             $minutesSemAtividade = $ultimoEvento
-                ? now()->diffInMinutes($ultimoEvento->occurred_at)
+                ? now()->diffInMinutes($ultimoEvento->occurred_at, true)
                 : 9999;
 
-            if ($jobsNaFila === 0 && $minutesSemAtividade > 30 && $processed < $queued) {
-                \App\Models\SystemLog::error('email', 'campaign.stuck_detected', "Campanha TRAVADA detectada pelo scheduler", [
+            if ($minutesSemAtividade > 30 && $processed < $queued) {
+                \App\Models\SystemLog::warning('email', 'campaign.stuck_detected', "Campanha possivelmente travada detectada pelo scheduler", [
                     'campaign_id'          => $campaign->id,
                     'campaign_name'        => $campaign->name,
                     'queued'               => $queued,
                     'processed'            => $processed,
                     'remaining'            => $queued - $processed,
                     'minutes_sem_atividade' => $minutesSemAtividade,
-                    'jobs_na_fila'         => $jobsNaFila,
                 ]);
             }
         }

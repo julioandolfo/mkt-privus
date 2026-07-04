@@ -70,6 +70,8 @@ class ContentRuleController extends Controller
      */
     public function update(Request $request, ContentRule $rule): RedirectResponse
     {
+        $this->authorizeRule($rule);
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:1000',
@@ -94,6 +96,8 @@ class ContentRuleController extends Controller
      */
     public function destroy(ContentRule $rule): RedirectResponse
     {
+        $this->authorizeRule($rule);
+
         $rule->delete();
 
         return redirect()->back()->with('success', 'Pauta removida.');
@@ -104,6 +108,8 @@ class ContentRuleController extends Controller
      */
     public function toggle(ContentRule $rule): RedirectResponse
     {
+        $this->authorizeRule($rule);
+
         $rule->update(['is_active' => !$rule->is_active]);
 
         $status = $rule->is_active ? 'ativada' : 'desativada';
@@ -115,6 +121,8 @@ class ContentRuleController extends Controller
      */
     public function generate(Request $request, ContentRule $rule, ContentEngineService $engine): JsonResponse
     {
+        $this->authorizeRule($rule);
+
         $suggestion = $engine->generateFromRule($rule);
 
         if ($suggestion) {
@@ -133,6 +141,20 @@ class ContentRuleController extends Controller
     }
 
     // ===== PRIVATE =====
+
+    /**
+     * ContentRule tem brandScopeIncludesNull (regras globais brand_id=NULL são
+     * visíveis a todos). Mutações só são permitidas em regras da marca ativa —
+     * ninguém pode editar/apagar/disparar regra global ou de outra marca.
+     */
+    private function authorizeRule(ContentRule $rule): void
+    {
+        $brandId = auth()->user()?->current_brand_id;
+
+        if (!$brandId || $rule->brand_id !== $brandId) {
+            abort(403, 'Acesso negado.');
+        }
+    }
 
     private function formatRule(ContentRule $rule): array
     {

@@ -620,9 +620,13 @@ class EmailCampaignController extends Controller
      */
     public function schedule(Request $request, EmailCampaign $campaign)
     {
+        // O input vem no fuso local (display_timezone, sem offset). Normaliza
+        // para UTC ANTES de validar, senão "after:now" e o armazenamento saem
+        // ~3h errados (config app.timezone é UTC, não BRT).
+        $this->normalizeScheduledAtToUtc($request);
         $request->validate(['scheduled_at' => 'required|date|after:now']);
 
-        $scheduledAt = \Carbon\Carbon::parse($request->input('scheduled_at'))->setTimezone(config('app.timezone'));
+        $scheduledAt = \Carbon\Carbon::parse($request->input('scheduled_at'));
 
         $campaign->update([
             'status' => 'scheduled',
@@ -647,10 +651,11 @@ class EmailCampaignController extends Controller
             return back()->with('error', 'Esta campanha não está agendada.');
         }
 
+        $this->normalizeScheduledAtToUtc($request);
         $request->validate(['scheduled_at' => 'required|date|after:now']);
 
         $oldSchedule = $campaign->scheduled_at;
-        $newSchedule = \Carbon\Carbon::parse($request->input('scheduled_at'))->setTimezone(config('app.timezone'));
+        $newSchedule = \Carbon\Carbon::parse($request->input('scheduled_at'));
 
         $campaign->update([
             'scheduled_at' => $newSchedule,
@@ -1247,6 +1252,26 @@ class EmailCampaignController extends Controller
             'message'   => $converted > 0
                 ? "{$converted} imagem(s) convertida(s) com sucesso!"
                 : "Falha ao converter. Verifique os logs em /logs",
+        ]);
+    }
+
+    /**
+     * Converte scheduled_at do fuso local (app.display_timezone, via
+     * <input type="datetime-local">, sem offset) para UTC, regravando no request
+     * antes da validação. No-op se o campo estiver vazio.
+     */
+    private function normalizeScheduledAtToUtc(Request $request): void
+    {
+        $value = $request->input('scheduled_at');
+
+        if (empty($value)) {
+            return;
+        }
+
+        $request->merge([
+            'scheduled_at' => \Carbon\Carbon::parse($value, config('app.display_timezone'))
+                ->utc()
+                ->toDateTimeString(),
         ]);
     }
 }
