@@ -244,18 +244,28 @@ class SmsCampaignController extends Controller
 
     public function schedule(Request $request, SmsCampaign $campaign)
     {
+        // Normaliza o horário local (display_timezone) para UTC antes de validar
+        // e gravar (app.timezone é UTC — sem isso o agendamento sai ~3h errado).
+        if ($request->filled('scheduled_at')) {
+            $request->merge([
+                'scheduled_at' => \Carbon\Carbon::parse($request->input('scheduled_at'), config('app.display_timezone'))
+                    ->utc()
+                    ->toDateTimeString(),
+            ]);
+        }
+
         $validated = $request->validate([
             'scheduled_at' => 'required|date|after:now',
         ]);
 
-        $scheduledAt = \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'));
+        $scheduledAt = \Carbon\Carbon::parse($validated['scheduled_at']); // já UTC
 
         $campaign->update([
             'status' => 'scheduled',
             'scheduled_at' => $scheduledAt,
         ]);
 
-        return back()->with('success', 'Campanha agendada para ' . $scheduledAt->format('d/m/Y H:i'));
+        return back()->with('success', 'Campanha agendada para ' . $scheduledAt->setTimezone(config('app.display_timezone'))->format('d/m/Y H:i'));
     }
 
     public function pause(SmsCampaign $campaign)
