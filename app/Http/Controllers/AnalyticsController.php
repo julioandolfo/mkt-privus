@@ -341,23 +341,13 @@ class AnalyticsController extends Controller
             }
         }
 
-        // Se nao encontrou dados, mas tem usuario logado, tentar sem validacao de state
-        // (cenario de sessao perdida em Docker)
-        if (!$oauthData && auth()->check()) {
-            $brandId = session('analytics_oauth_brand_id') ?? auth()->user()->current_brand_id;
-            $isPopup = session('analytics_oauth_popup', false);
+        // Sem correspondência de state (Cache nem Sessão) o callback é rejeitado.
+        // Não há fallback "sem state" — isso abriria CSRF de vinculação de conta.
+        if (!$oauthData) {
+            SystemLog::error('analytics', 'oauth.callback.invalid_state', 'State CSRF inválido e nenhum fallback disponível');
 
-            SystemLog::warning('analytics', 'oauth.callback.no_state', "State nao validado - usando brand do usuario", [
-                'brand_id' => $brandId,
-                'user_id' => auth()->id(),
-            ]);
-
-            $oauthData = [
-                'platform' => $platform,
-                'brand_id' => $brandId,
-                'user_id' => auth()->id(),
-                'popup' => $isPopup,
-            ];
+            return redirect()->route('analytics.connections')
+                ->with('error', 'Sessão OAuth inválida ou expirada. Tente conectar novamente.');
         }
 
         $brandId = $oauthData['brand_id'] ?? null;

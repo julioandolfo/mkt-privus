@@ -74,7 +74,11 @@ class MercadoPagoService
         $secret = \App\Support\BillingSettings::mpWebhookSecret();
 
         if (!$secret) {
-            // Sem secret configurado não há como validar — aceita (modo dev)
+            // Fail-closed em produção: sem secret não há como validar a origem,
+            // então rejeita. Em dev/local, aceita para facilitar testes.
+            if (app()->environment('production')) {
+                return false;
+            }
             return true;
         }
 
@@ -91,6 +95,13 @@ class MercadoPagoService
         $hash = $parts['v1'] ?? null;
 
         if (!$ts || !$hash) {
+            return false;
+        }
+
+        // Anti-replay: rejeita assinaturas fora de uma janela de 5 minutos.
+        // O ts do MP é epoch em milissegundos.
+        $tsSeconds = ((int) $ts) > 20000000000 ? ((int) $ts) / 1000 : (int) $ts;
+        if (abs(time() - (int) $tsSeconds) > 300) {
             return false;
         }
 

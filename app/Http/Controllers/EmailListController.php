@@ -328,6 +328,13 @@ class EmailListController extends Controller
             'password' => 'nullable|string',
         ]);
 
+        if (!\App\Support\SafeUrl::isSafePublicHost($request->host)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Host não permitido. Use um servidor MySQL com endereço público.',
+            ], 422);
+        }
+
         try {
             $dsn = sprintf(
                 'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
@@ -369,6 +376,13 @@ class EmailListController extends Controller
             'password' => 'nullable|string',
             'table' => 'required|string',
         ]);
+
+        if (!\App\Support\SafeUrl::isSafePublicHost($request->host)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Host não permitido. Use um servidor MySQL com endereço público.',
+            ], 422);
+        }
 
         try {
             $dsn = sprintf(

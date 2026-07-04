@@ -81,13 +81,22 @@ class PostizWebhookController extends Controller
         $expected = \App\Models\Setting::get('oauth', 'postiz_webhook_secret')
             ?: config('services.postiz.webhook_secret');
 
-        // Sem secret configurado → aceita (desenvolvimento). Em produção recomenda-se configurar.
+        // Sem secret configurado → fail-closed em produção, aceito em dev.
         if (empty($expected)) {
-            return true;
+            return $this->secretMissingIsAllowed();
         }
 
         $received = $request->header('X-Postiz-Secret') ?? $request->get('secret');
         return hash_equals((string) $expected, (string) $received);
+    }
+
+    /**
+     * Sem secret configurado o webhook é rejeitado em produção (fail-closed);
+     * em dev/local é aceito para facilitar testes.
+     */
+    private function secretMissingIsAllowed(): bool
+    {
+        return !app()->environment('production');
     }
 
     private function extractPostId(array $payload): ?string

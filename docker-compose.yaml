@@ -108,7 +108,10 @@ services:
     mem_limit: 1g
     mem_reservation: 512m
     ports:
-      - "13306:3306"
+      # Bind apenas em loopback: expõe o MySQL para ferramentas locais no host,
+      # nunca para a internet. Em servidor com IP público, "13306:3306" publicaria
+      # o banco em todas as interfaces (com senha default se .env não definir).
+      - "127.0.0.1:13306:3306"
     environment:
       MYSQL_DATABASE: ${DB_DATABASE:-mkt_privus}
       MYSQL_USER: ${DB_USERNAME:-mkt_privus}
@@ -132,9 +135,13 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # Redis já tem maxmemory=256mb no comando; 320m no container deixa
-    # 64m de overhead pra fork/AOF/RDB sem o kernel matar o processo.
-    mem_limit: 320m
+    # Este Redis serve fila, sessão, cache e locks (withoutOverlapping).
+    # allkeys-lru evictava jobs enfileirados sob pressão de memória — posts
+    # agendados e campanhas sumiam silenciosamente. Com noeviction, o Redis
+    # nunca descarta chaves: sob pressão, writes de cache falham (erro visível)
+    # em vez de perder jobs. Ideal futuro: mover o cache para uma instância
+    # Redis dedicada (com allkeys-lru) e manter esta só para fila/sessão/locks.
+    mem_limit: 384m
     mem_reservation: 128m
     volumes:
       - redis_data:/data
@@ -143,7 +150,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 320mb --maxmemory-policy noeviction
 
 volumes:
   app_storage:

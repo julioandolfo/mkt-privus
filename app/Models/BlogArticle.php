@@ -33,6 +33,20 @@ class BlogArticle extends Model
         'scheduled_publish_at' => 'datetime',
     ];
 
+    // ===== MUTATORS =====
+
+    /**
+     * Sanitiza o HTML do artigo ao gravar (allowlist), removendo <script>,
+     * handlers de evento e URLs perigosas — o conteúdo é renderizado com v-html
+     * no painel, então não pode conter XSS armazenado.
+     */
+    public function setContentAttribute(?string $value): void
+    {
+        $this->attributes['content'] = $value === null
+            ? null
+            : \App\Support\HtmlSanitizer::clean($value);
+    }
+
     // ===== RELATIONSHIPS =====
 
     public function brand(): BelongsTo
