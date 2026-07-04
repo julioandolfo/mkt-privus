@@ -272,6 +272,8 @@ class EmailCampaignService
                         'X-Campaign-ID' => (string) $campaign->id,
                         'X-Contact-ID' => (string) $contact->id,
                         'List-Unsubscribe' => '<' . $this->trackingService->generateUnsubscribeUrl($campaign->id, $contact->id) . '>',
+                        // Exigido por Gmail/Yahoo para remetentes de alto volume (RFC 8058).
+                        'List-Unsubscribe-Post' => 'List-Unsubscribe=One-Click',
                     ]
                 );
 

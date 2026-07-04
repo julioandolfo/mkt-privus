@@ -234,6 +234,9 @@ async function syncPostizIntegrations() {
 }
 
 function handleOAuthMessage(event: MessageEvent) {
+    // Só aceita mensagens da própria origem (o popup de callback roda no mesmo
+    // domínio). Sem isso, qualquer janela/iframe poderia forjar um oauth_callback.
+    if (event.origin !== window.location.origin) return;
     if (event.data?.type !== 'oauth_callback') return;
 
     console.log('[OAuth] Mensagem recebida do popup:', event.data);

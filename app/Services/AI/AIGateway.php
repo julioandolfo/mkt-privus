@@ -927,8 +927,10 @@ class AIGateway
             ];
         }
 
+        // Chave no header (não na query string) — URLs vazam em logs de proxy/APM.
         $response = \Illuminate\Support\Facades\Http::timeout(120)
-            ->post("https://generativelanguage.googleapis.com/v1beta/models/{$model->value}:generateContent?key={$apiKey}", $payload);
+            ->withHeaders(['x-goog-api-key' => $apiKey])
+            ->post("https://generativelanguage.googleapis.com/v1beta/models/{$model->value}:generateContent", $payload);
 
         if (!$response->successful()) {
             throw new \RuntimeException("Gemini API Error: {$response->body()}");
