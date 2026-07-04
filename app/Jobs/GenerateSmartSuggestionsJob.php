@@ -20,7 +20,16 @@ class GenerateSmartSuggestionsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public function __construct()
+    // tries=1: geração é cara e não-idempotente; um retry após timeout do Redis
+    // re-geraria (e recobraria) sugestões para marcas já processadas.
+    public $tries = 1;
+    public $timeout = 1800;
+
+    /**
+     * @param int|null $brandId Quando informado, processa só essa marca (ex.:
+     *   "executar agora" de UMA marca). Null = todas as marcas (run agendado).
+     */
+    public function __construct(public ?int $brandId = null)
     {
         // Usa a queue default — a queue dedicada 'content-engine' exigia worker separado
         // que nao estava ativo, e os jobs ficavam presos sem processamento.
@@ -30,6 +39,7 @@ class GenerateSmartSuggestionsJob implements ShouldQueue
     {
         $brands = Brand::where('is_active', true)
             ->has('users')
+            ->when($this->brandId, fn ($q) => $q->whereKey($this->brandId))
             ->get();
 
         if ($brands->isEmpty()) {

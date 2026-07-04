@@ -294,13 +294,10 @@ class EmailCampaignService
                         'metadata' => ['message_id' => $result['message_id'] ?? null],
                     ]);
                     $sent++;
-
-                    // Incrementar contador de envios do provedor
-                    try {
-                        $provider->incrementSendCount();
-                    } catch (\Throwable $e) {
-                        // Ignorar erro de incremento
-                    }
+                    // O contador do provedor já é incrementado dentro de
+                    // EmailProviderService::send() no sucesso — não repetir aqui
+                    // (dobrava sends_today/sends_this_hour e travava a campanha
+                    // na metade da quota real).
                 } else {
                     $errorMessage = $result['error'] ?? 'Unknown error from provider';
 
@@ -368,6 +365,16 @@ class EmailCampaignService
         $totalProcessed = $campaign->events()->whereIn('event_type', ['sent', 'failed'])->distinct('email_contact_id')->count('email_contact_id');
         $totalPending   = count($pendingContactIds);
 
+        // Pendentes DESTE batch (sem sent/failed) — tipicamente contatos que
+        // bateram em quota real (429) e permaneceram em 'queued'. Reagenda-se
+        // apenas os deste batch para não colidir com outros batches em voo.
+        $batchPending = array_values(array_filter($contactIds, function ($cid) use ($campaign) {
+            return !EmailCampaignEvent::where('email_campaign_id', $campaign->id)
+                ->where('email_contact_id', $cid)
+                ->whereIn('event_type', ['sent', 'failed'])
+                ->exists();
+        }));
+
         SystemLog::info('email', 'batch.completed', "Batch finalizado", [
             'campaign_id'      => $campaign->id,
             'sent'             => $sent,
@@ -388,16 +395,18 @@ class EmailCampaignService
                 'total_sent'  => $sent,
                 'total_failed' => $failed,
             ]);
-        } elseif ($totalPending > 0 && $sent === 0 && $failed === 0) {
-            // Este batch não conseguiu enviar nenhum (erros temporários)
-            // Agendar retry para os pendentes após 1 hora (respeita rate limit)
+        } elseif (!empty($batchPending)) {
+            // Ainda há contatos deste batch presos em 'queued' (quota/429).
+            // Reagenda para daqui a 1h — mesmo que parte do batch já tenha sido
+            // enviada (antes só reagendava quando sent==0 && failed==0, então
+            // um batch parcialmente enviado deixava o resto preso para sempre).
             $provider  = $campaign->provider;
             $batchSize = $provider?->hourly_limit ? min(50, $provider->hourly_limit) : 50;
-            $chunks    = array_chunk($pendingContactIds, $batchSize);
+            $chunks    = array_chunk($batchPending, $batchSize);
 
-            SystemLog::warning('email', 'batch.retry_scheduled', "Batch sem envios — agendando retry para {$totalPending} contatos pendentes", [
+            SystemLog::warning('email', 'batch.retry_scheduled', "Reagendando retry para " . count($batchPending) . " contatos pendentes (quota)", [
                 'campaign_id'  => $campaign->id,
-                'pending'      => $totalPending,
+                'pending'      => count($batchPending),
                 'retry_batches' => count($chunks),
                 'retry_in'     => '60 minutes',
             ]);
@@ -452,7 +461,13 @@ class EmailCampaignService
         $trackOpen = $campaign->getSetting('track_opens', true);
         if ($trackOpen) {
             $pixel = $this->trackingService->generateTrackingPixel($campaign->id, $contact->id);
-            $html = str_replace('</body>', $pixel . '</body>', $html);
+            if (str_contains($html, '</body>')) {
+                $html = str_replace('</body>', $pixel . '</body>', $html);
+            } else {
+                // Editor às vezes gera HTML sem </body>; sem esse fallback o pixel
+                // some e nenhuma abertura/entrega é rastreada.
+                $html .= $pixel;
+            }
         }
 
         // Substituir links para tracking
@@ -829,6 +844,10 @@ class EmailCampaignService
      */
     private function isQuotaError(string $errorMessage): bool
     {
+        // Apenas indicadores REAIS de quota/rate-limit. NÃO inclui 403/500/502/503
+        // nem "server error": esses são erros (permanentes ou transitórios) que
+        // devem virar 'failed' — tratá-los como quota deixava o contato preso em
+        // 'queued' e a campanha eternamente em 'sending'.
         $quotaKeywords = [
             'limite diário',
             'limite diario',
@@ -839,16 +858,10 @@ class EmailCampaignService
             'limite atingido',
             'too many requests',
             'rate limit',
+            'rate-limit',
             'limite de envio',
             'maximum limit',
-            'internal server error',
-            'interval server error',
-            'server error',
             '429',
-            '403',
-            '500',
-            '502',
-            '503',
         ];
 
         $errorLower = strtolower($errorMessage);
