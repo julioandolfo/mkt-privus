@@ -143,7 +143,37 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+      start_period: 30s
+    # AUTO-REPARO DE AOF NO BOOT: um AOF corrompido (ex: shutdown sujo por
+    # OOM/kill) fazia o redis entrar em crash-loop ao carregar o arquivo
+    # incremental — e como app/worker/scheduler dependem de redis healthy,
+    # o deploy inteiro caía. O AOF vive no volume, então a corrupção
+    # SOBREVIVE a redeploys. Aqui, antes de subir o redis, rodamos
+    # redis-check-aof --fix no manifesto multipart (redis 7). Em AOF
+    # saudável é no-op; em AOF corrompido trunca a parte ruim e preserva o
+    # resto (dados de cache/fila são recriáveis). `yes |` responde à
+    # confirmação interativa do --fix.
+    command:
+      - sh
+      - -c
+      - |
+        DIR=/data/appendonlydir
+        MANIFEST="$$DIR/appendonly.aof.manifest"
+        if [ -f "$$MANIFEST" ]; then
+          echo ">> [redis] Verificando/reparando AOF multipart..."
+          yes | redis-check-aof --fix "$$MANIFEST" || echo ">> [redis] check-aof retornou erro; aof-load-truncated cobre o resto"
+        fi
+        # AOF single-file legado (redis <7), por segurança
+        if [ -f /data/appendonly.aof ]; then
+          yes | redis-check-aof --fix /data/appendonly.aof || true
+        fi
+        exec redis-server \
+          --appendonly yes \
+          --appendfsync everysec \
+          --aof-load-truncated yes \
+          --stop-writes-on-bgsave-error no \
+          --maxmemory 256mb \
+          --maxmemory-policy allkeys-lru
 
 volumes:
   app_storage:
