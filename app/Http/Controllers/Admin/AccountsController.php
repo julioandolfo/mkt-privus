@@ -189,9 +189,9 @@ class AccountsController extends Controller
                 'email' => $validated['email'],
                 'password' => Hash::make($password),
                 'is_active' => true,
-                'is_admin' => false,
             ]);
-            // Conta criada pelo admin nasce verificada
+            // is_admin não é mass-assignable (default do banco = false); conta de
+            // cliente nasce sem privilégio e já verificada.
             $user->forceFill(['email_verified_at' => now()])->save();
 
             $brand = Brand::create([

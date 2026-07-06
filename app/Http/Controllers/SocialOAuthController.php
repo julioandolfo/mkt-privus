@@ -154,18 +154,13 @@ class SocialOAuthController extends Controller
             }
         }
 
-        // Fallback final: usuario autenticado sem state
-        if (!$oauthData && auth()->check()) {
-            $oauthData = [
-                'platform' => session('oauth_platform', $platform),
-                'brand_id' => session('oauth_brand_id'),
-                'user_id' => auth()->id(),
-                'popup' => session('oauth_popup', false),
-            ];
-            SystemLog::warning('oauth', 'oauth.callback.no_state', "State nao validado - usando dados do usuario logado");
-        }
+        // Sem correspondência de state (Cache nem Sessão) o fluxo é rejeitado.
+        // NÃO há fallback "sem state": aceitar o callback apenas por o usuário
+        // estar logado abriria CSRF de account-linking (a conta social de um
+        // atacante seria vinculada à marca da vítima).
 
         $isPopup = $oauthData['popup'] ?? false;
+        $originalPlatform = $oauthData['platform'] ?? $platform;
 
         SystemLog::info('oauth', 'oauth.callback.start', "Callback OAuth recebido para {$platform}", [
             'platform' => $platform,
@@ -247,7 +242,6 @@ class SocialOAuthController extends Controller
                 ->with('error', 'Código de autorização não recebido.');
         }
 
-        $originalPlatform = $oauthData['platform'] ?? $platform;
         $brandId = $oauthData['brand_id'] ?? null;
         $userId = $oauthData['user_id'] ?? auth()->id();
 

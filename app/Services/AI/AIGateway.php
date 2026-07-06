@@ -35,6 +35,11 @@ class AIGateway
         string $feature = 'chat',
         array $options = [],
     ): array {
+        // Sem usuário explícito (jobs, content engine, autopilot) usa o dono da
+        // marca como responsável pelo consumo, para que quota e AiUsageLog sejam
+        // sempre aplicados — antes esse caminho passava sem limite nem registro.
+        $user = $user ?? $this->resolveBillingUser($brand);
+
         // Limite mensal de tokens de IA do plano (no-op com billing desabilitado)
         if ($user) {
             app(\App\Services\Billing\UsageService::class)->assertCanUseAi($user, $brand);
@@ -184,6 +189,9 @@ class AIGateway
         string $quality = 'auto',
         ?array $referenceImages = null,
     ): array {
+        // Ver chat(): resolve o dono da marca quando não há usuário explícito.
+        $user = $user ?? $this->resolveBillingUser($brand);
+
         // Limite mensal de tokens de IA do plano (no-op com billing desabilitado)
         if ($user) {
             app(\App\Services\Billing\UsageService::class)->assertCanUseAi($user, $brand);
@@ -919,8 +927,10 @@ class AIGateway
             ];
         }
 
+        // Chave no header (não na query string) — URLs vazam em logs de proxy/APM.
         $response = \Illuminate\Support\Facades\Http::timeout(120)
-            ->post("https://generativelanguage.googleapis.com/v1beta/models/{$model->value}:generateContent?key={$apiKey}", $payload);
+            ->withHeaders(['x-goog-api-key' => $apiKey])
+            ->post("https://generativelanguage.googleapis.com/v1beta/models/{$model->value}:generateContent", $payload);
 
         if (!$response->successful()) {
             throw new \RuntimeException("Gemini API Error: {$response->body()}");
@@ -937,6 +947,24 @@ class AIGateway
     }
 
     // ===== LOGGING =====
+
+    /**
+     * Usuário responsável pelo consumo de IA de uma marca (para quota/telemetria)
+     * quando a chamada não vem de um request autenticado. Prioriza o Owner e cai
+     * para o primeiro membro; retorna null se a marca não tiver membros.
+     */
+    private function resolveBillingUser(?Brand $brand): ?User
+    {
+        if (!$brand) {
+            return null;
+        }
+
+        $owner = $brand->users()
+            ->wherePivot('role', \App\Enums\BrandRole::Owner->value)
+            ->first();
+
+        return $owner ?? $brand->users()->first();
+    }
 
     private function logUsage(User $user, ?Brand $brand, AIModel $model, string $feature, array $response): void
     {

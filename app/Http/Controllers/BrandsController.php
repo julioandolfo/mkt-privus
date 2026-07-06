@@ -108,13 +108,12 @@ class BrandsController extends Controller
 
             $this->safeLog('info', 'BrandsController@store: Marca criada', ['brand_id' => $brand->id, 'slug' => $slug]);
 
-            // Vincular TODOS os usuarios a nova marca (sistema unico, sem permissoes)
-            $allUsers = \App\Models\User::pluck('id');
-            $syncData = [];
-            foreach ($allUsers as $userId) {
-                $syncData[$userId] = ['role' => $userId === $request->user()->id ? BrandRole::Owner->value : 'admin'];
-            }
-            $brand->users()->sync($syncData);
+            // Vincular apenas o criador como Owner. Novos membros entram por
+            // convite explícito (BrandInvitations/BrandMembers), preservando o
+            // isolamento multi-tenant entre clientes.
+            $brand->users()->sync([
+                $request->user()->id => ['role' => BrandRole::Owner->value],
+            ]);
 
             // Definir como marca ativa para quem criou
             $request->user()->switchBrand($brand);

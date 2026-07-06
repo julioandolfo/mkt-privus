@@ -168,8 +168,19 @@ class AutopilotController extends Controller
             return response()->json(['success' => false, 'error' => 'Nenhuma marca selecionada.']);
         }
 
-        \App\Jobs\GenerateSmartSuggestionsJob::dispatch();
-        \App\Jobs\GenerateCalendarPostsJob::dispatch();
+        // Evita disparos repetidos (cliques múltiplos) que multiplicariam o custo
+        // de IA. Passa o brand_id para gerar apenas para a marca ativa — antes os
+        // jobs rodavam para TODAS as marcas da plataforma a cada clique.
+        $lockKey = "autopilot_run_now_{$brand->id}";
+        if (!\Illuminate\Support\Facades\Cache::add($lockKey, true, now()->addMinutes(10))) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Autopilot já foi disparado recentemente para esta marca. Aguarde alguns minutos.',
+            ], 429);
+        }
+
+        \App\Jobs\GenerateSmartSuggestionsJob::dispatch($brand->id);
+        \App\Jobs\GenerateCalendarPostsJob::dispatch($brand->id);
 
         SystemLog::info('social', 'autopilot.manual_run', 'Autopilot social disparado manualmente', [
             'brand_id' => $brand->id,

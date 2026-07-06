@@ -131,9 +131,8 @@ class ContentEngineV2Controller extends Controller
                 'can_convert' => $campaign->canConvert(),
             ];
         } catch (\Exception $e) {
-            SystemLog::error('content_engine.format_campaign.error', [
+            SystemLog::error('content_engine', 'format_campaign.error', $e->getMessage(), [
                 'campaign_id' => $campaign->id,
-                'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
 

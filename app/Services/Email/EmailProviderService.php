@@ -4,6 +4,7 @@ namespace App\Services\Email;
 
 use App\Models\EmailProvider;
 use App\Models\SystemLog;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -103,6 +104,31 @@ class EmailProviderService
     /**
      * Envia via SendPulse API
      */
+    /**
+     * Retorna um access token do SendPulse para o provedor, cacheado por ~55min
+     * (o token do SendPulse dura 1h). Evita um OAuth por e-mail no batch.
+     */
+    private function sendPulseAccessToken(EmailProvider $provider): ?string
+    {
+        $config = $provider->config;
+        $cacheKey = 'sendpulse_token_' . $provider->id;
+
+        return Cache::remember($cacheKey, now()->addMinutes(55), function () use ($config) {
+            $tokenResponse = Http::asJson()->post('https://api.sendpulse.com/oauth/access_token', [
+                'grant_type' => 'client_credentials',
+                'client_id' => $config['api_user_id'] ?? null,
+                'client_secret' => $config['api_secret'] ?? null,
+            ]);
+
+            if (!$tokenResponse->successful()) {
+                // Não cacheia falha: lançar faz o Cache::remember não persistir null.
+                throw new \RuntimeException('SendPulse auth failed: ' . $tokenResponse->body());
+            }
+
+            return $tokenResponse->json('access_token');
+        });
+    }
+
     private function sendViaSendPulse(
         EmailProvider $provider,
         string $to,
@@ -115,18 +141,14 @@ class EmailProviderService
     ): array {
         $config = $provider->config;
 
-        // 1. Obter token de acesso
-        $tokenResponse = Http::post('https://api.sendpulse.com/oauth/access_token', [
-            'grant_type' => 'client_credentials',
-            'client_id' => $config['api_user_id'],
-            'client_secret' => $config['api_secret'],
-        ]);
+        // 1. Obter token de acesso (cacheado por provedor — antes era 1 request
+        // de OAuth por e-mail, o que dobrava as chamadas de API e podia estourar
+        // o rate limit do próprio endpoint de token dentro de um batch).
+        $accessToken = $this->sendPulseAccessToken($provider);
 
-        if (!$tokenResponse->successful()) {
-            return ['success' => false, 'error' => 'Falha ao autenticar com SendPulse: ' . $tokenResponse->body()];
+        if (!$accessToken) {
+            return ['success' => false, 'error' => 'Falha ao autenticar com SendPulse.'];
         }
-
-        $accessToken = $tokenResponse->json('access_token');
 
         // 2. Determinar remetente — SEMPRE priorizar o from_email do config do provedor
         // pois este é o email verificado no SendPulse

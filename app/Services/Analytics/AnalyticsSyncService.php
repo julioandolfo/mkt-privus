@@ -315,6 +315,13 @@ class AnalyticsSyncService
     {
         $calc = fn($collection, $field) => $collection->sum($field);
         $avg = fn($collection, $field) => $collection->avg($field) ?? 0;
+        // Razões (ROAS, ticket médio) devem ser recalculadas dos TOTAIS do
+        // período, não pela média das razões diárias (que distorce gravemente:
+        // média de ROAS 100 e 1 = 50, quando o real é receita_total/gasto_total).
+        $ratio = fn($num, $den) => $den > 0 ? $num / $den : 0;
+        $adRoasTotal   = $ratio($calc($summaries, 'ad_revenue'), $calc($summaries, 'ad_spend'));
+        $realRoasTotal = $ratio($calc($summaries, 'wc_revenue'), $calc($summaries, 'total_spend'));
+        $wcAovTotal    = $ratio($calc($summaries, 'wc_revenue'), $calc($summaries, 'wc_orders'));
 
         $kpis = [
             ['key' => 'sessions', 'label' => 'Sessões', 'value' => $calc($summaries, 'sessions'), 'format' => 'number', 'icon' => 'chart-bar', 'color' => 'blue'],
@@ -327,11 +334,11 @@ class AnalyticsSyncService
             ['key' => 'manual_ad_spend', 'label' => 'Invest. Manual', 'value' => round($calc($summaries, 'manual_ad_spend'), 2), 'format' => 'currency', 'icon' => 'pencil-square', 'color' => 'orange'],
             ['key' => 'ad_clicks', 'label' => 'Cliques Ads', 'value' => $calc($summaries, 'ad_clicks'), 'format' => 'number', 'icon' => 'cursor-arrow-rays', 'color' => 'orange'],
             ['key' => 'ad_conversions', 'label' => 'Conversões', 'value' => $calc($summaries, 'ad_conversions'), 'format' => 'number', 'icon' => 'check-circle', 'color' => 'emerald'],
-            ['key' => 'ad_roas', 'label' => 'ROAS Ads', 'value' => round($avg($summaries, 'ad_roas'), 2), 'format' => 'decimal', 'icon' => 'arrow-trending-up', 'color' => 'teal'],
+            ['key' => 'ad_roas', 'label' => 'ROAS Ads', 'value' => round($adRoasTotal, 2), 'format' => 'decimal', 'icon' => 'arrow-trending-up', 'color' => 'teal'],
             ['key' => 'wc_orders', 'label' => 'Pedidos', 'value' => $calc($summaries, 'wc_orders'), 'format' => 'number', 'icon' => 'shopping-bag', 'color' => 'violet'],
             ['key' => 'wc_revenue', 'label' => 'Receita Loja', 'value' => round($calc($summaries, 'wc_revenue'), 2), 'format' => 'currency', 'icon' => 'currency-dollar', 'color' => 'fuchsia'],
-            ['key' => 'wc_avg_order_value', 'label' => 'Ticket Médio', 'value' => round($avg($summaries, 'wc_avg_order_value'), 2), 'format' => 'currency', 'icon' => 'receipt-percent', 'color' => 'pink'],
-            ['key' => 'real_roas', 'label' => 'ROAS Real', 'value' => round($avg($summaries, 'real_roas'), 2), 'format' => 'decimal', 'icon' => 'arrow-trending-up', 'color' => 'rose'],
+            ['key' => 'wc_avg_order_value', 'label' => 'Ticket Médio', 'value' => round($wcAovTotal, 2), 'format' => 'currency', 'icon' => 'receipt-percent', 'color' => 'pink'],
+            ['key' => 'real_roas', 'label' => 'ROAS Real', 'value' => round($realRoasTotal, 2), 'format' => 'decimal', 'icon' => 'arrow-trending-up', 'color' => 'rose'],
             ['key' => 'search_clicks', 'label' => 'Cliques SEO', 'value' => $calc($summaries, 'search_clicks'), 'format' => 'number', 'icon' => 'magnifying-glass', 'color' => 'lime'],
             ['key' => 'search_impressions', 'label' => 'Impressões SEO', 'value' => $calc($summaries, 'search_impressions'), 'format' => 'number', 'icon' => 'globe-alt', 'color' => 'cyan'],
             ['key' => 'search_position', 'label' => 'Posição Média', 'value' => round($avg($summaries, 'search_position'), 1), 'format' => 'decimal', 'icon' => 'list-bullet', 'color' => 'sky', 'inverse' => true],
@@ -341,8 +348,18 @@ class AnalyticsSyncService
         if ($compareSummaries && $compareSummaries->isNotEmpty()) {
             foreach ($kpis as &$kpi) {
                 $compareField = $kpi['key'];
-                $isAvg = in_array($compareField, ['bounce_rate', 'avg_session_duration', 'ad_roas', 'real_roas', 'wc_avg_order_value', 'search_position', 'search_ctr']);
-                $compareValue = $isAvg ? $avg($compareSummaries, $compareField) : $calc($compareSummaries, $compareField);
+
+                // Razões: recalcular dos totais do período de comparação também.
+                if ($compareField === 'ad_roas') {
+                    $compareValue = $ratio($calc($compareSummaries, 'ad_revenue'), $calc($compareSummaries, 'ad_spend'));
+                } elseif ($compareField === 'real_roas') {
+                    $compareValue = $ratio($calc($compareSummaries, 'wc_revenue'), $calc($compareSummaries, 'total_spend'));
+                } elseif ($compareField === 'wc_avg_order_value') {
+                    $compareValue = $ratio($calc($compareSummaries, 'wc_revenue'), $calc($compareSummaries, 'wc_orders'));
+                } else {
+                    $isAvg = in_array($compareField, ['bounce_rate', 'avg_session_duration', 'search_position', 'search_ctr']);
+                    $compareValue = $isAvg ? $avg($compareSummaries, $compareField) : $calc($compareSummaries, $compareField);
+                }
 
                 if ($compareValue > 0) {
                     $variation = (($kpi['value'] - $compareValue) / $compareValue) * 100;

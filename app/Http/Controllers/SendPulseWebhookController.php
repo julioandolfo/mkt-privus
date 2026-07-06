@@ -28,7 +28,15 @@ class SendPulseWebhookController extends Controller
         // (?token=...) quando SENDPULSE_WEBHOOK_TOKEN está configurado.
         $expectedToken = \App\Support\BillingSettings::sendpulseWebhookToken();
 
-        if ($expectedToken && !hash_equals($expectedToken, (string) $request->query('token'))) {
+        if (!$expectedToken) {
+            // Fail-closed em produção: sem token configurado, um endpoint público
+            // sem autenticação permitiria forjar bounces/unsubscribes/opt-outs.
+            if (app()->environment('production')) {
+                Log::warning('SendPulse Webhook: token não configurado, rejeitando em produção', ['ip' => $request->ip()]);
+
+                return response()->json(['status' => 'unauthorized'], 401);
+            }
+        } elseif (!hash_equals($expectedToken, (string) $request->query('token'))) {
             Log::warning('SendPulse Webhook: token inválido', ['ip' => $request->ip()]);
 
             return response()->json(['status' => 'unauthorized'], 401);
@@ -202,6 +210,18 @@ class SendPulseWebhookController extends Controller
         // Estratégia 3: por campaign_id numérico (caso seja nosso ID)
         if (!$campaign && $campaignId && is_numeric($campaignId)) {
             $campaign = EmailCampaign::find($campaignId);
+        }
+
+        // Se o mesmo e-mail existe em mais de uma marca, o contato acima pode ser
+        // de outra marca. Tendo a campanha (que carrega brand_id), reancoramos o
+        // contato na marca correta para não atribuir bounce/opt-out cross-tenant.
+        if ($campaign && $email && (!$contact || $contact->brand_id !== $campaign->brand_id)) {
+            $scopedContact = EmailContact::where('email', $email)
+                ->where('brand_id', $campaign->brand_id)
+                ->first();
+            if ($scopedContact) {
+                $contact = $scopedContact;
+            }
         }
 
         // Mapear o tipo de evento do SendPulse para nosso sistema
@@ -559,8 +579,8 @@ class SendPulseWebhookController extends Controller
 
         if ($exists) return;
 
-        // Encontrar contato
-        $contact = EmailContact::where('phone', 'like', "%{$phone}%")->first();
+        // Encontrar contato por telefone normalizado, escopado à marca da campanha
+        $contact = $this->contactsMatchingPhone($phone, $campaign->brand_id)->first();
 
         SmsCampaignEvent::create([
             'sms_campaign_id' => $campaign->id,
@@ -580,7 +600,9 @@ class SendPulseWebhookController extends Controller
      */
     private function handleSmsOptOut(string $phone): void
     {
-        $contacts = EmailContact::where('phone', 'like', "%{$phone}%")->get();
+        // Casa por telefone normalizado (não por substring, que atingiria
+        // contatos de números/marcas diferentes).
+        $contacts = $this->contactsMatchingPhone($phone);
 
         foreach ($contacts as $contact) {
             $metadata = $contact->metadata ?? [];
@@ -590,11 +612,43 @@ class SendPulseWebhookController extends Controller
             $contact->update(['metadata' => $metadata]);
         }
 
-        SystemLog::create([
-            'level' => 'info',
-            'source' => 'sms_optout',
-            'message' => "SMS Opt-out recebido via webhook: {$phone}",
-            'context' => ['phone' => $phone],
+        SystemLog::info('sms', 'sms.optout', "SMS Opt-out recebido via webhook: {$phone}", [
+            'phone' => $phone,
+            'contacts_updated' => $contacts->count(),
         ]);
+    }
+
+    /**
+     * Retorna contatos cujo telefone casa com o informado, comparando apenas
+     * dígitos (tolera DDI/formatação) e exigindo que um seja sufixo do outro —
+     * evita o casamento por substring (%phone%) que atingia números distintos.
+     *
+     * @return \Illuminate\Support\Collection<int, EmailContact>
+     */
+    private function contactsMatchingPhone(string $phone, ?int $brandId = null): \Illuminate\Support\Collection
+    {
+        $normalized = preg_replace('/\D/', '', $phone) ?? '';
+
+        $query = EmailContact::query()
+            ->when($brandId, fn ($q) => $q->where('brand_id', $brandId));
+
+        if (strlen($normalized) < 8) {
+            // Curto demais para casar com segurança: exige igualdade exata.
+            return $query->where('phone', $phone)->get();
+        }
+
+        $suffix = substr($normalized, -8);
+
+        return $query->where('phone', 'like', "%{$suffix}%")
+            ->get()
+            ->filter(function ($contact) use ($normalized) {
+                $candidate = preg_replace('/\D/', '', (string) $contact->phone) ?? '';
+                if ($candidate === '') {
+                    return false;
+                }
+                return str_ends_with($candidate, $normalized)
+                    || str_ends_with($normalized, $candidate);
+            })
+            ->values();
     }
 }

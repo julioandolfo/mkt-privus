@@ -32,6 +32,86 @@ class LinkPage extends Model
         'total_clicks' => 'integer',
     ];
 
+    // Chaves de configuração de bloco/tema que carregam URLs e são renderizadas
+    // em href/src/background na página pública.
+    private const URL_KEYS = ['url', 'link', 'href', 'src', 'embed_url', 'bg_image'];
+
+    // ===== MUTATORS (sanitização anti-XSS da página pública) =====
+
+    public function setBlocksAttribute($value): void
+    {
+        $this->attributes['blocks'] = json_encode(
+            $this->sanitizeUrlsRecursively($value),
+            JSON_UNESCAPED_UNICODE
+        );
+    }
+
+    public function setThemeAttribute($value): void
+    {
+        $value = $this->sanitizeUrlsRecursively($value);
+
+        // bg_gradient é injetado cru em CSS; remove caracteres que permitiriam
+        // fechar a regra e injetar novas (ex.: "}", "<", "url(javascript:...)").
+        if (is_array($value) && !empty($value['bg_gradient']) && is_string($value['bg_gradient'])) {
+            if (preg_match('/[<>{}]|url\s*\(|expression\s*\(|javascript:/i', $value['bg_gradient'])) {
+                unset($value['bg_gradient']);
+            }
+        }
+
+        $this->attributes['theme'] = json_encode($value, JSON_UNESCAPED_UNICODE);
+    }
+
+    public function setCustomCssAttribute($value): void
+    {
+        if (is_string($value)) {
+            // Bloqueia breakout de <style> e vetores clássicos de CSS.
+            $value = preg_replace('#</\s*style#i', '', $value);
+            $value = preg_replace('/expression\s*\(|javascript:|vbscript:|@import/i', '', $value);
+        }
+        $this->attributes['custom_css'] = $value;
+    }
+
+    /**
+     * Percorre estruturas de blocos/tema e neutraliza URLs com esquema perigoso
+     * (javascript:, vbscript:, data: não-imagem) nas chaves conhecidas de URL.
+     */
+    private function sanitizeUrlsRecursively($value)
+    {
+        if (is_array($value)) {
+            $result = [];
+            foreach ($value as $key => $item) {
+                if (is_string($item) && in_array((string) $key, self::URL_KEYS, true)) {
+                    $result[$key] = $this->sanitizeUrlValue($item);
+                } else {
+                    $result[$key] = $this->sanitizeUrlsRecursively($item);
+                }
+            }
+            return $result;
+        }
+
+        return $value;
+    }
+
+    private function sanitizeUrlValue(string $url): string
+    {
+        $trimmed = trim($url);
+        if ($trimmed === '') {
+            return $url;
+        }
+
+        $scheme = strtolower((string) parse_url($trimmed, PHP_URL_SCHEME));
+
+        if (in_array($scheme, ['javascript', 'vbscript'], true)) {
+            return '';
+        }
+
+        if ($scheme === 'data' && !preg_match('#^data:image/[a-z0-9.+-]+;#i', $trimmed)) {
+            return '';
+        }
+
+        return $url;
+    }
+
     // ===== RELATIONSHIPS =====
 
     public function brand(): BelongsTo

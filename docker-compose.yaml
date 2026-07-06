@@ -108,7 +108,10 @@ services:
     mem_limit: 1g
     mem_reservation: 512m
     ports:
-      - "13306:3306"
+      # Bind apenas em loopback: expõe o MySQL para ferramentas locais no host,
+      # nunca para a internet. Em servidor com IP público, "13306:3306" publicaria
+      # o banco em todas as interfaces (com senha default se .env não definir).
+      - "127.0.0.1:13306:3306"
     environment:
       MYSQL_DATABASE: ${DB_DATABASE:-mkt_privus}
       MYSQL_USER: ${DB_USERNAME:-mkt_privus}
@@ -132,9 +135,13 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # Redis já tem maxmemory=256mb no comando; 320m no container deixa
-    # 64m de overhead pra fork/AOF/RDB sem o kernel matar o processo.
-    mem_limit: 320m
+    # Este Redis serve fila, sessão, cache e locks (withoutOverlapping).
+    # allkeys-lru evictava jobs enfileirados sob pressão de memória — posts
+    # agendados e campanhas sumiam silenciosamente. Com noeviction, o Redis
+    # nunca descarta chaves: sob pressão, writes de cache falham (erro visível)
+    # em vez de perder jobs. Ideal futuro: mover o cache para uma instância
+    # Redis dedicada (com allkeys-lru) e manter esta só para fila/sessão/locks.
+    mem_limit: 384m
     mem_reservation: 128m
     volumes:
       - redis_data:/data
@@ -151,8 +158,15 @@ services:
     # SOBREVIVE a redeploys. Aqui, antes de subir o redis, rodamos
     # redis-check-aof --fix no manifesto multipart (redis 7). Em AOF
     # saudável é no-op; em AOF corrompido trunca a parte ruim e preserva o
-    # resto (dados de cache/fila são recriáveis). `yes |` responde à
-    # confirmação interativa do --fix.
+    # resto (fila/sessão são recriáveis). `yes |` responde à confirmação
+    # interativa do --fix.
+    #
+    # maxmemory 320mb + noeviction (vindo da main): este Redis serve fila,
+    # sessão, cache e locks. Com allkeys-lru ele evictava JOBS enfileirados
+    # sob pressão de memória (posts/campanhas sumiam). noeviction faz o
+    # write de cache falhar visivelmente em vez de perder job. Combinado
+    # com stop-writes-on-bgsave-error=no para não travar a fila se um
+    # bgsave falhar (relacionado ao aviso de vm.overcommit_memory no host).
     command:
       - sh
       - -c
@@ -172,8 +186,8 @@ services:
           --appendfsync everysec \
           --aof-load-truncated yes \
           --stop-writes-on-bgsave-error no \
-          --maxmemory 256mb \
-          --maxmemory-policy allkeys-lru
+          --maxmemory 320mb \
+          --maxmemory-policy noeviction
 
 volumes:
   app_storage:

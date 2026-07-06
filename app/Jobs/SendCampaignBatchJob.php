@@ -17,7 +17,9 @@ class SendCampaignBatchJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $timeout = 300; // 5 minutos
+    // Abaixo do --timeout=290 do worker e do retry_after=320 da fila, para que
+    // o próprio worker não mate o job no meio de um batch e o reprocesse.
+    public $timeout = 280;
     public $tries = 3;
 
     // Propriedades precisam ser public para serialização correta na fila
@@ -66,15 +68,28 @@ class SendCampaignBatchJob implements ShouldQueue
             'exception' => $exception->getMessage(),
         ]);
 
-        // Marcar todos os contatos do batch como falhos
+        // Marcar como falhos APENAS os contatos que ainda não foram enviados nem
+        // já registrados como falha. Marcar todos indiscriminadamente criava
+        // eventos 'failed' para contatos que já tinham 'sent' neste mesmo batch,
+        // corrompendo as estatísticas (delivery/bounce/failed inflados).
         try {
             $now = now();
-            $events = collect($this->contactIds)->map(fn($contactId) => [
+
+            $alreadyProcessed = EmailCampaignEvent::where('email_campaign_id', $this->campaignId)
+                ->whereIn('email_contact_id', $this->contactIds)
+                ->whereIn('event_type', ['sent', 'failed'])
+                ->pluck('email_contact_id')
+                ->unique()
+                ->all();
+
+            $toFail = array_values(array_diff($this->contactIds, $alreadyProcessed));
+
+            $events = collect($toFail)->map(fn($contactId) => [
                 'email_campaign_id' => $this->campaignId,
                 'email_contact_id' => $contactId,
                 'event_type' => 'failed',
                 'occurred_at' => $now,
-                'metadata' => ['error' => 'Job failed after all retries: ' . $exception->getMessage()],
+                'metadata' => json_encode(['error' => 'Job failed after all retries: ' . $exception->getMessage()]),
                 'created_at' => $now,
                 'updated_at' => $now,
             ])->toArray();
@@ -83,9 +98,10 @@ class SendCampaignBatchJob implements ShouldQueue
                 EmailCampaignEvent::insert($chunk);
             }
 
-            SystemLog::info('email', 'batch.job.marked_failed', "Contatos do batch marcados como failed após falha do job", [
+            SystemLog::info('email', 'batch.job.marked_failed', "Contatos pendentes do batch marcados como failed após falha do job", [
                 'campaign_id' => $this->campaignId,
-                'contacts_count' => count($this->contactIds),
+                'contacts_failed' => count($toFail),
+                'contacts_skipped_already_processed' => count($alreadyProcessed),
             ]);
         } catch (Throwable $e) {
             SystemLog::error('email', 'batch.job.mark_failed_error', "Erro ao marcar contatos como failed: {$e->getMessage()}", [

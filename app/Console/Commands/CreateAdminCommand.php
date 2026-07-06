@@ -56,7 +56,7 @@ class CreateAdminCommand extends Command
         $user = User::where('email', $email)->first();
 
         if ($user) {
-            $user->update(['is_admin' => true, 'is_active' => true]);
+            $user->forceFill(['is_admin' => true, 'is_active' => true])->save();
             $this->info("Usuário existente {$email} promovido a super admin.");
 
             return self::SUCCESS;
@@ -76,12 +76,15 @@ class CreateAdminCommand extends Command
             'name' => $name,
             'email' => $email,
             'password' => bcrypt($password),
-            'is_admin' => true,
             'is_active' => true,
         ]);
 
-        // email_verified_at não é fillable; o admin de bootstrap nasce verificado
-        $user->forceFill(['email_verified_at' => now()])->save();
+        // is_admin/email_verified_at não são fillable; o admin de bootstrap nasce
+        // verificado e com privilégio setado explicitamente.
+        $user->forceFill([
+            'is_admin' => true,
+            'email_verified_at' => now(),
+        ])->save();
 
         $this->info("Super admin criado: {$email}");
 

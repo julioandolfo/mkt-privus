@@ -33,6 +33,20 @@ class BlogArticle extends Model
         'scheduled_publish_at' => 'datetime',
     ];
 
+    // ===== MUTATORS =====
+
+    /**
+     * Sanitiza o HTML do artigo ao gravar (allowlist), removendo <script>,
+     * handlers de evento e URLs perigosas — o conteúdo é renderizado com v-html
+     * no painel, então não pode conter XSS armazenado.
+     */
+    public function setContentAttribute(?string $value): void
+    {
+        $this->attributes['content'] = $value === null
+            ? null
+            : \App\Support\HtmlSanitizer::clean($value);
+    }
+
     // ===== RELATIONSHIPS =====
 
     public function brand(): BelongsTo
@@ -278,7 +292,10 @@ class BlogArticle extends Model
         $original = $slug;
         $counter = 1;
 
-        while (static::withTrashed()
+        // Sem o escopo de marca: o índice unique de slug é GLOBAL, então a
+        // checagem precisa enxergar todas as marcas — senão duas marcas geram o
+        // mesmo slug e o INSERT estoura QueryException (23000).
+        while (static::withoutGlobalScope('brand')->withTrashed()
             ->where('slug', $slug)
             ->when($excludeId, fn($q) => $q->where('id', '!=', $excludeId))
             ->exists()

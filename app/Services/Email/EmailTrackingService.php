@@ -39,10 +39,12 @@ class EmailTrackingService
             function ($matches) use ($campaignId, $contactId) {
                 $originalUrl = $matches[2];
 
-                // Nao trackear links especiais
+                // Nao trackear links especiais. Para âncoras, só ignorar quando
+                // o link é PURAMENTE uma âncora interna (#secao) — antes qualquer
+                // URL contendo '#' (ex.: https://site.com/promo#oferta) era ignorada.
                 if (str_contains($originalUrl, 'unsubscribe') ||
                     str_contains($originalUrl, 'mailto:') ||
-                    str_contains($originalUrl, '#')) {
+                    str_starts_with(trim($originalUrl), '#')) {
                     return $matches[0];
                 }
 

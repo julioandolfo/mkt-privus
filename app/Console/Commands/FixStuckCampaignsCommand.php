@@ -81,19 +81,15 @@ class FixStuckCampaignsCommand extends Command
 
         $this->line("Queued: {$queued} | Sent: {$sent} | Failed: {$failed} | Restantes: {$remaining}");
 
-        // Jobs na fila para esta campanha
-        $jobsNaFila = DB::table('jobs')
-            ->where('queue', 'email')
-            ->where('payload', 'like', "%\"campaignId\":{$campaign->id}%")
-            ->count();
-
-        $this->line("Jobs na fila: {$jobsNaFila}");
-
-        // Último evento da campanha
+        // Último evento da campanha (a fila roda em Redis, então não dá para
+        // contar jobs via DB::table('jobs') — usamos a inatividade como sinal).
         $ultimoEvento = $campaign->events()->latest('occurred_at')->first();
-        if ($ultimoEvento) {
-            $minDesdeUltimo = now()->diffInMinutes($ultimoEvento->occurred_at);
-            $this->line("Último evento: há {$minDesdeUltimo} minutos ({$ultimoEvento->event_type})");
+        $minDesdeUltimo = $ultimoEvento
+            ? now()->diffInMinutes($ultimoEvento->occurred_at, true)
+            : null;
+
+        if ($minDesdeUltimo !== null) {
+            $this->line("Último evento: há " . round($minDesdeUltimo) . " minutos ({$ultimoEvento->event_type})");
         }
 
         // Determinar o que fazer
@@ -105,24 +101,14 @@ class FixStuckCampaignsCommand extends Command
             return;
         }
 
-        if ($jobsNaFila > 0) {
-            $proximoJob = DB::table('jobs')
-                ->where('queue', 'email')
-                ->where('payload', 'like', "%\"campaignId\":{$campaign->id}%")
-                ->orderBy('available_at')
-                ->first();
-
-            if ($proximoJob) {
-                $disponivelEm = \Carbon\Carbon::createFromTimestamp($proximoJob->available_at);
-                $minutos = now()->diffInMinutes($disponivelEm, false);
-                $this->info("→ Há {$jobsNaFila} job(s) na fila. Próximo disponível em: {$minutos} minutos");
-                $this->info("  A campanha vai continuar automaticamente.");
-            }
+        // Atividade recente (< 15 min) → provavelmente ainda processando na fila.
+        if ($minDesdeUltimo !== null && $minDesdeUltimo < 15) {
+            $this->info("→ Houve atividade há " . round($minDesdeUltimo) . " min; a campanha provavelmente ainda está processando.");
             return;
         }
 
-        // Não tem jobs na fila mas ainda há pendentes
-        $this->error("→ TRAVADA! {$remaining} emails pendentes sem jobs na fila.");
+        // Sem atividade recente e ainda há pendentes → provavelmente travada
+        $this->error("→ Possivelmente TRAVADA! {$remaining} emails pendentes e sem atividade recente.");
 
         if ($this->option('force-complete')) {
             if (!$dryRun) {

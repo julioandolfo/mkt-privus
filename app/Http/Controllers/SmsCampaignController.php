@@ -87,6 +87,16 @@ class SmsCampaignController extends Controller
 
     public function store(Request $request)
     {
+        // scheduled_at vem no fuso local (display_timezone, sem offset); normaliza
+        // para UTC antes de validar/gravar (app.timezone é UTC, não BRT).
+        if ($request->filled('scheduled_at')) {
+            $request->merge([
+                'scheduled_at' => \Carbon\Carbon::parse($request->input('scheduled_at'), config('app.display_timezone'))
+                    ->utc()
+                    ->toDateTimeString(),
+            ]);
+        }
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email_provider_id' => 'required|exists:email_providers,id',
@@ -104,6 +114,34 @@ class SmsCampaignController extends Controller
 
         $brandId = auth()->user()?->current_brand_id;
 
+        // Garante que provider, template e listas pertencem à marca ativa.
+        // Os models usam BelongsToBrand, então as queries abaixo já são escopadas
+        // pela marca atual — um ID de outro tenant simplesmente não é encontrado.
+        abort_unless(
+            EmailProvider::whereKey($validated['email_provider_id'])->exists(),
+            403,
+            'Provedor inválido para esta marca.'
+        );
+
+        if (!empty($validated['sms_template_id'])) {
+            abort_unless(
+                SmsTemplate::whereKey($validated['sms_template_id'])->exists(),
+                403,
+                'Template inválido para esta marca.'
+            );
+        }
+
+        $requestedListIds = array_merge(
+            $validated['list_ids'],
+            $validated['exclude_list_ids'] ?? []
+        );
+        $ownedListCount = EmailList::whereKey($requestedListIds)->count();
+        abort_unless(
+            $ownedListCount === count(array_unique($requestedListIds)),
+            403,
+            'Uma ou mais listas não pertencem a esta marca.'
+        );
+
         $campaign = SmsCampaign::create([
             'brand_id' => $brandId,
             'user_id' => Auth::id(),
@@ -114,7 +152,7 @@ class SmsCampaignController extends Controller
             'sender_name' => $validated['sender_name'],
             'status' => !empty($validated['scheduled_at']) ? 'scheduled' : 'draft',
             'scheduled_at' => !empty($validated['scheduled_at'])
-                ? \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'))
+                ? \Carbon\Carbon::parse($validated['scheduled_at']) // já normalizado para UTC
                 : null,
             'settings' => $validated['settings'] ?? [],
             'tags' => $validated['tags'] ?? [],
@@ -206,18 +244,28 @@ class SmsCampaignController extends Controller
 
     public function schedule(Request $request, SmsCampaign $campaign)
     {
+        // Normaliza o horário local (display_timezone) para UTC antes de validar
+        // e gravar (app.timezone é UTC — sem isso o agendamento sai ~3h errado).
+        if ($request->filled('scheduled_at')) {
+            $request->merge([
+                'scheduled_at' => \Carbon\Carbon::parse($request->input('scheduled_at'), config('app.display_timezone'))
+                    ->utc()
+                    ->toDateTimeString(),
+            ]);
+        }
+
         $validated = $request->validate([
             'scheduled_at' => 'required|date|after:now',
         ]);
 
-        $scheduledAt = \Carbon\Carbon::parse($validated['scheduled_at'])->setTimezone(config('app.timezone'));
+        $scheduledAt = \Carbon\Carbon::parse($validated['scheduled_at']); // já UTC
 
         $campaign->update([
             'status' => 'scheduled',
             'scheduled_at' => $scheduledAt,
         ]);
 
-        return back()->with('success', 'Campanha agendada para ' . $scheduledAt->format('d/m/Y H:i'));
+        return back()->with('success', 'Campanha agendada para ' . $scheduledAt->setTimezone(config('app.display_timezone'))->format('d/m/Y H:i'));
     }
 
     public function pause(SmsCampaign $campaign)

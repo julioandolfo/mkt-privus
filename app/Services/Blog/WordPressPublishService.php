@@ -75,14 +75,13 @@ class WordPressPublishService
         $article->update(['status' => 'publishing']);
 
         try {
-            // Debug: logar credenciais usadas (sem expor a senha)
             SystemLog::info('blog', 'article.publish_attempt', "Tentando publicar artigo no WordPress", [
                 'article_id'    => $article->id,
                 'connection_id' => $connection->id,
                 'site_url'      => $baseUrl,
                 'wp_username'   => $auth['user'],
-                'pass_length'   => strlen($auth['pass']),
-                'pass_first4'   => substr($auth['pass'], 0, 4) . '...',
+                // Nunca logar a senha (nem prefixo dela).
+                'has_password'  => !empty($auth['pass']),
             ]);
             // 1. Upload da imagem de capa (se existir)
             $featuredMediaId = null;
